@@ -103,7 +103,11 @@ game. OpenStrike uses Godot's standard Android joypad path, so it does not need
 Bluetooth scanning permissions. The in-game diagnostic panel shows the detected
 controller name, both stick vectors, and L1/R1/L3 state.
 
-The aircraft is flown as a helicopter, not driven. There is no input that sets
+Two flight models, switched with the CONTROLS button. **Arcade** is the default
+and the one to pick up and fly: the stick commands a speed and the aircraft
+holds a set height above the terrain. **Realistic** is the rotor model below.
+
+In realistic mode the aircraft is flown as a helicopter, not driven. There is no input that sets
 a velocity: the cyclic tilts the rotor disc, thrust acts along the disc normal,
 and the horizontal part of that thrust is the only thing that accelerates the
 airframe. Collective sets thrust magnitude and holds its position rather than
@@ -183,6 +187,7 @@ godot --headless --script tests/map_tiles_test.gd
 godot --headless --script tests/height_field_test.gd
 godot --headless --script tests/terrain_sampling_test.gd
 godot --headless --script tests/rotor_model_test.gd
+godot --headless --script tests/helicopter_controls_test.gd
 godot --headless --script tests/building_mesh_test.gd
 godot --headless --script tests/gamepad_input_test.gd
 godot --headless --script tests/camera_orbit_lock_test.gd

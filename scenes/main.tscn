@@ -110,6 +110,10 @@ autowrap_mode = 2
 layout_mode = 2
 text = "LOAD SURFERS PARADISE DEMO"
 
+[node name="FlightModeButton" type="Button" parent="UI/Margin/Panel/Content"]
+layout_mode = 2
+text = "CONTROLS: ARCADE"
+
 [node name="AttackReticle" type="Control" parent="UI"]
 anchor_right = 1.0
 anchor_bottom = 1.0

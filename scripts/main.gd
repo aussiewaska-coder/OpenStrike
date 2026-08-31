@@ -39,6 +39,7 @@ const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 @onready var status_label: Label = $UI/Margin/Panel/Content/Status
 @onready var region_label: Label = $UI/Margin/Panel/Content/Region
 @onready var demo_button: Button = $UI/Margin/Panel/Content/DemoButton
+@onready var flight_mode_button: Button = $UI/Margin/Panel/Content/FlightModeButton
 @onready var attack_reticle := $UI/AttackReticle
 @onready var gamepad_diagnostic: Label = $UI/GamepadDiagnostic/Label
 @onready var controller_overlay: ColorRect = $UI/ControllerOverlay
@@ -55,7 +56,7 @@ var _camera_orbit_velocity := 0.0
 ## from inside the aircraft.
 enum View {COCKPIT, CHASE, ORBIT}
 
-var _view: View = View.COCKPIT
+var _view: View = View.CHASE
 var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
 var _orbit_lock := ORBIT_LOCK.new()
@@ -74,6 +75,8 @@ func _ready() -> void:
 	GamepadInput.action_pressed.connect(_on_gamepad_action_pressed)
 	_configure_zoom_profile()
 	_apply_view_chrome()
+	flight_mode_button.pressed.connect(_toggle_flight_mode)
+	_refresh_flight_mode_button()
 	demo_button.pressed.connect(LocationService.cycle_region)
 	demo_button.text = "SWITCH THEATRE"
 	demo_button.visible = true
@@ -328,14 +331,14 @@ func _update_attack_reticle() -> void:
 ## roll and the rotor's drift are all felt directly rather than smoothed away by
 ## a follow camera.
 func _update_cockpit_camera() -> void:
-	var frame: Transform3D = helicopter_anchor.get_muzzle_transform() if helicopter_anchor.has_method("get_muzzle_transform") else helicopter_anchor.global_transform
-	camera.global_transform = Transform3D(
-		frame.basis.orthonormalized(),
-		frame.origin + frame.basis.orthonormalized() * cockpit_offset
-	)
-	# The airframe faces local +X, so the camera has to look down that axis
-	# rather than its own -Z.
-	camera.global_basis = Basis.looking_at(frame.basis.orthonormalized().x, Vector3.UP)
+	# The pilot station is measured off the airframe mesh: the GLB renders about
+	# 31 m long, so an offset written in metres sat inside the fuselage and the
+	# view was black.
+	var frame: Transform3D = helicopter_anchor.get_cockpit_transform() if helicopter_anchor.has_method("get_cockpit_transform") else helicopter_anchor.global_transform
+	camera.global_position = frame.origin
+	# The airframe faces local +X, so the camera looks down that axis rather
+	# than its own -Z.
+	camera.global_basis = Basis.looking_at(frame.basis.x, Vector3.UP)
 	camera.fov = cockpit_fov
 
 
@@ -389,6 +392,26 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
 		_cycle_view()
+
+
+## Arcade is pick-up-and-fly: the stick sets a speed and the aircraft holds its
+## height. Realistic is the rotor model, where only disc tilt moves you.
+func _toggle_flight_mode() -> void:
+	if not helicopter_anchor.has_method("set_flight_mode"):
+		return
+	var arcade: int = helicopter_anchor.FlightMode.ARCADE
+	var rotor: int = helicopter_anchor.FlightMode.ROTOR
+	var next: int = rotor if int(helicopter_anchor.flight_mode) == arcade else arcade
+	helicopter_anchor.set_flight_mode(next)
+	_refresh_flight_mode_button()
+	status_label.text = "CONTROLS: %s" % ("REALISTIC ROTOR" if next == rotor else "ARCADE")
+
+
+func _refresh_flight_mode_button() -> void:
+	if not ("flight_mode" in helicopter_anchor):
+		return
+	var arcade: int = helicopter_anchor.FlightMode.ARCADE
+	flight_mode_button.text = "CONTROLS: %s" % ("ARCADE" if int(helicopter_anchor.flight_mode) == arcade else "REALISTIC")
 
 
 ## Cockpit, chase, orbit. Cockpit shows the HUD alone; the external views keep

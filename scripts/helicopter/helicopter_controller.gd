@@ -13,9 +13,18 @@ extends Node3D
 ## numbers.
 
 const ROTOR := preload("res://scripts/helicopter/rotor_model.gd")
+const FLIGHT_MATH := preload("res://scripts/helicopter/flight_math.gd")
 const AIRFRAME_MOTION := preload("res://scripts/helicopter/airframe_motion.gd")
 
 const GRAVITY := 9.80665
+
+## Two flight models. Arcade is the game one: the stick sets a speed and the
+## aircraft holds its height over the terrain. Rotor is the real one, where the
+## cyclic tilts the disc and nothing else moves the aircraft. Arcade is the
+## default because it is the one you can pick up and fly.
+enum FlightMode {ARCADE, ROTOR}
+
+@export var flight_mode: FlightMode = FlightMode.ARCADE
 
 @export var terrain_path: NodePath = NodePath("../Terrain")
 ## Kept clear of the very edge so the aircraft never sits on the boundary where
@@ -44,6 +53,19 @@ const GRAVITY := 9.80665
 @export var yaw_braking_degrees := 125.0
 ## Yaw the fuselage takes at full collective. The pedals must hold this off.
 @export var torque_yaw_degrees := 26.0
+
+@export_group("Arcade Flight")
+@export var acceleration := 68.0
+@export var braking := 26.0
+@export var drag := 10.0
+@export var max_speed := 118.0
+@export var terrain_clearance := 90.0
+@export var max_terrain_clearance := 360.0
+@export var climb_speed := 72.0
+@export var altitude_response := 2.8
+@export var forward_pitch_degrees := 13.0
+@export var strafe_bank_degrees := 15.0
+@export var turn_bank_degrees := 11.0
 
 @export_group("Airframe")
 ## Quadratic drag, which is what sets the cruise speed against rotor thrust.
@@ -77,16 +99,85 @@ var _shudder := 0.0
 var _bob_time := 0.0
 var _wobble := 0.0
 var _previous_velocity := Vector3.ZERO
+var _commanded_clearance := 90.0
+var _cockpit_local := Vector3(2.6, 1.1, 0.0)
 
 
 func _ready() -> void:
 	_terrain = get_node_or_null(terrain_path)
 	_adopt_world_bounds(_terrain)
 	collective = starting_collective
+	_commanded_clearance = terrain_clearance
 	call_deferred("_find_visual")
 
 
+func set_flight_mode(mode: FlightMode) -> void:
+	flight_mode = mode
+	# Entering rotor flight from arcade must not inherit a velocity the rotor
+	# never produced, or the aircraft leaps.
+	velocity = Vector3.ZERO
+	pitch_degrees = 0.0
+	roll_degrees = 0.0
+	collective = starting_collective
+	_commanded_clearance = maxf(position.y - _smoothed_ground_height, min_terrain_clearance)
+
+
 func _physics_process(delta: float) -> void:
+	if flight_mode == FlightMode.ARCADE:
+		_arcade_step(delta)
+	else:
+		_rotor_step(delta)
+	position.x = clampf(position.x, -_world_limit, _world_limit)
+	position.z = clampf(position.z, -_world_limit, _world_limit)
+	_update_visual(delta)
+
+
+## The game model: the stick commands a speed and the aircraft rides the terrain
+## at a commanded clearance. Forgiving, and what most of the game was built on.
+func _arcade_step(delta: float) -> void:
+	var flight := Vector2.ZERO
+	var right_stick := Vector2.ZERO
+	if GamepadInput.is_controller_ready():
+		flight = GamepadInput.get_flight_vector()
+		right_stick = GamepadInput.get_aim_vector()
+	var planar_input := FLIGHT_MATH.get_planar_control(basis, flight)
+	if planar_input.length_squared() > 0.001:
+		velocity += planar_input * acceleration * delta
+	else:
+		velocity = velocity.move_toward(Vector3.ZERO, braking * delta)
+	velocity = velocity.move_toward(Vector3.ZERO, drag * delta)
+	if velocity.length() > max_speed:
+		velocity = velocity.normalized() * max_speed
+	velocity.y = 0.0
+	position += velocity * delta
+	var target_yaw_velocity := -right_stick.x * yaw_speed_degrees
+	var yaw_change_rate := yaw_acceleration_degrees if absf(right_stick.x) > 0.01 else yaw_braking_degrees
+	_yaw_velocity_degrees = move_toward(_yaw_velocity_degrees, target_yaw_velocity, yaw_change_rate * delta)
+	rotation.y += deg_to_rad(_yaw_velocity_degrees) * delta
+	_commanded_clearance = clampf(
+		_commanded_clearance - right_stick.y * climb_speed * delta,
+		min_terrain_clearance,
+		max_terrain_clearance
+	)
+	var ground_height := _sample_ground(delta)
+	position.y = lerpf(
+		position.y,
+		ground_height + _commanded_clearance,
+		1.0 - exp(-altitude_response * delta)
+	)
+	# The lean is decoration in this mode, driven by the stick rather than by
+	# any force, which is exactly what makes it forgiving.
+	pitch_degrees = lerpf(pitch_degrees, -flight.y * forward_pitch_degrees, 1.0 - exp(-lean_response * delta))
+	var turn_amount := -_yaw_velocity_degrees / maxf(yaw_speed_degrees, 1.0)
+	roll_degrees = lerpf(
+		roll_degrees,
+		flight.x * strafe_bank_degrees + turn_amount * turn_bank_degrees,
+		1.0 - exp(-lean_response * delta)
+	)
+	_shudder = 0.0
+
+
+func _rotor_step(delta: float) -> void:
 	var cyclic := Vector2.ZERO
 	var pedals_collective := Vector2.ZERO
 	if GamepadInput.is_controller_ready():
@@ -134,15 +225,12 @@ func _physics_process(delta: float) -> void:
 	_yaw_velocity_degrees = move_toward(_yaw_velocity_degrees, target_yaw_velocity, yaw_change_rate * delta)
 	rotation.y += deg_to_rad(_yaw_velocity_degrees) * delta
 
-	position.x = clampf(position.x, -_world_limit, _world_limit)
-	position.z = clampf(position.z, -_world_limit, _world_limit)
 	# The hard floor: the rotor model may fly you into a hill, and this is what
 	# stops it ending the session.
 	var floor_height := ground_height + min_terrain_clearance
 	if position.y < floor_height:
 		position.y = floor_height
 		velocity.y = maxf(velocity.y, 0.0)
-	_update_visual(delta)
 
 
 func reset_altitude_smoothing() -> void:
@@ -175,6 +263,39 @@ func _sample_ground(delta: float) -> float:
 
 func _find_visual() -> void:
 	_visual = get_node_or_null("HeroHelicopter")
+	_measure_cockpit()
+
+
+## The airframe GLB is not to scale -- it renders about 31 m long -- so a
+## cockpit offset written in metres puts the camera inside the fuselage. Measure
+## the mesh and sit just ahead of its nose instead.
+func _measure_cockpit() -> void:
+	if _visual == null:
+		return
+	var bounds := AABB()
+	var found := false
+	for child in _visual.find_children("*", "MeshInstance3D", true, false):
+		var instance := child as MeshInstance3D
+		var local: AABB = _visual.global_transform.affine_inverse() * (instance.global_transform * instance.get_aabb())
+		bounds = local if not found else bounds.merge(local)
+		found = true
+	if not found or bounds.size.is_zero_approx():
+		return
+	var centre := bounds.get_center()
+	_cockpit_local = Vector3(
+		bounds.position.x + bounds.size.x * 1.02,
+		centre.y + bounds.size.y * 0.18,
+		centre.z
+	)
+
+
+## Where the pilot sits, in world space, with the airframe's orientation.
+func get_cockpit_transform() -> Transform3D:
+	if _visual == null:
+		return global_transform
+	var frame := _visual.global_transform
+	var orientation := frame.basis.orthonormalized()
+	return Transform3D(orientation, frame * _cockpit_local)
 
 
 ## The airframe shows its real attitude now: the tilt on screen is the tilt
