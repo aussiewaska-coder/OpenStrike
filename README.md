@@ -103,21 +103,43 @@ game. OpenStrike uses Godot's standard Android joypad path, so it does not need
 Bluetooth scanning permissions. The in-game diagnostic panel shows the detected
 controller name, both stick vectors, and L1/R1/L3 state.
 
+The aircraft is flown as a helicopter, not driven. There is no input that sets
+a velocity: the cyclic tilts the rotor disc, thrust acts along the disc normal,
+and the horizontal part of that thrust is the only thing that accelerates the
+airframe. Collective sets thrust magnitude and holds its position rather than
+springing back, and the torque it generates yaws the nose, so the pedals move
+whenever the collective does. `scripts/helicopter/rotor_model.gd` carries the
+aerodynamics and the sources for their numbers: effective translational lift
+between 16 and 20 kt, transverse-flow shudder at 12-15 kt just below it, ground
+effect within a rotor diameter of the surface, and vortex ring state on a
+vertical descent below translational lift. A hard floor at the minimum terrain
+clearance stops the model flying you into a hill.
+
 ### MVP controller map
 
 | Control | Action |
 | --- | --- |
-| Left stick up/down | Fly forward/backward |
-| Left stick left/right | Strafe left/right |
-| Right stick left/right | Rotate/yaw |
-| Right stick up/down | Climb/descend |
+| Left stick | Cyclic: tilts the rotor disc, which is what moves the aircraft |
+| Right stick left/right | Pedals: anti-torque yaw |
+| Right stick up/down | Collective: rotor thrust, and it stays where you put it |
 | L2 / R2 | Tactical view: orbit the camera. Travel view: sweep around a locked ground point |
 | R1 | Cannon |
 | L1 | Rockets |
-| R3 | Toggle tactical / low-angle travel follow camera |
+| R3 | Cycle cockpit / chase / orbit view |
 | L3 | Context/extraction |
 | D-pad left/right | Previous/next target |
 | D-pad up/down | Camera zoom in/out, continuing into the attack close-up |
+
+### Views
+
+R3 cycles three perspectives. **Cockpit** is the default and takes the
+airframe's transform outright, so pitch, roll and rotor drift are felt rather
+than smoothed away; the mission panel is hidden and the screen carries the HUD
+alone -- sight, range and time of flight, with airspeed, height above ground,
+collective and heading on the glass, because with this flight model a pilot who
+cannot see the collective cannot hold a hover. **Chase** flies astern and
+follows the nose. **Orbit** keeps its heading and is where L2/R2 sweep a locked
+ground point.
 
 ### Camera
 
@@ -160,7 +182,8 @@ Head-less `SceneTree` scripts, run one at a time:
 godot --headless --script tests/map_tiles_test.gd
 godot --headless --script tests/height_field_test.gd
 godot --headless --script tests/terrain_sampling_test.gd
-godot --headless --script tests/helicopter_controls_test.gd
+godot --headless --script tests/rotor_model_test.gd
+godot --headless --script tests/building_mesh_test.gd
 godot --headless --script tests/gamepad_input_test.gd
 godot --headless --script tests/camera_orbit_lock_test.gd
 godot --headless --script tests/camera_zoom_profile_test.gd

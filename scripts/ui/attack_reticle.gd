@@ -19,6 +19,7 @@ var _pipper := Vector2.ZERO
 var _has_pipper := false
 var _range_text := "--"
 var _time_text := "--"
+var _instruments := PackedStringArray()
 
 
 func _ready() -> void:
@@ -36,6 +37,31 @@ func set_solution(alpha: float, pipper: Vector2, has_pipper: bool, solution: Dic
 	else:
 		_range_text = "%d m" % roundi(float(solution.get("range", 0.0)))
 		_time_text = "%.1f s" % float(solution.get("time", 0.0))
+	queue_redraw()
+
+
+## Cockpit instruments. There is no panel in the cockpit view, so airspeed,
+## height and collective have to be on the glass: with the rotor model, a pilot
+## who cannot see the collective cannot hold a hover.
+func set_instruments(
+	speed_knots: float,
+	altitude_agl: float,
+	collective: float,
+	heading_degrees: float
+) -> void:
+	_instruments = PackedStringArray([
+		"SPD  %3d kt" % roundi(speed_knots),
+		"AGL  %4d m" % roundi(altitude_agl),
+		"COL  %3d %%" % roundi(collective * 100.0),
+		"HDG  %03d" % (int(roundi(heading_degrees)) % 360),
+	])
+	queue_redraw()
+
+
+func hide_instruments() -> void:
+	if _instruments.is_empty():
+		return
+	_instruments = PackedStringArray()
 	queue_redraw()
 
 
@@ -67,3 +93,7 @@ func _draw() -> void:
 	var origin := centre + readout_offset
 	draw_string(font, origin, "RNG  %s" % _range_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, roundi(readout_size), colour)
 	draw_string(font, origin + Vector2(0.0, readout_size + 6.0), "TOF  %s" % _time_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, roundi(readout_size), colour)
+	var line := Vector2(28.0, size.y - 28.0 - float(_instruments.size() - 1) * (readout_size + 6.0))
+	for reading in _instruments:
+		draw_string(font, line, reading, HORIZONTAL_ALIGNMENT_LEFT, -1.0, roundi(readout_size), colour)
+		line.y += readout_size + 6.0

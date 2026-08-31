@@ -26,10 +26,16 @@ const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 @export var attack_fov := 78.0
 @export var camera_ground_clearance := 6.0
 
+@export_group("Cockpit View")
+## Pilot station relative to the airframe: forward along the nose and up.
+@export var cockpit_offset := Vector3(2.6, 1.1, 0.0)
+@export var cockpit_fov := 78.0
+
 @onready var terrain = $Terrain
 @onready var streamed_terrain = $StreamedTerrain
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
 @onready var camera: Camera3D = $Camera3D
+@onready var mission_panel: Control = $UI/Margin
 @onready var status_label: Label = $UI/Margin/Panel/Content/Status
 @onready var region_label: Label = $UI/Margin/Panel/Content/Region
 @onready var demo_button: Button = $UI/Margin/Panel/Content/DemoButton
@@ -44,7 +50,12 @@ var _camera_zoom := 1.0
 var _camera_follow_enabled := false
 var _camera_orbit_radians := 0.0
 var _camera_orbit_velocity := 0.0
-var _travel_camera_enabled := false
+## Three perspectives, cycled with R3. Cockpit is the default: the rotor model
+## makes attitude real, and the view that shows attitude honestly is the one
+## from inside the aircraft.
+enum View {COCKPIT, CHASE, ORBIT}
+
+var _view: View = View.COCKPIT
 var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
 var _orbit_lock := ORBIT_LOCK.new()
@@ -62,6 +73,7 @@ func _ready() -> void:
 	GamepadInput.controller_attention_changed.connect(_on_controller_attention_changed)
 	GamepadInput.action_pressed.connect(_on_gamepad_action_pressed)
 	_configure_zoom_profile()
+	_apply_view_chrome()
 	demo_button.pressed.connect(LocationService.cycle_region)
 	demo_button.text = "SWITCH THEATRE"
 	demo_button.visible = true
@@ -172,8 +184,11 @@ func _on_streamed_status_changed(message: String) -> void:
 
 
 func _update_follow_camera(delta: float) -> void:
+	if _view == View.COCKPIT:
+		_update_cockpit_camera()
+		return
 	var orbit_input := GamepadInput.get_camera_orbit_axis()
-	if _travel_camera_enabled:
+	if _view == View.CHASE:
 		_update_orbit_lock(delta, orbit_input)
 	else:
 		_release_orbit_lock()
@@ -183,8 +198,8 @@ func _update_follow_camera(delta: float) -> void:
 		_camera_orbit_radians = wrapf(_camera_orbit_radians + _camera_orbit_velocity * delta, -PI, PI)
 
 	_camera_travel_direction = Vector3(0.0, 0.0, -1.0).rotated(Vector3.UP, _camera_orbit_radians)
-	var target_height := travel_camera_height if _travel_camera_enabled else camera_height
-	var target_distance := travel_camera_trailing_distance if _travel_camera_enabled else camera_trailing_distance
+	var target_height := travel_camera_height if _view == View.CHASE else camera_height
+	var target_distance := travel_camera_trailing_distance if _view == View.CHASE else camera_trailing_distance
 	var mode_weight := 1.0 - exp(-camera_mode_response * delta)
 	_camera_current_height = lerpf(_camera_current_height, target_height, mode_weight)
 	_camera_current_distance = lerpf(_camera_current_distance, target_distance, mode_weight)
@@ -263,10 +278,34 @@ func _ground_point_under_helicopter() -> Vector3:
 	return Vector3(origin.x, _ground_height_at(origin), origin.z)
 
 
+func _update_instruments() -> void:
+	var focus := _focus_position()
+	var speed_knots := 0.0
+	var collective := 0.0
+	if "velocity" in helicopter_anchor:
+		var velocity: Vector3 = helicopter_anchor.velocity
+		speed_knots = Vector2(velocity.x, velocity.z).length() / 0.5144
+	if "collective" in helicopter_anchor:
+		collective = float(helicopter_anchor.collective)
+	var nose := helicopter_anchor.global_basis.x
+	var heading := rad_to_deg(atan2(nose.x, -nose.z))
+	attack_reticle.set_instruments(
+		speed_knots,
+		focus.y - _ground_height_at(focus),
+		collective,
+		heading + 360.0
+	)
+
+
 ## The gunsight only exists inside the attack close-up: its alpha is the inverse
 ## of the zoom blend, so it fades in exactly as the camera drops low.
 func _update_attack_reticle() -> void:
-	var alpha := 1.0 - _zoom_profile.blend(_camera_zoom)
+	# The cockpit has no panel, so the sight and the instruments are always up.
+	var alpha := 1.0 if _view == View.COCKPIT else 1.0 - _zoom_profile.blend(_camera_zoom)
+	if _view == View.COCKPIT:
+		_update_instruments()
+	else:
+		attack_reticle.hide_instruments()
 	if alpha <= 0.001:
 		attack_reticle.clear()
 		return
@@ -283,6 +322,21 @@ func _update_attack_reticle() -> void:
 			pipper = camera.unproject_position(impact)
 			has_pipper = true
 	attack_reticle.set_solution(alpha, pipper, has_pipper, solution)
+
+
+## The cockpit is rigid: it takes the airframe's transform outright, so pitch,
+## roll and the rotor's drift are all felt directly rather than smoothed away by
+## a follow camera.
+func _update_cockpit_camera() -> void:
+	var frame: Transform3D = helicopter_anchor.get_muzzle_transform() if helicopter_anchor.has_method("get_muzzle_transform") else helicopter_anchor.global_transform
+	camera.global_transform = Transform3D(
+		frame.basis.orthonormalized(),
+		frame.origin + frame.basis.orthonormalized() * cockpit_offset
+	)
+	# The airframe faces local +X, so the camera has to look down that axis
+	# rather than its own -Z.
+	camera.global_basis = Basis.looking_at(frame.basis.orthonormalized().x, Vector3.UP)
+	camera.fov = cockpit_fov
 
 
 func _snap_follow_camera() -> void:
@@ -315,7 +369,7 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		_look_target = desired_look
 		camera.fov = target_fov
 	else:
-		var follow_response := travel_follow_response if _travel_camera_enabled else tactical_follow_response
+		var follow_response := travel_follow_response if _view == View.CHASE else tactical_follow_response
 		var follow_weight := 1.0 - exp(-follow_response * delta)
 		camera.global_position = camera.global_position.lerp(desired_position, follow_weight)
 		# Ease the look target too: releasing a sweep with the aircraft off-frame
@@ -334,15 +388,34 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 	elif action == GamepadInput.ACTION_ZOOM_OUT:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
-		_travel_camera_enabled = not _travel_camera_enabled
-		_release_orbit_lock()
-		_camera_orbit_velocity = 0.0
-		if _travel_camera_enabled:
-			status_label.text = "TRAVEL VIEW: following behind helicopter heading"
-		else:
-			# Keep the travel view's current heading; only height and distance ease
-			# back to tactical values. L2/R2 can orbit from here immediately.
-			status_label.text = "TACTICAL VIEW: current camera heading retained"
+		_cycle_view()
+
+
+## Cockpit, chase, orbit. Cockpit shows the HUD alone; the external views keep
+## the mission panel.
+func _cycle_view() -> void:
+	_release_orbit_lock()
+	_camera_orbit_velocity = 0.0
+	match _view:
+		View.COCKPIT:
+			_view = View.CHASE
+			status_label.text = "CHASE VIEW: astern, following the nose"
+		View.CHASE:
+			_view = View.ORBIT
+			status_label.text = "ORBIT VIEW: L2/R2 sweep a locked ground point"
+		_:
+			_view = View.COCKPIT
+			status_label.text = "COCKPIT VIEW"
+	_apply_view_chrome()
+	if _view != View.COCKPIT:
+		_snap_follow_camera()
+
+
+## In the cockpit the screen is the HUD and nothing else.
+func _apply_view_chrome() -> void:
+	var external := _view != View.COCKPIT
+	mission_panel.visible = external
+	gamepad_diagnostic.get_parent().visible = external
 
 
 func _on_gamepad_connection_changed(connected: bool, _device_id: int, device_name: String) -> void:
