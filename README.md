@@ -103,21 +103,42 @@ game. OpenStrike uses Godot's standard Android joypad path, so it does not need
 Bluetooth scanning permissions. The in-game diagnostic panel shows the detected
 controller name, both stick vectors, and L1/R1/L3 state.
 
+Sticks follow the DJI Mode 2 layout — throttle and yaw on the left, cyclic on
+the right — and the aircraft flies like a drone in position hold: the stick
+commands a speed rather than a push, so centring it brakes hard and stops
+instead of coasting, and the airframe's tilt is derived from the speed it is
+actually carrying. Altitude is still commanded as height above the terrain
+rather than an absolute hold, so the aircraft rides the contour.
+
 ### MVP controller map
 
 | Control | Action |
 | --- | --- |
-| Left stick up/down | Fly forward/backward |
-| Left stick left/right | Strafe left/right |
-| Right stick left/right | Rotate/yaw |
-| Right stick up/down | Climb/descend |
-| L2 / R2 | Rotate camera left/right |
+| Left stick up/down | Throttle: climb/descend |
+| Left stick left/right | Yaw left/right |
+| Right stick up/down | Cyclic: fly forward/backward |
+| Right stick left/right | Cyclic: strafe left/right |
+| L2 / R2 | Tactical view: orbit the camera. Travel view: sweep around a locked ground point |
 | R1 | Cannon |
 | L1 | Rockets |
 | R3 | Toggle tactical / low-angle travel follow camera |
 | L3 | Context/extraction |
 | D-pad left/right | Previous/next target |
-| D-pad up/down | Camera zoom in/out |
+| D-pad up/down | Camera zoom in/out, continuing into the attack close-up |
+
+### Camera
+
+Zooming in past the tactical range enters the attack close-up: the camera
+continues to close, but its height falls away faster than its distance, so it
+sinks from a top-down view to roughly 19 m behind and 9 m above the aircraft
+while the field of view widens from 42 to 78 degrees for forced perspective. A
+minimum ground clearance keeps the low camera out of rising terrain.
+
+In travel view (R3), L2/R2 no longer steer the trailing heading. The first
+deflection drops a pivot on the ground beneath the aircraft and locks it to the
+world; the camera then sweeps around that point and keeps looking at it, so the
+helicopter can fly out of frame mid-sweep. Releasing the trigger hands the
+sweep's final heading back to the follow camera.
 
 ## Tests
 
@@ -129,6 +150,8 @@ godot --headless --script tests/height_field_test.gd
 godot --headless --script tests/terrain_sampling_test.gd
 godot --headless --script tests/helicopter_controls_test.gd
 godot --headless --script tests/gamepad_input_test.gd
+godot --headless --script tests/camera_orbit_lock_test.gd
+godot --headless --script tests/camera_zoom_profile_test.gd
 ```
 
 `map_tiles_test.gd` pins the coordinate chain — region bounds, tile range,

@@ -97,6 +97,17 @@ func is_context_held() -> bool:
 	return is_controller_ready() and Input.is_action_pressed(ACTION_CONTEXT)
 
 
+## DJI Mode 2 names for the two sticks. The axis bindings below are unchanged;
+## these simply describe how the aircraft reads them — left stick is throttle and
+## yaw, right stick is the cyclic that translates the airframe.
+func get_collective_yaw() -> Vector2:
+	return get_flight_vector()
+
+
+func get_cyclic() -> Vector2:
+	return get_aim_vector()
+
+
 func get_camera_orbit_axis() -> float:
 	if not is_controller_ready():
 		return 0.0
@@ -115,7 +126,7 @@ func get_diagnostic_text() -> String:
 	var flight := get_flight_vector()
 	var aim := get_aim_vector()
 	var orbit := get_camera_orbit_axis()
-	return "GAMEPAD: %s\nSTRAFE/DRIVE %+.2f %+.2f\nYAW/LIFT     %+.2f %+.2f\nL2/R2 CAMERA %+.2f\nL1 %s   R1 %s   L3 %s" % [
+	return "GAMEPAD: %s\nYAW/THROTTLE %+.2f %+.2f\nROLL/PITCH   %+.2f %+.2f\nL2/R2 CAMERA %+.2f\nL1 %s   R1 %s   L3 %s" % [
 		active_device_name,
 		flight.x,
 		flight.y,
