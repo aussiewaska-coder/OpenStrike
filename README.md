@@ -40,7 +40,7 @@ controller name, both stick vectors, and L1/R1/L3 state.
 | Left stick left/right | Strafe left/right |
 | Right stick left/right | Rotate/yaw |
 | Right stick up/down | Climb/descend |
-| L2 / R2 | Rotate camera left/right |
+| L2 / R2 | Rotate camera right/left |
 | R1 | Cannon |
 | L1 | Rockets |
 | R3 | Toggle tactical / low-angle travel follow camera |
