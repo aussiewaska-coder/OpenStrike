@@ -4,11 +4,27 @@
     {
       "id": "au_qld_surfers_paradise",
       "display_name": "SURFERS PARADISE // BEACHFRONT START",
-      "subtitle": "4 km offline Gold Coast skyline and coastline",
+      "subtitle": "4 km packaged Gold Coast skyline and coastline",
       "center_latitude": -28.0023,
       "center_longitude": 153.431,
       "activation_radius_km": 60.0,
       "metadata": "res://data/regions/au_qld_mt_coot_tha/region.json"
+    },
+    {
+      "id": "au_gold_coast_tweed_corridor",
+      "display_name": "GOLD COAST // TWEED CORRIDOR",
+      "subtitle": "36 km streamed theatre: Surfers Paradise to Tweed Heads, 25 km inland",
+      "center_latitude": -28.08,
+      "center_longitude": 153.365,
+      "activation_radius_km": 60.0,
+      "streamed": true,
+      "world_size_m": 36000.0,
+      "elevation_zoom": 12,
+      "vertical_exaggeration": 1.0,
+      "imagery_server": "qld",
+      "spawn_latitude": -28.0023,
+      "spawn_longitude": 153.431,
+      "spawn_yaw_degrees": -15.0
     }
   ]
 }

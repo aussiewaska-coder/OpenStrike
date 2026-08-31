@@ -18,6 +18,7 @@ const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
 @export var travel_follow_response := 5.0
 
 @onready var terrain = $Terrain
+@onready var streamed_terrain = $StreamedTerrain
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
 @onready var camera: Camera3D = $Camera3D
 @onready var status_label: Label = $UI/Margin/Panel/Content/Status
@@ -45,7 +46,9 @@ func _ready() -> void:
 	GamepadInput.connection_changed.connect(_on_gamepad_connection_changed)
 	GamepadInput.controller_attention_changed.connect(_on_controller_attention_changed)
 	GamepadInput.action_pressed.connect(_on_gamepad_action_pressed)
-	demo_button.pressed.connect(LocationService.use_demo_location)
+	demo_button.pressed.connect(LocationService.cycle_region)
+	demo_button.text = "SWITCH THEATRE"
+	demo_button.visible = true
 	_spawn_helicopter()
 	if not LocationService.selected_region.is_empty():
 		_on_region_selected(LocationService.selected_region)
@@ -92,19 +95,61 @@ func _on_region_selected(region: Dictionary) -> void:
 		region_label.text = "REGION: NO PREPARED THEATRE NEARBY"
 		demo_button.visible = true
 		return
+	if bool(region.get("streamed", false)):
+		await _load_streamed_region(region)
+	else:
+		_load_packaged_region(region)
+
+
+func _load_packaged_region(region: Dictionary) -> void:
+	streamed_terrain.set_focus(null)
+	streamed_terrain.visible = false
+	terrain.visible = true
 	var metadata_path: String = region.get("metadata", "")
 	if not terrain.load_region(metadata_path):
 		status_label.text = "The selected region is registered but its offline terrain asset is missing."
 		return
 	region_label.text = "REGION: %s\n%s" % [region.get("display_name", "Unknown"), region.get("subtitle", "")]
 	status_label.text = "Offline terrain loaded. Live location is no longer required for this session."
-	demo_button.visible = false
+	helicopter_anchor.set_terrain(terrain)
 	helicopter_anchor.position = terrain.get_spawn_position(90.0)
 	helicopter_anchor.rotation_degrees.y = terrain.get_spawn_yaw_degrees(-35.0)
 	if helicopter_anchor.has_method("reset_altitude_smoothing"):
 		helicopter_anchor.reset_altitude_smoothing()
 	_camera_follow_enabled = true
 	_snap_follow_camera()
+
+
+## Streamed theatres reach the network, so the camera stays parked until the
+## elevation grid and the first imagery have actually arrived.
+func _load_streamed_region(region: Dictionary) -> void:
+	terrain.visible = false
+	streamed_terrain.visible = true
+	if not streamed_terrain.status_changed.is_connected(_on_streamed_status_changed):
+		streamed_terrain.status_changed.connect(_on_streamed_status_changed)
+	_camera_follow_enabled = false
+	region_label.text = "REGION: %s\n%s" % [region.get("display_name", "Unknown"), region.get("subtitle", "")]
+	var loaded: bool = await streamed_terrain.load_region(region)
+	if not loaded:
+		region_label.text = "REGION: %s // STREAM UNAVAILABLE" % region.get("display_name", "Unknown")
+		return
+	streamed_terrain.set_spawn_from_coordinate(
+		float(region.get("spawn_latitude", region.get("center_latitude", 0.0))),
+		float(region.get("spawn_longitude", region.get("center_longitude", 0.0))),
+		float(region.get("spawn_yaw_degrees", -35.0))
+	)
+	helicopter_anchor.set_terrain(streamed_terrain)
+	helicopter_anchor.position = streamed_terrain.get_spawn_position(120.0)
+	helicopter_anchor.rotation_degrees.y = streamed_terrain.get_spawn_yaw_degrees(-35.0)
+	if helicopter_anchor.has_method("reset_altitude_smoothing"):
+		helicopter_anchor.reset_altitude_smoothing()
+	streamed_terrain.set_focus(helicopter_anchor)
+	_camera_follow_enabled = true
+	_snap_follow_camera()
+
+
+func _on_streamed_status_changed(message: String) -> void:
+	status_label.text = message
 
 
 func _update_follow_camera(delta: float) -> void:

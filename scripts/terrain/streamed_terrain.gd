@@ -1,0 +1,272 @@
+extends Node3D
+## Terrain for a theatre far too large to hold as a single texture.
+##
+## The elevation grid for the whole region is small enough to keep resident
+## (~24 Terrarium tiles for 36 km), so it is fetched once and every height
+## query reads from it. Imagery is the opposite problem: 36 km of 10 cm aerial
+## would be a 360,000 px image, so the region is split into a grid of chunks
+## and only the chunks near the aircraft carry a detailed texture. Everything
+## else shows a single region-wide overview until it is flown near.
+
+signal status_changed(message: String)
+signal region_ready()
+
+@export var chunk_count := 12              ## chunks per side; 12 -> 3 km chunks over 36 km
+@export var chunk_resolution := 33         ## vertices per chunk edge
+@export var elevation_zoom := 12           ## Terrarium zoom; 12 is ~34 m/px, SRTM's native scale
+@export var heightfield_resolution := 513
+@export var overview_texture_px := 2048
+@export var detail_texture_px := 2048
+@export var detail_radius_m := 7000.0
+@export var max_detail_chunks := 16
+@export var detail_update_interval_s := 0.6
+
+var _height_image: Image
+var _metadata: Dictionary = {}
+var _bounds: Dictionary = {}
+var _chunks: Array = []
+var _overview_texture: ImageTexture
+var _focus: Node3D
+var _update_accumulator := 0.0
+var _pending_detail := {}
+
+
+func _ready() -> void:
+	set_process(false)
+
+
+func set_focus(node: Node3D) -> void:
+	_focus = node
+	set_process(node != null)
+
+
+## Streams a region described by a catalog entry. Awaits the network, so
+## callers must await this too.
+func load_region(region: Dictionary) -> bool:
+	_clear_terrain()
+	var region_id := String(region.get("id", "region"))
+	var world_size := float(region.get("world_size_m", 36000.0))
+	var center_latitude := float(region.get("center_latitude", 0.0))
+	var center_longitude := float(region.get("center_longitude", 0.0))
+	_bounds = MapTiles.region_bounds(center_latitude, center_longitude, world_size)
+	elevation_zoom = int(region.get("elevation_zoom", elevation_zoom))
+
+	status_changed.emit("Streaming elevation for %s..." % region.get("display_name", region_id))
+	TileClient.load_progress.connect(_on_tile_progress)
+	var field: Dictionary = await TileClient.fetch_heightfield(
+		region_id, _bounds, elevation_zoom, heightfield_resolution
+	)
+	TileClient.load_progress.disconnect(_on_tile_progress)
+	if field.is_empty():
+		status_changed.emit("Elevation could not be streamed. Check the network and retry.")
+		return false
+
+	_height_image = field["image"]
+	_metadata = {
+		"world_size_m": world_size,
+		"elevation_min_m": float(field["elevation_min_m"]),
+		"elevation_max_m": float(field["elevation_max_m"]),
+		"vertical_exaggeration": float(region.get("vertical_exaggeration", 1.0)),
+	}
+
+	status_changed.emit("Streaming overview imagery...")
+	_overview_texture = await TileClient.fetch_aerial(
+		_bounds, overview_texture_px, String(region.get("imagery_server", "qld"))
+	)
+
+	status_changed.emit("Building terrain...")
+	await _build_chunks(world_size)
+	status_changed.emit("Theatre ready: %.0f km across, %.0f m of relief." % [
+		world_size / 1000.0,
+		_metadata["elevation_max_m"] - _metadata["elevation_min_m"],
+	])
+	region_ready.emit()
+	return true
+
+
+func sample_height_world(world_x: float, world_z: float) -> float:
+	return HeightField.sample(_height_image, _metadata, world_x, world_z)
+
+
+func get_spawn_position(clearance_m: float = 90.0) -> Vector3:
+	var world := _spawn_world_xz()
+	return Vector3(world.x, sample_height_world(world.x, world.y) + clearance_m, world.y)
+
+
+func get_spawn_yaw_degrees(default_yaw: float = -35.0) -> float:
+	return float(_metadata.get("spawn_yaw_degrees", default_yaw))
+
+
+func _spawn_world_xz() -> Vector2:
+	var world_size := float(_metadata.get("world_size_m", 36000.0))
+	if _metadata.has("spawn_uv"):
+		var uv: Vector2 = _metadata["spawn_uv"]
+		return Vector2((uv.x - 0.5) * world_size, (uv.y - 0.5) * world_size)
+	return Vector2.ZERO
+
+
+## Places the spawn from a real coordinate rather than world metres, so a
+## catalog entry can just name where the flight starts.
+func set_spawn_from_coordinate(latitude: float, longitude: float, yaw_degrees: float) -> void:
+	_metadata["spawn_uv"] = MapTiles.uv_of(_bounds, latitude, longitude)
+	_metadata["spawn_yaw_degrees"] = yaw_degrees
+
+
+func _build_chunks(world_size: float) -> void:
+	var chunk_size := world_size / float(chunk_count)
+	var spacing := chunk_size / float(chunk_resolution - 1)
+	for cz in range(chunk_count):
+		for cx in range(chunk_count):
+			var origin_x := -world_size * 0.5 + float(cx) * chunk_size
+			var origin_z := -world_size * 0.5 + float(cz) * chunk_size
+			var mesh := _build_chunk_mesh(origin_x, origin_z, chunk_size, spacing, world_size)
+			var material := StandardMaterial3D.new()
+			material.albedo_texture = _overview_texture
+			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+			material.cull_mode = BaseMaterial3D.CULL_DISABLED
+			var instance := MeshInstance3D.new()
+			instance.name = "Chunk_%d_%d" % [cx, cz]
+			instance.mesh = mesh
+			instance.material_override = material
+			add_child(instance)
+			_chunks.append({
+				"index": cz * chunk_count + cx,
+				"cx": cx,
+				"cz": cz,
+				"instance": instance,
+				"material": material,
+				"center": Vector2(origin_x + chunk_size * 0.5, origin_z + chunk_size * 0.5),
+				"detailed": false,
+			})
+		# Yield a frame per row so a 144-chunk build cannot trip Android's ANR.
+		await get_tree().process_frame
+
+
+func _build_chunk_mesh(
+	origin_x: float, origin_z: float, chunk_size: float, spacing: float, world_size: float
+) -> ArrayMesh:
+	var side := chunk_resolution
+	var heights := PackedFloat32Array()
+	heights.resize(side * side)
+	for j in range(side):
+		for i in range(side):
+			var world_x := origin_x + float(i) * spacing
+			var world_z := origin_z + float(j) * spacing
+			heights[j * side + i] = sample_height_world(world_x, world_z)
+
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	vertices.resize(side * side)
+	normals.resize(side * side)
+	uvs.resize(side * side)
+	for j in range(side):
+		for i in range(side):
+			var index := j * side + i
+			var world_x := origin_x + float(i) * spacing
+			var world_z := origin_z + float(j) * spacing
+			vertices[index] = Vector3(world_x, heights[index], world_z)
+			# Region-wide UV. A chunk that later gains its own texture reuses
+			# these coordinates via the material's uv1 scale/offset.
+			uvs[index] = Vector2(world_x / world_size + 0.5, world_z / world_size + 0.5)
+			# Central differences over the chunk's own grid: no extra sampling.
+			var west := heights[j * side + maxi(i - 1, 0)]
+			var east := heights[j * side + mini(i + 1, side - 1)]
+			var north := heights[maxi(j - 1, 0) * side + i]
+			var south := heights[mini(j + 1, side - 1) * side + i]
+			normals[index] = Vector3(west - east, 2.0 * spacing, north - south).normalized()
+
+	var indices := PackedInt32Array()
+	for j in range(side - 1):
+		for i in range(side - 1):
+			var top_left := j * side + i
+			var top_right := top_left + 1
+			var bottom_left := (j + 1) * side + i
+			var bottom_right := bottom_left + 1
+			indices.append_array([top_left, bottom_left, top_right, top_right, bottom_left, bottom_right])
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+func _process(delta: float) -> void:
+	if _chunks.is_empty() or _focus == null:
+		return
+	_update_accumulator += delta
+	if _update_accumulator < detail_update_interval_s:
+		return
+	_update_accumulator = 0.0
+	_refresh_detail_chunks()
+
+
+func _refresh_detail_chunks() -> void:
+	var focus_xz := Vector2(_focus.global_position.x, _focus.global_position.z)
+	var ranked: Array = []
+	for chunk in _chunks:
+		var distance: float = focus_xz.distance_to(chunk["center"])
+		if distance <= detail_radius_m:
+			ranked.append({"chunk": chunk, "distance": distance})
+	ranked.sort_custom(func(a, b): return a["distance"] < b["distance"])
+	var wanted := ranked.slice(0, max_detail_chunks)
+
+	var keep := {}
+	for entry in wanted:
+		keep[int(entry["chunk"]["index"])] = true
+	# Drop detail that has fallen behind so texture memory stays bounded.
+	for chunk in _chunks:
+		if chunk["detailed"] and not keep.has(int(chunk["index"])):
+			chunk["material"].albedo_texture = _overview_texture
+			chunk["material"].uv1_scale = Vector3.ONE
+			chunk["material"].uv1_offset = Vector3.ZERO
+			chunk["detailed"] = false
+	for entry in wanted:
+		var chunk: Dictionary = entry["chunk"]
+		if chunk["detailed"] or _pending_detail.has(int(chunk["index"])):
+			continue
+		_request_chunk_detail(chunk)
+
+
+func _request_chunk_detail(chunk: Dictionary) -> void:
+	var key := int(chunk["index"])
+	_pending_detail[key] = true
+	var cx: int = chunk["cx"]
+	var cz: int = chunk["cz"]
+	var north := lerpf(float(_bounds["north"]), float(_bounds["south"]), float(cz) / float(chunk_count))
+	var south := lerpf(float(_bounds["north"]), float(_bounds["south"]), float(cz + 1) / float(chunk_count))
+	var west := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx) / float(chunk_count))
+	var east := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx + 1) / float(chunk_count))
+	var texture: ImageTexture = await TileClient.fetch_aerial(
+		{"north": north, "south": south, "west": west, "east": east}, detail_texture_px
+	)
+	_pending_detail.erase(key)
+	if texture == null or not is_instance_valid(chunk["instance"]):
+		return
+	chunk["material"].albedo_texture = texture
+	# Stretch this chunk's slice of the region-wide UV back over 0..1.
+	chunk["material"].uv1_scale = Vector3(float(chunk_count), float(chunk_count), 1.0)
+	chunk["material"].uv1_offset = Vector3(-float(cx), -float(cz), 0.0)
+	chunk["detailed"] = true
+
+
+func _on_tile_progress(done: int, total: int, message: String) -> void:
+	status_changed.emit("%s (%d/%d)" % [message, done, total])
+
+
+func _clear_terrain() -> void:
+	for chunk in _chunks:
+		if is_instance_valid(chunk["instance"]):
+			chunk["instance"].queue_free()
+	_chunks.clear()
+	_pending_detail.clear()
+	_height_image = null
+	_metadata = {}
+	_bounds = {}
+	_overview_texture = null

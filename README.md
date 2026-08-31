@@ -1,8 +1,9 @@
 # OpenStrike
 
 Native Android isometric helicopter-combat proof of concept built with Godot
-4.7. The current slice proves location-aware selection of a packaged,
-real-elevation terrain region without requiring live GIS access during play.
+4.7. Terrain comes in two forms: small **packaged** theatres that ship inside
+the APK, and large **streamed** theatres that pull real elevation and aerial
+imagery from public map services and cache them to disk.
 
 ## What works
 
@@ -10,12 +11,82 @@ real-elevation terrain region without requiring live GIS access during play.
 - Nearest prepared-region selection without saving raw coordinates.
 - Editor fallback to the Surfers Paradise, Gold Coast demo theatre.
 - A packaged 4 km x 4 km heightmap derived from NASA SRTM elevation data.
-- Offline OpenStreetMap building positions and Gold Coast shoreline geometry.
+- A streamed 36 km Gold Coast / Tweed corridor reaching 25 km inland and south
+  to Tweed Heads, at roughly 10 cm aerial imagery near the aircraft.
+- Offline OpenStreetMap building positions and Gold Coast shoreline geometry
+  (packaged theatres only).
 - Runtime terrain mesh generation and loading of the supplied helicopter GLB.
 - Native Android Bluetooth/HID gamepad discovery and hot-plug handling.
 - Abstract dual-stick, shoulder-button, stick-click and D-pad controls with
   configurable dead-zone/response values.
 - Automatic pause on controller disconnect and automatic resume after reconnect.
+
+## Theatres
+
+`data/regions/catalog.json` lists every installed theatre. An entry with
+`"streamed": true` is fetched at run time; anything else loads packaged assets.
+The two currently shipped overlap — the packaged Surfers box sits inside the
+streamed corridor — so the on-screen **SWITCH THEATRE** button cycles between
+them.
+
+| | Surfers Paradise | Gold Coast / Tweed corridor |
+| --- | --- | --- |
+| Size | 4 km | 36 km |
+| Source | packaged in the APK | streamed and cached |
+| Elevation | SRTM crop, ~16 m/px | Terrarium z12, ~34 m/px |
+| Imagery | one 4096 px aerial | ~1.5 m/px near the aircraft |
+| Relief | 62 m | 1096 m |
+| Buildings | 2,373 OSM footprints | none yet |
+
+## Streamed theatres
+
+The elevation grid for a whole region is small — the 36 km corridor is 30
+Terrarium tiles, under a megabyte — so it is fetched once and kept resident,
+and every height query reads from it.
+
+Imagery is the opposite problem. Covering 36 km at the imagery's true 10 cm
+resolution would need a 360,000 pixel texture, so the region is split into a
+grid of chunks (12 x 12 by default, 3 km each). Every chunk starts on a single
+region-wide overview image; the sixteen chunks nearest the aircraft are then
+re-textured at full detail and released again as it flies on. Chunk meshes all
+carry region-wide UVs, and a detailed chunk just remaps its slice back over
+0..1 with the material's `uv1_scale` / `uv1_offset`.
+
+Sources, all free and none needing an API key:
+
+- **Elevation** — Mapzen/Terrarium tiles from AWS Open Data
+  `elevation-tiles-prod`, decoded as `R*256 + G + B/256 - 32768` metres.
+  Zoom 12 is ~34 m/px, which matches SRTM's ~30 m native sampling; higher
+  zooms only interpolate and are not worth the bandwidth.
+- **Imagery** — the Queensland Government `LatestStateProgram_AllUsers` image
+  service, which resolves individual people on the beach and covers the whole
+  corridor including across the NSW border. NSW SIX is wired as a fallback for
+  areas Queensland does not carry; it caps requests at 1024 px where Queensland
+  allows 4100.
+
+Both are requested in EPSG:4326 so the returned images are linear in
+latitude/longitude and share one UV space with the elevation grid.
+
+Everything fetched is written to `user://map_cache` and re-read on later
+launches, so an area needs the network only the first time it is flown. The
+`INTERNET` permission is enabled in `export_presets.cfg` for this reason.
+
+**This is the one place OpenStrike departs from being fully offline.** A
+packaged theatre still needs no network at all. A streamed theatre needs
+connectivity the first time you fly a given piece of ground; after that the
+cache serves it. There is no pre-download step yet, so flying somewhere new
+with no signal shows the overview imagery rather than detail.
+
+### Known gaps
+
+- No pre-caching: new ground needs signal the first time.
+- No buildings in streamed theatres. Scaling the packaged approach to the
+  corridor means roughly 120,000 OpenStreetMap footprints, which needs a
+  filtering pass that has not been designed yet.
+- Terrarium carries occasional single-pixel voids — the corridor has two,
+  inland near Advancetown Lake, reading below -700 m. `ELEVATION_FLOOR_M` in
+  `tile_client.gd` clamps them off; genuine negatives here are dredged canals
+  no deeper than about -20 m and open ocean reads a flat 0.
 
 ## Run in Godot
 
@@ -48,6 +119,23 @@ controller name, both stick vectors, and L1/R1/L3 state.
 | D-pad left/right | Previous/next target |
 | D-pad up/down | Camera zoom in/out |
 
+## Tests
+
+Head-less `SceneTree` scripts, run one at a time:
+
+```sh
+godot --headless --script tests/map_tiles_test.gd
+godot --headless --script tests/height_field_test.gd
+godot --headless --script tests/terrain_sampling_test.gd
+godot --headless --script tests/helicopter_controls_test.gd
+godot --headless --script tests/gamepad_input_test.gd
+```
+
+`map_tiles_test.gd` pins the coordinate chain — region bounds, tile range,
+Mercator round trip and Terrarium decoding — against values sampled from the
+live mosaic and checked against known ground elevations (Surfers Paradise
+beach 8 m, Hinze Dam 83 m, Springbrook 635 m, Tweed Heads 7 m).
+
 ## Location privacy
 
 The plug-in requests foreground location only. It does not request background
@@ -55,7 +143,10 @@ location, transmit location, or persist raw latitude/longitude. Location
 updates stop as soon as a prepared theatre has been selected. If permission is
 declined, the game remains usable with a manually selected prepared region.
 
-## Rebuild the demo heightmap
+Streamed imagery is requested by map tile and bounding box, never by device
+position, so the map services are not told where the player is.
+
+## Rebuild the packaged heightmap
 
 Download `S29E153.hgt.gz` from the source URL recorded in the region metadata,
 then run:
@@ -70,3 +161,9 @@ python3 tools/build_terrain.py S29E153.hgt.gz \
 `tools/build_map_features.py` converts a bounded Overpass JSON extract into the
 packaged building and coastline files. Map geometry is © OpenStreetMap
 contributors and licensed under ODbL; see `data/regions/ATTRIBUTION.md`.
+
+Note that `build_terrain.py` reads a single HGT tile and clamps samples that
+fall outside it. The packaged Surfers box spans latitude -27.9843 to -28.0203
+and so crosses the boundary between `S28E153` and `S29E153`; its northern edge
+is therefore clamped rather than true elevation. Streamed theatres do not have
+this problem — they mosaic every tile the region touches.

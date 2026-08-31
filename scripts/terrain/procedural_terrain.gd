@@ -29,32 +29,7 @@ func load_region(metadata_path: String) -> bool:
 
 
 func sample_height_world(world_x: float, world_z: float) -> float:
-	if _height_image == null or _height_image.is_empty():
-		return 0.0
-	var world_size := float(_metadata.get("world_size_m", 4000.0))
-	var u: float = clampf(world_x / world_size + 0.5, 0.0, 1.0)
-	var v: float = clampf(world_z / world_size + 0.5, 0.0, 1.0)
-	var pixel_x := u * float(_height_image.get_width() - 1)
-	var pixel_y := v * float(_height_image.get_height() - 1)
-	var x0 := int(floor(pixel_x))
-	var y0 := int(floor(pixel_y))
-	var x1 := mini(x0 + 1, _height_image.get_width() - 1)
-	var y1 := mini(y0 + 1, _height_image.get_height() - 1)
-	var blend_x := pixel_x - float(x0)
-	var blend_y := pixel_y - float(y0)
-	var top := lerpf(
-		_decoded_height(_height_image.get_pixel(x0, y0).r),
-		_decoded_height(_height_image.get_pixel(x1, y0).r),
-		blend_x
-	)
-	var bottom := lerpf(
-		_decoded_height(_height_image.get_pixel(x0, y1).r),
-		_decoded_height(_height_image.get_pixel(x1, y1).r),
-		blend_x
-	)
-	# Bilinear sampling removes the one-pixel elevation steps that otherwise
-	# make terrain-following aircraft jump at every heightmap cell boundary.
-	return lerpf(top, bottom, blend_y)
+	return HeightField.sample(_height_image, _metadata, world_x, world_z)
 
 
 func get_spawn_position(clearance_m: float = 90.0) -> Vector3:
@@ -118,10 +93,7 @@ func _build_mesh() -> void:
 
 
 func _decoded_height(encoded: float) -> float:
-	var min_m := float(_metadata.get("elevation_min_m", 0.0))
-	var max_m := float(_metadata.get("elevation_max_m", 1.0))
-	var exaggeration := float(_metadata.get("vertical_exaggeration", 1.5))
-	return lerp(min_m, max_m, encoded) * exaggeration
+	return HeightField.decode(_metadata, encoded)
 
 
 func _terrain_colour(elevation: float) -> Color:

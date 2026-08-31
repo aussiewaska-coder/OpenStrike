@@ -13,6 +13,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 LocationService="*res://scripts/location/location_service.gd"
 GamepadInput="*res://scripts/input/gamepad_input.gd"
+TileClient="*res://scripts/terrain/tile_client.gd"
 
 [display]
 

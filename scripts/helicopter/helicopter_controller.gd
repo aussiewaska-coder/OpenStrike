@@ -131,3 +131,10 @@ func _update_visual(flight: Vector2, yaw_input: float, delta: float) -> void:
 	var lean_weight := 1.0 - exp(-lean_response * delta)
 	_visual.rotation.z = lerpf(_visual.rotation.z, deg_to_rad(target_pitch), lean_weight)
 	_visual.rotation.x = lerpf(_visual.rotation.x, deg_to_rad(target_bank), lean_weight)
+
+
+## Lets the active theatre swap the height source. Packaged and streamed
+## terrain both expose sample_height_world(), so terrain-following works
+## against either without knowing which is loaded.
+func set_terrain(node: Node) -> void:
+	_terrain = node

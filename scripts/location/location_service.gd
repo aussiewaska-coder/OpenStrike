@@ -104,6 +104,23 @@ func _select_region(latitude: float, longitude: float, force_nearest: bool) -> v
 	region_selected.emit(selected_region)
 
 
+## Cycles to the next installed theatre. Nearest-by-distance is right on
+## launch, but the packaged Surfers box sits wholly inside the streamed
+## corridor, so the two overlap and the player needs a way to pick.
+func cycle_region() -> void:
+	if _regions.is_empty():
+		return
+	var index := 0
+	var current := String(selected_region.get("id", ""))
+	for position in range(_regions.size()):
+		if String(_regions[position].get("id", "")) == current:
+			index = (position + 1) % _regions.size()
+			break
+	selected_region = _regions[index].duplicate(true)
+	_emit_status("manual", "Theatre selected manually.")
+	region_selected.emit(selected_region)
+
+
 func _load_region_catalog() -> Array:
 	if not FileAccess.file_exists(REGION_CATALOG_PATH):
 		push_error("Region catalog is missing: %s" % REGION_CATALOG_PATH)
