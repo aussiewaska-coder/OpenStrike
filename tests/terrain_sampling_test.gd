@@ -19,6 +19,16 @@ func _init() -> void:
 	})
 	assert(is_equal_approx(terrain.sample_height_world(0.0, 0.0), 50.0))
 	assert(is_equal_approx(terrain.sample_height_world(-0.5, -0.5), 37.5))
+
+	# The flyable box comes from the theatre, not a constant: a fixed limit
+	# fenced the aircraft into 4 km no matter which region was loaded.
+	if not is_equal_approx(terrain.world_half_extent(), 1.0):
+		push_error("half extent must follow the region metadata, got %f" % terrain.world_half_extent())
+		quit(1)
+	terrain.set("_metadata", {"world_size_m": 36000.0})
+	if not is_equal_approx(terrain.world_half_extent(), 18000.0):
+		push_error("a 36 km corridor must allow 18000 m, got %f" % terrain.world_half_extent())
+		quit(1)
 	terrain.free()
 	print("TERRAIN_SAMPLING_TEST_PASS")
 	quit()

@@ -86,6 +86,13 @@ func load_region(region: Dictionary) -> bool:
 	return true
 
 
+## Half the region's width, which is how far the aircraft may fly from the
+## centre. Theatres differ by an order of magnitude, so nothing downstream may
+## assume a size.
+func world_half_extent() -> float:
+	return float(_metadata.get("world_size_m", 36000.0)) * 0.5
+
+
 func sample_height_world(world_x: float, world_z: float) -> float:
 	return HeightField.sample(_height_image, _metadata, world_x, world_z)
 

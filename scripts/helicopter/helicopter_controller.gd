@@ -3,6 +3,9 @@ extends Node3D
 const FLIGHT_MATH := preload("res://scripts/helicopter/flight_math.gd")
 
 @export var terrain_path: NodePath = NodePath("../Terrain")
+## Kept clear of the very edge so the aircraft never sits on the boundary where
+## the terrain mesh ends.
+@export var world_edge_margin := 50.0
 @export_group("Playful Flight Feel")
 @export var acceleration := 68.0
 @export var braking := 26.0
@@ -35,10 +38,12 @@ var _commanded_clearance := 90.0
 var _yaw_velocity_degrees := 0.0
 var _smoothed_ground_height := 0.0
 var _ground_height_initialized := false
+var _world_limit := 1950.0
 
 
 func _ready() -> void:
 	_terrain = get_node_or_null(terrain_path)
+	_adopt_world_bounds(_terrain)
 	_commanded_clearance = terrain_clearance
 	call_deferred("_find_visual")
 
@@ -60,8 +65,8 @@ func _physics_process(delta: float) -> void:
 	if velocity.length() > max_speed:
 		velocity = velocity.normalized() * max_speed
 	position += velocity * delta
-	position.x = clampf(position.x, -1950.0, 1950.0)
-	position.z = clampf(position.z, -1950.0, 1950.0)
+	position.x = clampf(position.x, -_world_limit, _world_limit)
+	position.z = clampf(position.z, -_world_limit, _world_limit)
 	var target_yaw_velocity := -right_stick.x * yaw_speed_degrees
 	var yaw_change_rate := yaw_acceleration_degrees if absf(right_stick.x) > 0.01 else yaw_braking_degrees
 	_yaw_velocity_degrees = move_toward(
@@ -138,3 +143,12 @@ func _update_visual(flight: Vector2, yaw_input: float, delta: float) -> void:
 ## against either without knowing which is loaded.
 func set_terrain(node: Node) -> void:
 	_terrain = node
+	_adopt_world_bounds(node)
+
+
+## The flyable box is the theatre's, not a constant: the packaged theatre is
+## 4 km across and the streamed corridor 36 km, and a fixed limit fenced the
+## aircraft into the smaller one no matter which was loaded.
+func _adopt_world_bounds(node: Node) -> void:
+	if node != null and node.has_method("world_half_extent"):
+		_world_limit = maxf(float(node.world_half_extent()) - world_edge_margin, 1.0)
