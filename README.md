@@ -127,6 +127,8 @@ clearance stops the model flying you into a hill.
 | Right stick left/right | Pedals: anti-torque yaw |
 | Right stick up/down | Collective: rotor thrust, and it stays where you put it |
 | L2 / R2 | Tactical view: orbit the camera. Travel view: sweep around a locked ground point |
+| Y | Switch controls: arcade / realistic |
+| X | Switch theatre |
 | R1 | Cannon |
 | L1 | Rockets |
 | R3 | Cycle cockpit / chase / orbit view |

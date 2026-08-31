@@ -392,6 +392,10 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
 		_cycle_view()
+	elif action == GamepadInput.ACTION_FLIGHT_MODE:
+		_toggle_flight_mode()
+	elif action == GamepadInput.ACTION_THEATRE_CYCLE:
+		LocationService.cycle_region()
 
 
 ## Arcade is pick-up-and-fly: the stick sets a speed and the aircraft holds its

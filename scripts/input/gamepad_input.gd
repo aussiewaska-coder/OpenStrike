@@ -23,6 +23,10 @@ const ACTION_TARGET_PREVIOUS := &"target_previous"
 const ACTION_TARGET_NEXT := &"target_next"
 const ACTION_ZOOM_IN := &"camera_zoom_in"
 const ACTION_ZOOM_OUT := &"camera_zoom_out"
+## The on-screen buttons cannot be reached with a controller, so the two things
+## they do are bound to the face buttons instead of making the panel navigable.
+const ACTION_FLIGHT_MODE := &"flight_mode_toggle"
+const ACTION_THEATRE_CYCLE := &"theatre_cycle"
 const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
 
@@ -33,6 +37,8 @@ const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_TARGET_NEXT,
 	ACTION_ZOOM_IN,
 	ACTION_ZOOM_OUT,
+	ACTION_FLIGHT_MODE,
+	ACTION_THEATRE_CYCLE,
 ]
 
 var active_device := -1
@@ -200,6 +206,8 @@ func _register_input_actions() -> void:
 	_add_axis_action(ACTION_AIM_BACK, JoyAxis.JOY_AXIS_RIGHT_Y, 1.0)
 	_add_axis_action(ACTION_CAMERA_ORBIT_LEFT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
 	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
+	_add_button_action(ACTION_FLIGHT_MODE, JoyButton.JOY_BUTTON_Y)
+	_add_button_action(ACTION_THEATRE_CYCLE, JoyButton.JOY_BUTTON_X)
 	_add_button_action(ACTION_CANNON, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	_add_button_action(ACTION_ROCKETS, JoyButton.JOY_BUTTON_LEFT_SHOULDER)
 	_add_button_action(ACTION_CAMERA_TRAVEL_TOGGLE, JoyButton.JOY_BUTTON_RIGHT_STICK)
