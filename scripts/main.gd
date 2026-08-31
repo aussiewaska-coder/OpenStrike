@@ -1,12 +1,15 @@
 extends Node3D
 
 const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
+const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
+const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
+const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 
 @export_group("Follow Camera")
 @export var camera_height := 150.0
 @export var camera_trailing_distance := 110.0
-@export var camera_zoom_step := 22.0
-@export var camera_zoom_min := 0.68
+@export var camera_zoom_step_ratio := 0.8
+@export var camera_zoom_min := 0.17
 @export var camera_zoom_max := 1.45
 @export var camera_orbit_speed_degrees := 95.0
 @export var camera_orbit_response := 9.0
@@ -17,6 +20,12 @@ const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
 @export var tactical_follow_response := 12.0
 @export var travel_follow_response := 5.0
 
+@export_group("Attack Zoom")
+@export var attack_zoom_start := 0.68
+@export var attack_height_bias := 0.35
+@export var attack_fov := 78.0
+@export var camera_ground_clearance := 6.0
+
 @onready var terrain = $Terrain
 @onready var streamed_terrain = $StreamedTerrain
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
@@ -24,6 +33,7 @@ const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
 @onready var status_label: Label = $UI/Margin/Panel/Content/Status
 @onready var region_label: Label = $UI/Margin/Panel/Content/Region
 @onready var demo_button: Button = $UI/Margin/Panel/Content/DemoButton
+@onready var attack_reticle := $UI/AttackReticle
 @onready var gamepad_diagnostic: Label = $UI/GamepadDiagnostic/Label
 @onready var controller_overlay: ColorRect = $UI/ControllerOverlay
 @onready var controller_title: Label = $UI/ControllerOverlay/Center/Content/Title
@@ -37,6 +47,11 @@ var _camera_orbit_velocity := 0.0
 var _travel_camera_enabled := false
 var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
+var _orbit_lock := ORBIT_LOCK.new()
+var _zoom_profile := ZOOM_PROFILE.new()
+var _ballistics := BALLISTICS.new()
+var _look_target := Vector3.ZERO
+var _active_terrain: Node
 
 
 func _ready() -> void:
@@ -46,6 +61,7 @@ func _ready() -> void:
 	GamepadInput.connection_changed.connect(_on_gamepad_connection_changed)
 	GamepadInput.controller_attention_changed.connect(_on_controller_attention_changed)
 	GamepadInput.action_pressed.connect(_on_gamepad_action_pressed)
+	_configure_zoom_profile()
 	demo_button.pressed.connect(LocationService.cycle_region)
 	demo_button.text = "SWITCH THEATRE"
 	demo_button.visible = true
@@ -69,6 +85,7 @@ func _process(delta: float) -> void:
 	gamepad_diagnostic.text = GamepadInput.get_diagnostic_text()
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
+		_update_attack_reticle()
 
 
 func _spawn_helicopter() -> void:
@@ -111,6 +128,7 @@ func _load_packaged_region(region: Dictionary) -> void:
 		return
 	region_label.text = "REGION: %s\n%s" % [region.get("display_name", "Unknown"), region.get("subtitle", "")]
 	status_label.text = "Offline terrain loaded. Live location is no longer required for this session."
+	_active_terrain = terrain
 	helicopter_anchor.set_terrain(terrain)
 	helicopter_anchor.position = terrain.get_spawn_position(90.0)
 	helicopter_anchor.rotation_degrees.y = terrain.get_spawn_yaw_degrees(-35.0)
@@ -138,6 +156,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 		float(region.get("spawn_longitude", region.get("center_longitude", 0.0))),
 		float(region.get("spawn_yaw_degrees", -35.0))
 	)
+	_active_terrain = streamed_terrain
 	helicopter_anchor.set_terrain(streamed_terrain)
 	helicopter_anchor.position = streamed_terrain.get_spawn_position(120.0)
 	helicopter_anchor.rotation_degrees.y = streamed_terrain.get_spawn_yaw_degrees(-35.0)
@@ -153,19 +172,11 @@ func _on_streamed_status_changed(message: String) -> void:
 
 
 func _update_follow_camera(delta: float) -> void:
+	var orbit_input := GamepadInput.get_camera_orbit_axis()
 	if _travel_camera_enabled:
-		# The source helicopter points along local +X. Ease the camera's travel
-		# heading toward that nose direction so it naturally settles behind turns.
-		var helicopter_forward := helicopter_anchor.global_basis.x
-		helicopter_forward.y = 0.0
-		if not helicopter_forward.is_zero_approx():
-			helicopter_forward = helicopter_forward.normalized()
-			var target_heading := atan2(-helicopter_forward.x, -helicopter_forward.z)
-			var heading_weight := 1.0 - exp(-travel_heading_response * delta)
-			_camera_orbit_radians = lerp_angle(_camera_orbit_radians, target_heading, heading_weight)
-		_camera_orbit_velocity = 0.0
+		_update_orbit_lock(delta, orbit_input)
 	else:
-		var orbit_input := GamepadInput.get_camera_orbit_axis()
+		_release_orbit_lock()
 		var target_velocity := orbit_input * deg_to_rad(camera_orbit_speed_degrees)
 		var response_weight := 1.0 - exp(-camera_orbit_response * delta)
 		_camera_orbit_velocity = lerpf(_camera_orbit_velocity, target_velocity, response_weight)
@@ -180,7 +191,102 @@ func _update_follow_camera(delta: float) -> void:
 	_apply_follow_camera(delta)
 
 
+## In travel view L2/R2 sweep around a locked ground point instead of steering
+## the trailing heading. The auto-ease toward the nose is suspended while a
+## sweep is running, otherwise the two fight each other for the same heading.
+func _update_orbit_lock(delta: float, orbit_input: float) -> void:
+	if is_zero_approx(orbit_input):
+		_release_orbit_lock()
+		_ease_travel_heading(delta)
+		_camera_orbit_velocity = 0.0
+		return
+	if not _orbit_lock.active:
+		_orbit_lock.engage(camera.global_position, _ground_point_under_helicopter())
+	_orbit_lock.advance(
+		delta,
+		orbit_input,
+		deg_to_rad(camera_orbit_speed_degrees),
+		camera_orbit_response
+	)
+	_camera_orbit_radians = _orbit_lock.angle
+	_camera_orbit_velocity = 0.0
+
+
+## Hands the sweep's final heading back to the trailing camera, so travel-follow
+## resumes from where the camera is pointing rather than whipping around.
+func _release_orbit_lock() -> void:
+	if not _orbit_lock.active:
+		return
+	_camera_orbit_radians = _orbit_lock.angle
+	_orbit_lock.release()
+
+
+func _ease_travel_heading(delta: float) -> void:
+	# The source helicopter points along local +X. Ease the camera's travel
+	# heading toward that nose direction so it naturally settles behind turns.
+	var helicopter_forward := helicopter_anchor.global_basis.x
+	helicopter_forward.y = 0.0
+	if helicopter_forward.is_zero_approx():
+		return
+	helicopter_forward = helicopter_forward.normalized()
+	var target_heading := atan2(-helicopter_forward.x, -helicopter_forward.z)
+	var heading_weight := 1.0 - exp(-travel_heading_response * delta)
+	_camera_orbit_radians = lerp_angle(_camera_orbit_radians, target_heading, heading_weight)
+
+
+func _configure_zoom_profile() -> void:
+	_zoom_profile.zoom_min = camera_zoom_min
+	_zoom_profile.attack_zoom_start = attack_zoom_start
+	_zoom_profile.attack_height_bias = attack_height_bias
+	_zoom_profile.base_fov = camera.fov
+	_zoom_profile.attack_fov = attack_fov
+
+
+func _ground_height_xz(x: float, z: float) -> float:
+	if _active_terrain != null and _active_terrain.has_method("sample_height_world"):
+		return _active_terrain.sample_height_world(x, z)
+	return 0.0
+
+
+func _ground_height_at(point: Vector3) -> float:
+	return _ground_height_xz(point.x, point.z)
+
+
+func _focus_position() -> Vector3:
+	if helicopter_anchor.has_method("get_focus_position"):
+		return helicopter_anchor.get_focus_position()
+	return helicopter_anchor.global_position
+
+
+func _ground_point_under_helicopter() -> Vector3:
+	var origin := _focus_position()
+	return Vector3(origin.x, _ground_height_at(origin), origin.z)
+
+
+## The gunsight only exists inside the attack close-up: its alpha is the inverse
+## of the zoom blend, so it fades in exactly as the camera drops low.
+func _update_attack_reticle() -> void:
+	var alpha := 1.0 - _zoom_profile.blend(_camera_zoom)
+	if alpha <= 0.001:
+		attack_reticle.clear()
+		return
+	if not helicopter_anchor.has_method("get_muzzle_transform"):
+		attack_reticle.set_solution(alpha, Vector2.ZERO, false, {})
+		return
+	var muzzle: Transform3D = helicopter_anchor.get_muzzle_transform()
+	var solution := _ballistics.solve(muzzle.origin, muzzle.basis.x, _ground_height_xz)
+	var pipper := Vector2.ZERO
+	var has_pipper := false
+	if not solution.is_empty():
+		var impact: Vector3 = solution["point"]
+		if not camera.is_position_behind(impact):
+			pipper = camera.unproject_position(impact)
+			has_pipper = true
+	attack_reticle.set_solution(alpha, pipper, has_pipper, solution)
+
+
 func _snap_follow_camera() -> void:
+	_release_orbit_lock()
 	_camera_current_height = camera_height
 	_camera_current_distance = camera_trailing_distance
 	_camera_travel_direction = Vector3(0.0, 0.0, -1.0).rotated(Vector3.UP, _camera_orbit_radians)
@@ -188,35 +294,48 @@ func _snap_follow_camera() -> void:
 
 
 func _apply_follow_camera(delta: float, snap: bool = false) -> void:
-	var focus := helicopter_anchor.global_position
-	var trailing_offset := -_camera_travel_direction * _camera_current_distance * _camera_zoom
-	var height_offset := Vector3.UP * _camera_current_height * _camera_zoom
-	var desired_position := focus + trailing_offset + height_offset
+	var focus := _focus_position()
+	var desired_position: Vector3
+	var desired_look := focus
+	if _orbit_lock.active:
+		desired_position = _orbit_lock.camera_position()
+		desired_look = _orbit_lock.pivot
+	else:
+		var distance := _camera_current_distance * _zoom_profile.distance_multiplier(_camera_zoom)
+		var height := _camera_current_height * _zoom_profile.height_multiplier(_camera_zoom)
+		desired_position = focus - _camera_travel_direction * distance + Vector3.UP * height
+	# The attack zoom flies the camera low enough to bury it in rising ground.
+	desired_position.y = maxf(
+		desired_position.y,
+		_ground_height_at(desired_position) + camera_ground_clearance
+	)
+	var target_fov := _zoom_profile.fov(_camera_zoom)
 	if snap:
 		camera.global_position = desired_position
+		_look_target = desired_look
+		camera.fov = target_fov
 	else:
 		var follow_response := travel_follow_response if _travel_camera_enabled else tactical_follow_response
 		var follow_weight := 1.0 - exp(-follow_response * delta)
 		camera.global_position = camera.global_position.lerp(desired_position, follow_weight)
-	# Always look at the aircraft so it remains centred while the camera eases.
-	camera.look_at(focus, Vector3.UP)
+		# Ease the look target too: releasing a sweep with the aircraft off-frame
+		# would otherwise swing the view across the theatre in a single frame.
+		_look_target = _look_target.lerp(desired_look, follow_weight)
+		# Zoom presses are discrete, so the field of view is eased rather than
+		# stepped, or the forced perspective would snap on every press.
+		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-camera_mode_response * delta))
+	if camera.global_position.distance_squared_to(_look_target) > 0.0001:
+		camera.look_at(_look_target, Vector3.UP)
 
 
 func _on_gamepad_action_pressed(action: StringName) -> void:
 	if action == GamepadInput.ACTION_ZOOM_IN:
-		_camera_zoom = clampf(
-			_camera_zoom - camera_zoom_step / camera_trailing_distance,
-			camera_zoom_min,
-			camera_zoom_max
-		)
+		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, true, camera_zoom_max)
 	elif action == GamepadInput.ACTION_ZOOM_OUT:
-		_camera_zoom = clampf(
-			_camera_zoom + camera_zoom_step / camera_trailing_distance,
-			camera_zoom_min,
-			camera_zoom_max
-		)
+		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
 		_travel_camera_enabled = not _travel_camera_enabled
+		_release_orbit_lock()
 		_camera_orbit_velocity = 0.0
 		if _travel_camera_enabled:
 			status_label.text = "TRAVEL VIEW: following behind helicopter heading"

@@ -1,6 +1,7 @@
 extends Node3D
 
 const FLIGHT_MATH := preload("res://scripts/helicopter/flight_math.gd")
+const AIRFRAME_MOTION := preload("res://scripts/helicopter/airframe_motion.gd")
 
 @export var terrain_path: NodePath = NodePath("../Terrain")
 ## Kept clear of the very edge so the aircraft never sits on the boundary where
@@ -31,6 +32,13 @@ const FLIGHT_MATH := preload("res://scripts/helicopter/flight_math.gd")
 @export var maximum_bank_degrees := 22.0
 @export var lean_response := 4.8
 
+@export_group("Airframe Motion")
+@export var hover_bob_metres := 0.6
+@export var hover_bob_frequency := 0.35
+@export var hover_sway_degrees := 1.2
+@export var move_wobble_degrees := 2.5
+@export var wobble_response := 3.0
+
 var velocity := Vector3.ZERO
 var _terrain: Node
 var _visual: Node3D
@@ -39,6 +47,11 @@ var _yaw_velocity_degrees := 0.0
 var _smoothed_ground_height := 0.0
 var _ground_height_initialized := false
 var _world_limit := 1950.0
+var _tilt_pitch_degrees := 0.0
+var _tilt_bank_degrees := 0.0
+var _bob_time := 0.0
+var _wobble := 0.0
+var _previous_velocity := Vector3.ZERO
 
 
 func _ready() -> void:
@@ -134,8 +147,49 @@ func _update_visual(flight: Vector2, yaw_input: float, delta: float) -> void:
 		maximum_bank_degrees
 	)
 	var lean_weight := 1.0 - exp(-lean_response * delta)
-	_visual.rotation.z = lerpf(_visual.rotation.z, deg_to_rad(target_pitch), lean_weight)
-	_visual.rotation.x = lerpf(_visual.rotation.x, deg_to_rad(target_bank), lean_weight)
+	_tilt_pitch_degrees = lerpf(_tilt_pitch_degrees, target_pitch, lean_weight)
+	_tilt_bank_degrees = lerpf(_tilt_bank_degrees, target_bank, lean_weight)
+	_apply_airframe_motion(delta)
+
+
+## Idle drift and gust wobble. These ride on the visual child rather than the
+## anchor, so the anchor stays authoritative for terrain following and the world
+## clamps — but the camera and the gunsight both track the visual, so the drift
+## is real: it moves the aim.
+func _apply_airframe_motion(delta: float) -> void:
+	_bob_time += delta
+	var speed_fraction := 0.0
+	if max_speed > 0.0:
+		speed_fraction = velocity.length() / max_speed
+	var weight := AIRFRAME_MOTION.hover_weight(speed_fraction)
+	# A change of velocity rocks the airframe; settled cruise does not.
+	var velocity_change := (velocity - _previous_velocity).length() / maxf(delta, 0.0001)
+	_previous_velocity = velocity
+	var target_wobble := clampf(velocity_change / maxf(acceleration, 1.0), 0.0, 1.0)
+	_wobble = lerpf(_wobble, target_wobble, 1.0 - exp(-wobble_response * delta))
+	var phase := AIRFRAME_MOTION.phases(_bob_time, hover_bob_frequency)
+	var sway := AIRFRAME_MOTION.sway_degrees(
+		phase,
+		hover_sway_degrees,
+		weight,
+		move_wobble_degrees,
+		_wobble
+	)
+	_visual.position = AIRFRAME_MOTION.position_offset(phase, hover_bob_metres, weight)
+	_visual.rotation.z = deg_to_rad(_tilt_pitch_degrees + sway.x)
+	_visual.rotation.x = deg_to_rad(_tilt_bank_degrees + sway.y)
+	_visual.rotation.y = deg_to_rad(sway.z)
+
+
+## The camera and the gunsight both track the visual rather than the anchor, so
+## the airframe's drift carries them with it.
+func get_focus_position() -> Vector3:
+	return _visual.global_position if _visual != null else global_position
+
+
+## The gun fires along the airframe's nose, which is its local +X.
+func get_muzzle_transform() -> Transform3D:
+	return _visual.global_transform if _visual != null else global_transform
 
 
 ## Lets the active theatre swap the height source. Packaged and streamed
