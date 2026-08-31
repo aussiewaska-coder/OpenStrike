@@ -24,7 +24,8 @@
       "imagery_server": "qld",
       "spawn_latitude": -28.0023,
       "spawn_longitude": 153.431,
-      "spawn_yaw_degrees": -15.0
+      "spawn_yaw_degrees": -15.0,
+      "buildings_dir": "res://data/regions/au_gold_coast_tweed_corridor/buildings"
     }
   ]
 }
