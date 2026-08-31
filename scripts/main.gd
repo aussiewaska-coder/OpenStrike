@@ -4,6 +4,7 @@ const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
 const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
 const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
+const GROUND_RAY := preload("res://scripts/terrain/ground_ray.gd")
 
 @export_group("Follow Camera")
 @export var camera_height := 150.0
@@ -63,6 +64,8 @@ var _orbit_lock := ORBIT_LOCK.new()
 var _zoom_profile := ZOOM_PROFILE.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
+var _target_point := Vector3.ZERO
+var _has_target_point := false
 var _active_terrain: Node
 
 
@@ -101,6 +104,7 @@ func _process(delta: float) -> void:
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
 		_update_attack_reticle()
+		_update_target_marker()
 
 
 func _spawn_helicopter() -> void:
@@ -190,7 +194,11 @@ func _update_follow_camera(delta: float) -> void:
 	if _view == View.COCKPIT:
 		_update_cockpit_camera()
 		return
-	var orbit_input := GamepadInput.get_camera_orbit_axis()
+	# With a target picked the triggers fly the aircraft around it, so the
+	# camera must not also claim them.
+	var orbit_input := 0.0
+	if not _aircraft_is_orbiting():
+		orbit_input = GamepadInput.get_camera_orbit_axis()
 	if _view == View.CHASE:
 		_update_orbit_lock(delta, orbit_input)
 	else:
@@ -297,6 +305,55 @@ func _update_instruments() -> void:
 		focus.y - _ground_height_at(focus),
 		collective,
 		heading + 360.0
+	)
+
+
+func _aircraft_is_orbiting() -> bool:
+	return helicopter_anchor.has_method("orbit_input") and not is_zero_approx(helicopter_anchor.orbit_input())
+
+
+## A tap picks a point on the ground to orbit. There are no collision shapes
+## under the streamed terrain, so the ray is marched against the height field.
+func _unhandled_input(event: InputEvent) -> void:
+	if not _camera_follow_enabled:
+		return
+	var screen := Vector2.ZERO
+	if event is InputEventScreenTouch and event.pressed:
+		screen = (event as InputEventScreenTouch).position
+	elif event is InputEventMouseButton and event.pressed and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		screen = (event as InputEventMouseButton).position
+	else:
+		return
+	var hit := GROUND_RAY.intersect(
+		camera.project_ray_origin(screen),
+		camera.project_ray_normal(screen),
+		_ground_height_xz
+	)
+	if hit.is_empty():
+		_has_target_point = false
+		attack_reticle.clear_target()
+		if helicopter_anchor.has_method("clear_orbit_target"):
+			helicopter_anchor.clear_orbit_target()
+		status_label.text = "TARGET CLEARED"
+		return
+	_target_point = hit["point"]
+	_has_target_point = true
+	if helicopter_anchor.has_method("set_orbit_target"):
+		helicopter_anchor.set_orbit_target(_target_point)
+	status_label.text = "TARGET SET %d m -- L2/R2 to orbit it" % roundi(_focus_position().distance_to(_target_point))
+
+
+func _update_target_marker() -> void:
+	if not _has_target_point:
+		attack_reticle.clear_target()
+		return
+	if camera.is_position_behind(_target_point):
+		attack_reticle.set_target(Vector2.ZERO, false, 0.0)
+		return
+	attack_reticle.set_target(
+		camera.unproject_position(_target_point),
+		true,
+		_focus_position().distance_to(_target_point)
 	)
 
 

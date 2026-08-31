@@ -126,7 +126,8 @@ clearance stops the model flying you into a hill.
 | Left stick | Cyclic: tilts the rotor disc, which is what moves the aircraft |
 | Right stick left/right | Pedals: anti-torque yaw |
 | Right stick up/down | Collective: rotor thrust, and it stays where you put it |
-| L2 / R2 | Tactical view: orbit the camera. Travel view: sweep around a locked ground point |
+| Tap the screen | Pick a ground point to orbit; tap the sky to clear it |
+| L2 / R2 | With a target: fly the aircraft around it, nose held on it. Without one: orbit the camera |
 | Y | Switch controls: arcade / realistic |
 | X | Switch theatre |
 | R1 | Cannon |
@@ -146,6 +147,18 @@ collective and heading on the glass, because with this flight model a pilot who
 cannot see the collective cannot hold a hover. **Chase** flies astern and
 follows the nose. **Orbit** keeps its heading and is where L2/R2 sweep a locked
 ground point.
+
+### Target orbit
+
+Tapping the screen marches a ray against the height field -- there are no
+collision shapes under the streamed terrain -- and drops a target on the ground,
+shown on the HUD with its range. The triggers then fly the aircraft around that
+point rather than moving the camera, holding the nose on it, at whatever radius
+the aircraft happened to be at when the trigger came in. A radial term pulls the
+aircraft back onto the circle so the orbit does not spiral. Both flight models
+fly it: arcade takes the commanded velocity directly, while the rotor model has
+no way to be handed a velocity and instead tilts the disc toward the one it
+wants.
 
 ### Camera
 
@@ -189,6 +202,7 @@ godot --headless --script tests/map_tiles_test.gd
 godot --headless --script tests/height_field_test.gd
 godot --headless --script tests/terrain_sampling_test.gd
 godot --headless --script tests/rotor_model_test.gd
+godot --headless --script tests/target_orbit_test.gd
 godot --headless --script tests/helicopter_controls_test.gd
 godot --headless --script tests/building_mesh_test.gd
 godot --headless --script tests/gamepad_input_test.gd

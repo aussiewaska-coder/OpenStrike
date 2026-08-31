@@ -20,6 +20,9 @@ var _has_pipper := false
 var _range_text := "--"
 var _time_text := "--"
 var _instruments := PackedStringArray()
+var _target := Vector2.ZERO
+var _has_target := false
+var _target_range := 0.0
 
 
 func _ready() -> void:
@@ -65,6 +68,23 @@ func hide_instruments() -> void:
 	queue_redraw()
 
 
+## The picked ground point the aircraft can orbit. Drawn independently of the
+## gunsight, which is faded by zoom -- the target is just as useful in a wide
+## chase view as in the attack close-up.
+func set_target(screen_position: Vector2, on_screen: bool, range_m: float) -> void:
+	_target = screen_position
+	_has_target = on_screen
+	_target_range = range_m
+	queue_redraw()
+
+
+func clear_target() -> void:
+	if not _has_target:
+		return
+	_has_target = false
+	queue_redraw()
+
+
 func clear() -> void:
 	if is_zero_approx(_alpha) and not _has_pipper:
 		return
@@ -74,6 +94,22 @@ func clear() -> void:
 
 
 func _draw() -> void:
+	if _has_target:
+		var target_colour := Color(1.0, 0.72, 0.25)
+		var arm := 11.0
+		draw_line(_target + Vector2(-arm, 0.0), _target + Vector2(0.0, -arm), target_colour, line_width)
+		draw_line(_target + Vector2(0.0, -arm), _target + Vector2(arm, 0.0), target_colour, line_width)
+		draw_line(_target + Vector2(arm, 0.0), _target + Vector2(0.0, arm), target_colour, line_width)
+		draw_line(_target + Vector2(0.0, arm), _target + Vector2(-arm, 0.0), target_colour, line_width)
+		draw_string(
+			ThemeDB.fallback_font,
+			_target + Vector2(arm + 6.0, 4.0),
+			"%d m" % roundi(_target_range),
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			roundi(readout_size),
+			target_colour
+		)
 	if _alpha <= 0.001:
 		return
 	var colour := Color(sight_colour, sight_colour.a * _alpha)

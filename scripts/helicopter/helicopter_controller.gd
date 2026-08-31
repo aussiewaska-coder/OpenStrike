@@ -14,6 +14,7 @@ extends Node3D
 
 const ROTOR := preload("res://scripts/helicopter/rotor_model.gd")
 const FLIGHT_MATH := preload("res://scripts/helicopter/flight_math.gd")
+const TARGET_ORBIT := preload("res://scripts/helicopter/target_orbit.gd")
 const AIRFRAME_MOTION := preload("res://scripts/helicopter/airframe_motion.gd")
 
 const GRAVITY := 9.80665
@@ -77,6 +78,15 @@ enum FlightMode {ARCADE, ROTOR}
 @export var shudder_degrees := 0.7
 @export var shudder_frequency := 11.0
 
+@export_group("Target Orbit")
+## Flying a circle around a picked point, nose held on it. The radius is
+## whatever distance the aircraft was at when the trigger came in, so taking an
+## orbit never yanks the aircraft onto a fixed circle.
+@export var orbit_speed := 40.0
+@export var orbit_radial_gain := 0.5
+@export var orbit_yaw_response := 4.0
+@export var orbit_tilt_gain := 0.9
+
 @export_group("Airframe Motion")
 @export var hover_bob_metres := 0.6
 @export var hover_bob_frequency := 0.35
@@ -101,6 +111,9 @@ var _wobble := 0.0
 var _previous_velocity := Vector3.ZERO
 var _commanded_clearance := 90.0
 var _cockpit_local := Vector3(2.6, 1.1, 0.0)
+var orbit_target := Vector3.ZERO
+var has_orbit_target := false
+var _orbit_radius := 0.0
 
 
 func _ready() -> void:
@@ -109,6 +122,44 @@ func _ready() -> void:
 	collective = starting_collective
 	_commanded_clearance = terrain_clearance
 	call_deferred("_find_visual")
+
+
+func set_orbit_target(point: Vector3) -> void:
+	orbit_target = point
+	has_orbit_target = true
+	_orbit_radius = TARGET_ORBIT.radius_to(position, point)
+
+
+func clear_orbit_target() -> void:
+	has_orbit_target = false
+
+
+## The triggers fly the aircraft round the target when one is picked; with no
+## target they stay with the camera.
+func orbit_input() -> float:
+	if not has_orbit_target or not GamepadInput.is_controller_ready():
+		return 0.0
+	return GamepadInput.get_camera_orbit_axis()
+
+
+func _orbit_velocity(direction: float) -> Vector3:
+	return TARGET_ORBIT.desired_velocity(
+		position,
+		orbit_target,
+		_orbit_radius,
+		direction,
+		orbit_speed,
+		orbit_radial_gain
+	)
+
+
+func _hold_nose_on_target(delta: float) -> void:
+	rotation.y = lerp_angle(
+		rotation.y,
+		TARGET_ORBIT.heading_to(position, orbit_target),
+		1.0 - exp(-orbit_yaw_response * delta)
+	)
+	_yaw_velocity_degrees = 0.0
 
 
 func set_flight_mode(mode: FlightMode) -> void:
@@ -140,6 +191,17 @@ func _arcade_step(delta: float) -> void:
 	if GamepadInput.is_controller_ready():
 		flight = GamepadInput.get_flight_vector()
 		right_stick = GamepadInput.get_aim_vector()
+	var sweep := orbit_input()
+	if not is_zero_approx(sweep):
+		velocity = velocity.move_toward(_orbit_velocity(sweep), acceleration * delta)
+		velocity.y = 0.0
+		position += velocity * delta
+		_hold_nose_on_target(delta)
+		_apply_arcade_altitude(right_stick, delta)
+		pitch_degrees = lerpf(pitch_degrees, forward_pitch_degrees * 0.5, 1.0 - exp(-lean_response * delta))
+		roll_degrees = lerpf(roll_degrees, -sweep * strafe_bank_degrees, 1.0 - exp(-lean_response * delta))
+		_shudder = 0.0
+		return
 	var planar_input := FLIGHT_MATH.get_planar_control(basis, flight)
 	if planar_input.length_squared() > 0.001:
 		velocity += planar_input * acceleration * delta
@@ -154,6 +216,20 @@ func _arcade_step(delta: float) -> void:
 	var yaw_change_rate := yaw_acceleration_degrees if absf(right_stick.x) > 0.01 else yaw_braking_degrees
 	_yaw_velocity_degrees = move_toward(_yaw_velocity_degrees, target_yaw_velocity, yaw_change_rate * delta)
 	rotation.y += deg_to_rad(_yaw_velocity_degrees) * delta
+	_apply_arcade_altitude(right_stick, delta)
+	# The lean is decoration in this mode, driven by the stick rather than by
+	# any force, which is exactly what makes it forgiving.
+	pitch_degrees = lerpf(pitch_degrees, -flight.y * forward_pitch_degrees, 1.0 - exp(-lean_response * delta))
+	var turn_amount := -_yaw_velocity_degrees / maxf(yaw_speed_degrees, 1.0)
+	roll_degrees = lerpf(
+		roll_degrees,
+		flight.x * strafe_bank_degrees + turn_amount * turn_bank_degrees,
+		1.0 - exp(-lean_response * delta)
+	)
+	_shudder = 0.0
+
+
+func _apply_arcade_altitude(right_stick: Vector2, delta: float) -> void:
 	_commanded_clearance = clampf(
 		_commanded_clearance - right_stick.y * climb_speed * delta,
 		min_terrain_clearance,
@@ -165,16 +241,6 @@ func _arcade_step(delta: float) -> void:
 		ground_height + _commanded_clearance,
 		1.0 - exp(-altitude_response * delta)
 	)
-	# The lean is decoration in this mode, driven by the stick rather than by
-	# any force, which is exactly what makes it forgiving.
-	pitch_degrees = lerpf(pitch_degrees, -flight.y * forward_pitch_degrees, 1.0 - exp(-lean_response * delta))
-	var turn_amount := -_yaw_velocity_degrees / maxf(yaw_speed_degrees, 1.0)
-	roll_degrees = lerpf(
-		roll_degrees,
-		flight.x * strafe_bank_degrees + turn_amount * turn_bank_degrees,
-		1.0 - exp(-lean_response * delta)
-	)
-	_shudder = 0.0
 
 
 func _rotor_step(delta: float) -> void:
@@ -191,6 +257,19 @@ func _rotor_step(delta: float) -> void:
 	# The cyclic commands an attitude, and the attitude commands the motion.
 	var target_pitch := -cyclic.y * maximum_cyclic_degrees
 	var target_roll := cyclic.x * maximum_cyclic_degrees
+	var sweep := orbit_input()
+	if not is_zero_approx(sweep):
+		# The rotor model has no way to be given a velocity, so the orbit is
+		# flown by tilting toward the velocity it wants.
+		var wanted := _orbit_velocity(sweep)
+		var error := wanted - velocity
+		error.y = 0.0
+		var body_nose := basis.x
+		body_nose.y = 0.0
+		body_nose = body_nose.normalized() if not body_nose.is_zero_approx() else Vector3.RIGHT
+		var body_right := Vector3(-body_nose.z, 0.0, body_nose.x)
+		target_pitch = clampf(error.dot(body_nose) * orbit_tilt_gain, -maximum_cyclic_degrees, maximum_cyclic_degrees)
+		target_roll = clampf(error.dot(body_right) * orbit_tilt_gain, -maximum_cyclic_degrees, maximum_cyclic_degrees)
 	var cyclic_weight := 1.0 - exp(-cyclic_response * delta)
 	pitch_degrees = lerpf(pitch_degrees, target_pitch, cyclic_weight)
 	roll_degrees = lerpf(roll_degrees, target_roll, cyclic_weight)
@@ -219,6 +298,8 @@ func _rotor_step(delta: float) -> void:
 
 	# Torque is a standing yaw the pedals have to cancel: every collective change
 	# is also a pedal change.
+	if not is_zero_approx(orbit_input()):
+		_hold_nose_on_target(delta)
 	var commanded_yaw := -pedals_collective.x * yaw_speed_degrees
 	var target_yaw_velocity: float = commanded_yaw + ROTOR.torque_yaw_degrees(collective, torque_yaw_degrees)
 	var yaw_change_rate := yaw_acceleration_degrees if absf(pedals_collective.x) > 0.01 else yaw_braking_degrees
