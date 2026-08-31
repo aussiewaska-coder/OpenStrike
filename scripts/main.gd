@@ -3,6 +3,7 @@ extends Node3D
 const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
 const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
+const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 
 @export_group("Follow Camera")
 @export var camera_height := 150.0
@@ -32,6 +33,7 @@ const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
 @onready var status_label: Label = $UI/Margin/Panel/Content/Status
 @onready var region_label: Label = $UI/Margin/Panel/Content/Region
 @onready var demo_button: Button = $UI/Margin/Panel/Content/DemoButton
+@onready var attack_reticle := $UI/AttackReticle
 @onready var gamepad_diagnostic: Label = $UI/GamepadDiagnostic/Label
 @onready var controller_overlay: ColorRect = $UI/ControllerOverlay
 @onready var controller_title: Label = $UI/ControllerOverlay/Center/Content/Title
@@ -47,6 +49,7 @@ var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
 var _orbit_lock := ORBIT_LOCK.new()
 var _zoom_profile := ZOOM_PROFILE.new()
+var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _active_terrain: Node
 
@@ -82,6 +85,7 @@ func _process(delta: float) -> void:
 	gamepad_diagnostic.text = GamepadInput.get_diagnostic_text()
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
+		_update_attack_reticle()
 
 
 func _spawn_helicopter() -> void:
@@ -238,15 +242,47 @@ func _configure_zoom_profile() -> void:
 	_zoom_profile.attack_fov = attack_fov
 
 
-func _ground_height_at(point: Vector3) -> float:
+func _ground_height_xz(x: float, z: float) -> float:
 	if _active_terrain != null and _active_terrain.has_method("sample_height_world"):
-		return _active_terrain.sample_height_world(point.x, point.z)
+		return _active_terrain.sample_height_world(x, z)
 	return 0.0
 
 
+func _ground_height_at(point: Vector3) -> float:
+	return _ground_height_xz(point.x, point.z)
+
+
+func _focus_position() -> Vector3:
+	if helicopter_anchor.has_method("get_focus_position"):
+		return helicopter_anchor.get_focus_position()
+	return helicopter_anchor.global_position
+
+
 func _ground_point_under_helicopter() -> Vector3:
-	var origin := helicopter_anchor.global_position
+	var origin := _focus_position()
 	return Vector3(origin.x, _ground_height_at(origin), origin.z)
+
+
+## The gunsight only exists inside the attack close-up: its alpha is the inverse
+## of the zoom blend, so it fades in exactly as the camera drops low.
+func _update_attack_reticle() -> void:
+	var alpha := 1.0 - _zoom_profile.blend(_camera_zoom)
+	if alpha <= 0.001:
+		attack_reticle.clear()
+		return
+	if not helicopter_anchor.has_method("get_muzzle_transform"):
+		attack_reticle.set_solution(alpha, Vector2.ZERO, false, {})
+		return
+	var muzzle: Transform3D = helicopter_anchor.get_muzzle_transform()
+	var solution := _ballistics.solve(muzzle.origin, muzzle.basis.x, _ground_height_xz)
+	var pipper := Vector2.ZERO
+	var has_pipper := false
+	if not solution.is_empty():
+		var impact: Vector3 = solution["point"]
+		if not camera.is_position_behind(impact):
+			pipper = camera.unproject_position(impact)
+			has_pipper = true
+	attack_reticle.set_solution(alpha, pipper, has_pipper, solution)
 
 
 func _snap_follow_camera() -> void:
@@ -258,7 +294,7 @@ func _snap_follow_camera() -> void:
 
 
 func _apply_follow_camera(delta: float, snap: bool = false) -> void:
-	var focus := helicopter_anchor.global_position
+	var focus := _focus_position()
 	var desired_position: Vector3
 	var desired_look := focus
 	if _orbit_lock.active:

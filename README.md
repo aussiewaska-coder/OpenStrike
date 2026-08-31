@@ -134,6 +134,25 @@ sinks from a top-down view to roughly 19 m behind and 9 m above the aircraft
 while the field of view widens from 42 to 78 degrees for forced perspective. A
 minimum ground clearance keeps the low camera out of rising terrain.
 
+The attack close-up also carries a gunsight, faded in on the same blend. The
+model is an AH-64D, so the round is the M230's 30 mm: 805 m/s at the muzzle,
+losing speed exponentially, with gravity doing the rest. The sight marches that
+round from the muzzle along the nose until it crosses the terrain height field,
+and shows the result as a continuously computed impact point — a pipper where
+the rounds will land, with the slant range and time of flight beside the
+crosshair. Past 4 km with no ground crossing there is no firing solution, and
+the pipper and readouts blank rather than guess. No weapon fires yet, so these
+figures are a sight, not a firing solution; every one of them is an export to
+replace when a real cannon lands.
+
+The airframe drifts. In a hover it wanders on three sines at unrelated rates —
+about 0.6 m of vertical bob and a degree of sway — and a change of velocity
+rocks it harder, so acceleration and braking are visible in the attitude. The
+drift rides on the visual child rather than the anchor, leaving terrain
+following and the world clamps untouched, but the camera and the gunsight both
+track the visual: the drift moves the aim, and holding a pipper on a target is
+real stick work.
+
 In travel view (R3), L2/R2 no longer steer the trailing heading. The first
 deflection drops a pivot on the ground beneath the aircraft and locks it to the
 world; the camera then sweeps around that point and keeps looking at it, so the
@@ -152,6 +171,8 @@ godot --headless --script tests/helicopter_controls_test.gd
 godot --headless --script tests/gamepad_input_test.gd
 godot --headless --script tests/camera_orbit_lock_test.gd
 godot --headless --script tests/camera_zoom_profile_test.gd
+godot --headless --script tests/ballistics_test.gd
+godot --headless --script tests/airframe_motion_test.gd
 ```
 
 `map_tiles_test.gd` pins the coordinate chain — region bounds, tile range,
