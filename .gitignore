@@ -1,0 +1,7 @@
+.godot/
+.DS_Store
+/build/
+/android/build/
+android/location_plugin/.gradle/
+android/location_plugin/build/
+android/location_plugin/plugin/build/

@@ -1,0 +1,163 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/terrain/procedural_terrain.gd" id="2_terrain"]
+[ext_resource type="Script" path="res://scripts/helicopter/helicopter_controller.gd" id="3_helicopter"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSky_day"]
+sky_top_color = Color(0.19, 0.5, 0.82, 1)
+sky_horizon_color = Color(0.78, 0.88, 0.96, 1)
+ground_bottom_color = Color(0.19, 0.24, 0.25, 1)
+ground_horizon_color = Color(0.7, 0.78, 0.78, 1)
+sun_angle_max = 18.0
+
+[sub_resource type="Sky" id="Sky_day"]
+sky_material = SubResource("ProceduralSky_day")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_day")
+ambient_light_source = 2
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_energy = 0.24
+reflected_light_source = 1
+fog_enabled = false
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-52, -38, 0)
+light_color = Color(1, 1, 1, 1)
+light_energy = 0.68
+shadow_enabled = true
+directional_shadow_max_distance = 6500.0
+
+[node name="Terrain" type="Node3D" parent="."]
+script = ExtResource("2_terrain")
+
+[node name="HelicopterAnchor" type="Node3D" parent="."]
+script = ExtResource("3_helicopter")
+
+[node name="HeroFill" type="OmniLight3D" parent="HelicopterAnchor"]
+position = Vector3(0, 35, 0)
+light_color = Color(1, 1, 1, 1)
+light_energy = 1.6
+omni_range = 120.0
+shadow_enabled = false
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55, 520, 68)
+current = true
+fov = 42.0
+far = 12000.0
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Margin" type="MarginContainer" parent="UI"]
+offset_right = 1280.0
+offset_bottom = 720.0
+theme_override_constants/margin_left = 28
+theme_override_constants/margin_top = 24
+theme_override_constants/margin_right = 28
+theme_override_constants/margin_bottom = 24
+
+[node name="Panel" type="PanelContainer" parent="UI/Margin"]
+layout_mode = 2
+size_flags_horizontal = 0
+size_flags_vertical = 0
+
+[node name="Content" type="VBoxContainer" parent="UI/Margin/Panel"]
+custom_minimum_size = Vector2(390, 0)
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="UI/Margin/Panel/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.91, 0.77, 0.28, 1)
+theme_override_font_sizes/font_size = 28
+text = "OPENSTRIKE // LOCAL THEATRE"
+
+[node name="Status" type="Label" parent="UI/Margin/Panel/Content"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "Preparing location service..."
+autowrap_mode = 2
+
+[node name="Region" type="Label" parent="UI/Margin/Panel/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.82, 0.92, 1)
+theme_override_font_sizes/font_size = 18
+text = "REGION: —"
+autowrap_mode = 2
+
+[node name="Privacy" type="Label" parent="UI/Margin/Panel/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.74, 0.76, 1)
+theme_override_font_sizes/font_size = 13
+text = "Foreground location only. Coordinates are not saved.\nMap © OpenStreetMap contributors. Aerial © State of Queensland."
+autowrap_mode = 2
+
+[node name="DemoButton" type="Button" parent="UI/Margin/Panel/Content"]
+layout_mode = 2
+text = "LOAD SURFERS PARADISE DEMO"
+
+[node name="GamepadDiagnostic" type="PanelContainer" parent="UI"]
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -338.0
+offset_top = -144.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 0
+grow_vertical = 0
+
+[node name="Label" type="Label" parent="UI/GamepadDiagnostic"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.67, 0.84, 0.91, 1)
+theme_override_font_sizes/font_size = 14
+text = "GAMEPAD: NOT CONNECTED"
+
+[node name="ControllerOverlay" type="ColorRect" parent="UI"]
+visible = false
+process_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.02, 0.025, 0.03, 0.88)
+
+[node name="Center" type="CenterContainer" parent="UI/ControllerOverlay"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Content" type="VBoxContainer" parent="UI/ControllerOverlay/Center"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="UI/ControllerOverlay/Center/Content"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.35, 0.22, 1)
+theme_override_font_sizes/font_size = 38
+text = "CONTROLLER DISCONNECTED"
+horizontal_alignment = 1
+
+[node name="Detail" type="Label" parent="UI/ControllerOverlay/Center/Content"]
+custom_minimum_size = Vector2(680, 0)
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Connect or wake a Bluetooth gamepad."
+horizontal_alignment = 1
+autowrap_mode = 2

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "regions": [
+    {
+      "id": "au_qld_surfers_paradise",
+      "display_name": "SURFERS PARADISE // BEACHFRONT START",
+      "subtitle": "4 km offline Gold Coast skyline and coastline",
+      "center_latitude": -28.0023,
+      "center_longitude": 153.431,
+      "activation_radius_km": 60.0,
+      "metadata": "res://data/regions/au_qld_mt_coot_tha/region.json"
+    }
+  ]
+}
