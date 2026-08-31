@@ -103,21 +103,14 @@ game. OpenStrike uses Godot's standard Android joypad path, so it does not need
 Bluetooth scanning permissions. The in-game diagnostic panel shows the detected
 controller name, both stick vectors, and L1/R1/L3 state.
 
-Sticks follow the DJI Mode 2 layout — throttle and yaw on the left, cyclic on
-the right — and the aircraft flies like a drone in position hold: the stick
-commands a speed rather than a push, so centring it brakes hard and stops
-instead of coasting, and the airframe's tilt is derived from the speed it is
-actually carrying. Altitude is still commanded as height above the terrain
-rather than an absolute hold, so the aircraft rides the contour.
-
 ### MVP controller map
 
 | Control | Action |
 | --- | --- |
-| Left stick up/down | Throttle: climb/descend |
-| Left stick left/right | Yaw left/right |
-| Right stick up/down | Cyclic: fly forward/backward |
-| Right stick left/right | Cyclic: strafe left/right |
+| Left stick up/down | Fly forward/backward |
+| Left stick left/right | Strafe left/right |
+| Right stick left/right | Rotate/yaw |
+| Right stick up/down | Climb/descend |
 | L2 / R2 | Tactical view: orbit the camera. Travel view: sweep around a locked ground point |
 | R1 | Cannon |
 | L1 | Rockets |
