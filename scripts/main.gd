@@ -101,6 +101,8 @@ func _on_region_selected(region: Dictionary) -> void:
 	demo_button.visible = false
 	helicopter_anchor.position = terrain.get_spawn_position(90.0)
 	helicopter_anchor.rotation_degrees.y = terrain.get_spawn_yaw_degrees(-35.0)
+	if helicopter_anchor.has_method("reset_altitude_smoothing"):
+		helicopter_anchor.reset_altitude_smoothing()
 	_camera_follow_enabled = true
 	_snap_follow_camera()
 

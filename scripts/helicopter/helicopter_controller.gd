@@ -12,7 +12,10 @@ const FLIGHT_MATH := preload("res://scripts/helicopter/flight_math.gd")
 @export var min_terrain_clearance := 35.0
 @export var max_terrain_clearance := 360.0
 @export var climb_speed := 72.0
-@export var altitude_response := 5.0
+@export var altitude_response := 2.8
+@export var terrain_height_response := 0.9
+@export var terrain_height_deadband := 0.3
+@export var maximum_terrain_follow_speed := 12.0
 @export var yaw_speed_degrees := 82.0
 @export var yaw_acceleration_degrees := 210.0
 @export var yaw_braking_degrees := 125.0
@@ -30,6 +33,8 @@ var _terrain: Node
 var _visual: Node3D
 var _commanded_clearance := 90.0
 var _yaw_velocity_degrees := 0.0
+var _smoothed_ground_height := 0.0
+var _ground_height_initialized := false
 
 
 func _ready() -> void:
@@ -71,13 +76,37 @@ func _physics_process(delta: float) -> void:
 		max_terrain_clearance
 	)
 	if _terrain != null and _terrain.has_method("sample_height_world"):
-		var target_height: float = _terrain.sample_height_world(position.x, position.z) + _commanded_clearance
+		var raw_ground_height: float = _terrain.sample_height_world(position.x, position.z)
+		_update_smoothed_ground_height(raw_ground_height, delta)
+		var target_height := _smoothed_ground_height + _commanded_clearance
 		position.y = lerpf(position.y, target_height, 1.0 - exp(-altitude_response * delta))
 	_update_visual(flight, right_stick.x, delta)
 
 
 func get_planar_control(flight: Vector2) -> Vector3:
 	return FLIGHT_MATH.get_planar_control(basis, flight)
+
+
+func reset_altitude_smoothing() -> void:
+	_ground_height_initialized = false
+
+
+func _update_smoothed_ground_height(raw_height: float, delta: float) -> void:
+	if not _ground_height_initialized:
+		_smoothed_ground_height = raw_height
+		_ground_height_initialized = true
+		return
+	var difference := raw_height - _smoothed_ground_height
+	if absf(difference) <= terrain_height_deadband:
+		return
+	var filtered_target := raw_height - signf(difference) * terrain_height_deadband
+	var response_weight := 1.0 - exp(-terrain_height_response * delta)
+	var response_height := lerpf(_smoothed_ground_height, filtered_target, response_weight)
+	_smoothed_ground_height = move_toward(
+		_smoothed_ground_height,
+		response_height,
+		maximum_terrain_follow_speed * delta
+	)
 
 
 func _find_visual() -> void:
