@@ -52,5 +52,28 @@ func _init() -> void:
 	assert(is_equal_approx(MapTiles.decode_terrarium(Color8(128, 100, 0)), 100.0))
 	assert(is_equal_approx(MapTiles.decode_terrarium(Color8(127, 156, 0)), -100.0))
 
+
+	# The imagery request must match the box's aspect in degrees. A square image
+	# for a metres-square box made the service widen the extent by 4.8 km over
+	# the corridor and report it in a field nothing read, displacing buildings
+	# by up to a kilometre and leaving chunks disagreeing with each other.
+	var corridor := MapTiles.region_bounds(-28.08, 153.365, 36000.0)
+	var request := MapTiles.request_pixels(corridor, 4100)
+	var lon_span: float = corridor["east"] - corridor["west"]
+	var lat_span: float = corridor["north"] - corridor["south"]
+	if request.x > 4100 or request.y > 4100:
+		push_error("request must stay inside the service limit, got %s" % request)
+		quit(1)
+	var requested_aspect := float(request.x) / float(request.y)
+	var box_aspect := lon_span / lat_span
+	if absf(requested_aspect - box_aspect) > 0.002:
+		push_error("pixel aspect %f must match the box aspect %f" % [requested_aspect, box_aspect])
+		quit(1)
+	# A box that is taller than it is wide must shrink the width instead.
+	var tall := {"west": 153.0, "east": 153.1, "south": -28.4, "north": -28.0}
+	var tall_request := MapTiles.request_pixels(tall, 1024)
+	if tall_request.y != 1024 or tall_request.x >= 1024:
+		push_error("a tall box must cap the height, got %s" % tall_request)
+		quit(1)
 	print("MAP_TILES_TEST_PASS")
 	quit()

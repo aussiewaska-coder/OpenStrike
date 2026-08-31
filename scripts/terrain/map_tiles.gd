@@ -47,6 +47,24 @@ static func decode_terrarium(colour: Color) -> float:
 	return (float(colour.r8) * 256.0 + float(colour.g8) + float(colour.b8) / 256.0) - 32768.0
 
 
+## Pixel size to ask an ArcGIS export for, given a latitude/longitude box.
+##
+## The aspect must match the box *in degrees*. A region box is square in metres,
+## which away from the equator is wider than tall in degrees; asking for a square
+## image makes the service widen the extent to suit and report the adjustment in
+## a field easily missed, which silently displaces the imagery against the mesh.
+## Mapping the result across the mesh's 0..1 UVs undoes the pixel-aspect
+## difference.
+static func request_pixels(bounds: Dictionary, maximum_px: int) -> Vector2i:
+	var lon_span: float = float(bounds["east"]) - float(bounds["west"])
+	var lat_span: float = float(bounds["north"]) - float(bounds["south"])
+	if lon_span <= 0.0 or lat_span <= 0.0:
+		return Vector2i(maximum_px, maximum_px)
+	if lon_span >= lat_span:
+		return Vector2i(maximum_px, maxi(int(round(float(maximum_px) * lat_span / lon_span)), 1))
+	return Vector2i(maxi(int(round(float(maximum_px) * lon_span / lat_span)), 1), maximum_px)
+
+
 ## A square-in-metres region expressed as a latitude/longitude box. The
 ## longitude half-width is widened by 1/cos(lat) so the box stays square on the
 ## ground rather than in degrees.

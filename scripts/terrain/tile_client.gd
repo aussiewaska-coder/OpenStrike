@@ -216,10 +216,24 @@ func fetch_aerial(bounds: Dictionary, pixels: int, server: String = "qld") -> Im
 		float(bounds["west"]), float(bounds["south"]),
 		float(bounds["east"]), float(bounds["north"]),
 	]
-	var query := "bbox=%s&bboxSR=4326&imageSR=4326&size=%d,%d&format=jpg&f=image" % [bbox, size_px, size_px]
+	# The requested pixel aspect must match the box's aspect *in degrees*, not on
+	# the ground. A region box is square in metres, which at this latitude is
+	# 1.13 times wider than tall in degrees; asking for a square image made the
+	# service quietly widen the latitude span to match and report the adjusted
+	# extent in a field nothing read. The imagery then covered 4.8 km more than
+	# the mesh believed, displacing everything by up to a kilometre and leaving
+	# neighbouring chunks disagreeing with each other. Mapping the returned
+	# image across the mesh's 0..1 UVs undoes the pixel-aspect difference, so
+	# nothing downstream has to know.
+	var request := MapTiles.request_pixels(bounds, size_px)
+	var width_px := request.x
+	var height_px := request.y
+	var query := "bbox=%s&bboxSR=4326&imageSR=4326&size=%d,%d&format=jpg&f=image" % [bbox, width_px, height_px]
 	var base := NSW_IMAGE_URL if use_nsw else QLD_IMAGE_URL
-	var cache_name := "aerial_%s_%s_%d.jpg" % [
-		"nsw" if use_nsw else "qld", bbox.replace(",", "_").replace(".", "p"), size_px,
+	# The size is part of the key, so imagery cached under the old square
+	# request is not reused.
+	var cache_name := "aerial_%s_%s_%dx%d.jpg" % [
+		"nsw" if use_nsw else "qld", bbox.replace(",", "_").replace(".", "p"), width_px, height_px,
 	]
 	var body := await fetch_bytes("%s?%s" % [base, query], cache_name)
 	if body.is_empty() and not use_nsw:
