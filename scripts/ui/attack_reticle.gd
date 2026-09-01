@@ -23,10 +23,35 @@ var _instruments := PackedStringArray()
 var _target := Vector2.ZERO
 var _has_target := false
 var _target_range := 0.0
+var _hit_marker_alpha := 0.0
+var _hit_marker_destroyed := false
+var _manual_aim_active := false
+var _manual_aim_position := Vector2.ZERO
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	set_process(false)
+
+
+func _process(delta: float) -> void:
+	_hit_marker_alpha = move_toward(_hit_marker_alpha, 0.0, delta * 6.5)
+	queue_redraw()
+	if is_zero_approx(_hit_marker_alpha):
+		set_process(false)
+
+
+func show_hit_confirm(destroyed: bool = false) -> void:
+	_hit_marker_alpha = 1.0
+	_hit_marker_destroyed = destroyed
+	set_process(true)
+	queue_redraw()
+
+
+func set_manual_aim(active: bool, screen_position: Vector2) -> void:
+	_manual_aim_active = active
+	_manual_aim_position = screen_position
+	queue_redraw()
 
 
 ## `solution` is the ballistics result, empty when there is no firing solution.
@@ -94,6 +119,8 @@ func clear() -> void:
 
 
 func _draw() -> void:
+	var viewport_centre := size * 0.5
+	var sight_centre := _manual_aim_position if _manual_aim_active else viewport_centre
 	if _has_target:
 		var target_colour := Color(1.0, 0.72, 0.25)
 		var arm := 11.0
@@ -108,12 +135,21 @@ func _draw() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT,
 			-1.0,
 			roundi(readout_size),
-			target_colour
-		)
+				target_colour
+			)
+	if _hit_marker_alpha > 0.001:
+		var marker_colour := Color(1.0, 0.54, 0.16, _hit_marker_alpha) if _hit_marker_destroyed else Color(1.0, 1.0, 1.0, _hit_marker_alpha)
+		var inner := 10.0
+		var outer := 18.0 if _hit_marker_destroyed else 15.0
+		for direction in [Vector2(-1.0, -1.0), Vector2(1.0, -1.0), Vector2(1.0, 1.0), Vector2(-1.0, 1.0)]:
+			var normal: Vector2 = direction.normalized()
+			draw_line(sight_centre + normal * inner, sight_centre + normal * outer, marker_colour, 3.0)
+		if _hit_marker_destroyed:
+			draw_arc(sight_centre, 24.0, 0.0, TAU, 32, marker_colour, 2.0)
 	if _alpha <= 0.001:
 		return
 	var colour := Color(sight_colour, sight_colour.a * _alpha)
-	var centre := size * 0.5
+	var centre := sight_centre
 	for direction in [Vector2.LEFT, Vector2.RIGHT, Vector2.UP, Vector2.DOWN]:
 		draw_line(
 			centre + direction * arm_gap,

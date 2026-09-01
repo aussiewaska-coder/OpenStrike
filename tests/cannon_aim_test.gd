@@ -9,6 +9,7 @@ const SURFACES := preload("res://scripts/world/surface_types.gd")
 
 func _initialize() -> void:
 	var aim: RefCounted = AIM.new()
+	assert(aim.max_yaw_left <= 90.0 and aim.max_yaw_right <= 90.0, "gun must not traverse backward through the airframe")
 
 	# Nose is local +X, so a point straight ahead is zero yaw and zero pitch.
 	assert(aim.local_aim_for(Vector3.ZERO, Vector3(100.0, 0.0, 0.0), 0.0).is_equal_approx(Vector2.ZERO), "forward is zero")
@@ -53,12 +54,12 @@ func _initialize() -> void:
 	assert(absf(tracking.yaw_degrees) < 0.5, "the gun must return forward, got %f" % tracking.yaw_degrees)
 	assert(tracking.aim_source == AIM.AimSource.FORWARD, "with no providers the source is forward")
 
-	# An explicit target outranks free look.
+	# Held R1 is direct manual aim and must outrank an old selected target.
 	var priority: RefCounted = AIM.new()
 	priority.set_look_provider(func() -> Variant: return Vector3(0.0, 0.0, -100.0))
 	priority.set_target_provider(func() -> Variant: return Vector3(100.0, 0.0, 0.0))
 	priority.update(1.0 / 60.0, Vector3.ZERO, 0.0)
-	assert(priority.aim_source == AIM.AimSource.TARGET, "an explicit target wins")
+	assert(priority.aim_source == AIM.AimSource.FREE_LOOK, "held R1 aim must win")
 
 	# Splat weights are the authoritative ground material.
 	var resolver: RefCounted = RESOLVER.new()

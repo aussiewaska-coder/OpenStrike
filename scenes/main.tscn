@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/helicopter/helicopter_controller.gd" id="3_helicopter"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://scripts/effects/impact_fx_manager.gd" id="91_impact"]
 [ext_resource type="Script" path="res://scripts/effects/cannon_fx.gd" id="92_cannon_fx"]
 [ext_resource type="Script" path="res://scripts/weapons/cannon_weapon.gd" id="93_cannon"]
+[ext_resource type="Script" path="res://scripts/entities/launcher_field.gd" id="94_launchers"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSky_day"]
 sky_top_color = Color(0.19, 0.5, 0.82, 1)
@@ -194,3 +195,6 @@ script = ExtResource("91_impact")
 
 [node name="CannonFX" type="Node3D" parent="."]
 script = ExtResource("92_cannon_fx")
+
+[node name="LauncherField" type="Node3D" parent="."]
+script = ExtResource("94_launchers")

@@ -7,8 +7,8 @@ extends RefCounted
 
 enum AimSource { FORWARD, FREE_LOOK, TARGET }
 
-var max_yaw_left := 100.0
-var max_yaw_right := 100.0
+var max_yaw_left := 85.0
+var max_yaw_right := 85.0
 var max_pitch_up := 11.0
 var max_pitch_down := 60.0
 var turret_yaw_speed := 115.0
@@ -36,17 +36,17 @@ func set_look_provider(provider: Callable) -> void:
 
 
 func resolve_desired_point() -> Variant:
-	# Spec section 6 priority: explicit target, then R1 free-look, then forward.
-	if _target_provider.is_valid():
-		var target: Variant = _target_provider.call()
-		if target is Vector3:
-			aim_source = AimSource.TARGET
-			return target
+	# Held R1 is direct manual aim and must override an old selected target.
 	if _look_provider.is_valid():
 		var look: Variant = _look_provider.call()
 		if look is Vector3:
 			aim_source = AimSource.FREE_LOOK
 			return look
+	if _target_provider.is_valid():
+		var target: Variant = _target_provider.call()
+		if target is Vector3:
+			aim_source = AimSource.TARGET
+			return target
 	aim_source = AimSource.FORWARD
 	return null
 

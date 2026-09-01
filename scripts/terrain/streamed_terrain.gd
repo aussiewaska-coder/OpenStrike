@@ -15,6 +15,8 @@ signal region_ready()
 signal chunk_buildings_ready(chunk_key: int, records: Array, ground_height: Callable)
 signal chunk_buildings_released(chunk_key: int)
 
+const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_layout.gd")
+
 ## Chunks per side. Ground resolution is set by how much ground one texture has
 ## to cover, not by the texture size alone: at 12 the corridor's chunks were
 ## 3 km wide and 2048 px bought only 1.46 m/px. At 24 they are 1.5 km, so the
@@ -57,6 +59,7 @@ var _update_accumulator := 0.0
 var _pending_detail := {}
 var _pending_buildings := {}
 var _buildings_dir := ""
+var _building_chunk_offset := Vector2i.ZERO
 
 
 func _ready() -> void:
@@ -84,6 +87,8 @@ func load_region(region: Dictionary) -> bool:
 	_bounds = MapTiles.region_bounds(center_latitude, center_longitude, world_size)
 	elevation_zoom = int(region.get("elevation_zoom", elevation_zoom))
 	_buildings_dir = String(region.get("buildings_dir", ""))
+	var building_chunk_offset := int(region.get("building_chunk_offset", 0))
+	_building_chunk_offset = Vector2i(building_chunk_offset, building_chunk_offset)
 
 	status_changed.emit("Streaming elevation for %s..." % region.get("display_name", region_id))
 	TileClient.load_progress.connect(_on_tile_progress)
@@ -482,7 +487,9 @@ func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	var key := int(chunk["index"])
 	if _pending_buildings.has(key):
 		return
-	var path := "%s/%d_%d.json" % [_buildings_dir, int(chunk["cx"]), int(chunk["cz"])]
+	var path := _building_chunk_path(int(chunk["cx"]), int(chunk["cz"]))
+	if path.is_empty():
+		return
 	if not FileAccess.file_exists(path):
 		return
 	_pending_buildings[key] = true
@@ -502,6 +509,15 @@ func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	add_child(instance)
 	chunk["buildings"] = instance
 	chunk_buildings_ready.emit(key, result.get("records", []), sample_mesh_height)
+
+
+## Smaller packaged building grids can sit inside a larger terrain grid. This
+## keeps their world coordinates and chunk density unchanged while the theatre
+## gains an outer flight ring.
+func _building_chunk_path(cx: int, cz: int) -> String:
+	return BUILDING_CHUNK_LAYOUT.path_for(
+		_buildings_dir, Vector2i(cx, cz), _building_chunk_offset
+	)
 
 
 ## Runs on a worker thread.

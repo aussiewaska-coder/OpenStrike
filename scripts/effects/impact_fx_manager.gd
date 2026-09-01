@@ -79,6 +79,8 @@ var _decals: Array[MeshInstance3D] = []
 var _decal_cursor := 0
 var _decal_cells: Dictionary = {}
 var _decal_lifetime := 22.0
+var _explosion_lights: Array[OmniLight3D] = []
+var _explosion_light_cursor := 0
 
 
 func _ready() -> void:
@@ -88,6 +90,14 @@ func _ready() -> void:
 		_sparks.append(_make_emitter(true))
 	for index in range(decal_pool_size):
 		_decals.append(_make_decal())
+	for index in range(4):
+		var light := OmniLight3D.new()
+		light.light_color = Color(1.0, 0.48, 0.12)
+		light.omni_range = 42.0
+		light.shadow_enabled = false
+		light.visible = false
+		add_child(light)
+		_explosion_lights.append(light)
 
 
 func spawn_impact(hit_result: RefCounted, round_data: RefCounted) -> void:
@@ -103,6 +113,24 @@ func spawn_impact(hit_result: RefCounted, round_data: RefCounted) -> void:
 		_emit_sparks(hit_result.position, ejecta, settings)
 	if float(settings["decal_radius"]) > 0.0:
 		_place_decal(hit_result.position, normal, settings)
+
+
+func spawn_explosion(position: Vector3) -> void:
+	var fire := {
+		"primary": Color(1.0, 0.28, 0.04), "count": 58, "speed": 34.0,
+		"spread": 180.0, "life": 1.15, "gravity": 0.22,
+		"scale_min": 1.8, "scale_max": 5.2,
+	}
+	var smoke := {
+		"primary": Color(0.16, 0.15, 0.14), "count": 36, "speed": 15.0,
+		"spread": 150.0, "life": 2.7, "gravity": -0.08,
+		"scale_min": 2.4, "scale_max": 7.0,
+	}
+	_emit_burst(position, Vector3.UP, fire)
+	_emit_burst(position, Vector3.UP, smoke)
+	if quality != Quality.PERFORMANCE:
+		_emit_sparks(position, Vector3.UP, {"sparks": 32, "speed": 44.0, "spread": 180.0, "secondary": Color(1.0, 0.75, 0.28)})
+	_flash_explosion(position)
 
 
 func _apply_quality() -> void:
@@ -143,9 +171,20 @@ func _emit_burst(position: Vector3, direction: Vector3, settings: Dictionary) ->
 	emitter.spread = float(settings["spread"])
 	emitter.gravity = Vector3.DOWN * 9.80665 * float(settings["gravity"])
 	emitter.color = settings["primary"]
-	emitter.scale_amount_min = 0.22
-	emitter.scale_amount_max = 0.75
+	emitter.scale_amount_min = float(settings.get("scale_min", 0.22))
+	emitter.scale_amount_max = float(settings.get("scale_max", 0.75))
 	emitter.restart()
+
+
+func _flash_explosion(position: Vector3) -> void:
+	var light := _explosion_lights[_explosion_light_cursor]
+	_explosion_light_cursor = (_explosion_light_cursor + 1) % _explosion_lights.size()
+	light.global_position = position
+	light.light_energy = 9.0
+	light.visible = true
+	var tween := create_tween()
+	tween.tween_property(light, "light_energy", 0.0, 0.38)
+	tween.tween_callback(func() -> void: light.visible = false)
 
 
 func _emit_sparks(position: Vector3, direction: Vector3, settings: Dictionary) -> void:

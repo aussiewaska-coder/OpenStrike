@@ -94,6 +94,14 @@ func get_aim_vector() -> Vector2:
 	))
 
 
+func get_flight_yaw_collective_vector() -> Vector2:
+	return route_aim_input_to_flight(get_aim_vector(), is_free_look_held())
+
+
+static func route_aim_input_to_flight(aim_input: Vector2, free_look_held: bool) -> Vector2:
+	return Vector2.ZERO if free_look_held else aim_input
+
+
 func is_free_look_held() -> bool:
 	return is_controller_ready() and Input.is_action_pressed(ACTION_FREE_LOOK)
 

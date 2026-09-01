@@ -3,7 +3,11 @@ extends Node3D
 const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
 const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
+const EXTERNAL_FREE_LOOK := preload("res://scripts/camera/external_free_look.gd")
+const EXTERNAL_AIM_CURSOR := preload("res://scripts/camera/external_aim_cursor.gd")
+const ARCADE_CAMERA_FEEDBACK := preload("res://scripts/camera/arcade_camera_feedback.gd")
 const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
+const AIRFRAME_VISUALS := preload("res://scripts/helicopter/airframe_visuals.gd")
 const GROUND_RAY := preload("res://scripts/terrain/ground_ray.gd")
 const BUILDING_HIT_INDEX := preload("res://scripts/terrain/building_hit_index.gd")
 const WORLD_SURFACE_RESOLVER := preload("res://scripts/world/world_surface_resolver.gd")
@@ -32,9 +36,16 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @export var attack_fov := 78.0
 @export var camera_ground_clearance := 6.0
 
-@export_group("Free Look")
-## R1 held hands the right stick to the camera. The view holds wherever it is
-## pointed until the button is released, then eases back to the flight view.
+@export_group("Arcade Presentation")
+@export var speed_fov_degrees := 9.0
+@export var speed_fov_reference_mps := 118.0
+@export var cannon_recoil_trauma := 0.075
+@export var destructive_hit_stop_seconds := 0.055
+@export var destructive_hit_time_scale := 0.08
+
+@export_group("Manual Aim")
+## Cockpit R1 turns the view directly. External R1 moves a virtual sight first;
+## the camera only receives overflow after that sight reaches its aim window.
 @export var free_look_yaw_degrees := 130.0
 @export var free_look_pitch_degrees := 55.0
 @export var free_look_speed := 2.4
@@ -49,6 +60,7 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @onready var projectile_manager: Node3D = $ProjectileManager
 @onready var impact_fx: Node3D = $ImpactFX
 @onready var cannon_fx: Node3D = $CannonFX
+@onready var launcher_field: Node3D = $LauncherField
 @onready var cannon_weapon: Node3D = $HelicopterAnchor/CannonWeapon
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
 @onready var camera: Camera3D = $Camera3D
@@ -79,9 +91,13 @@ var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
 var _orbit_lock := ORBIT_LOCK.new()
 var _zoom_profile := ZOOM_PROFILE.new()
+var _arcade_camera_feedback := ARCADE_CAMERA_FEEDBACK.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
+var _external_aim := EXTERNAL_AIM_CURSOR.new()
+var _camera_aim_basis := Basis.IDENTITY
+var _hit_stop_serial := 0
 var _target_point := Vector3.ZERO
 var _has_target_point := false
 var _active_terrain: Node
@@ -133,6 +149,8 @@ func _process(delta: float) -> void:
 	gamepad_diagnostic.text = "%s\n%s" % [GamepadInput.get_diagnostic_text(), _map_diagnostic_text()]
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
+		_camera_aim_basis = camera.global_basis
+		_apply_arcade_camera_shake(delta)
 		_update_attack_reticle()
 		_update_target_marker()
 
@@ -142,6 +160,7 @@ func _spawn_helicopter() -> void:
 	helicopter.name = "HeroHelicopter"
 	helicopter_anchor.add_child(helicopter)
 	helicopter.scale = Vector3.ONE * 0.105
+	AIRFRAME_VISUALS.sharpen_materials(helicopter)
 	# The source model faces local +X. Put the initial presentation angle on the
 	# vehicle root so its visible nose and logical flight heading are identical.
 	helicopter.rotation_degrees.y = 0.0
@@ -166,6 +185,7 @@ func _on_region_selected(region: Dictionary) -> void:
 ## Every theatre streams. The map cache is checked before the network, so a
 ## theatre already flown loads from disk and needs no signal.
 func _load_streamed_region(region: Dictionary) -> void:
+	launcher_field.clear()
 	streamed_terrain.visible = true
 	if not streamed_terrain.status_changed.is_connected(_on_streamed_status_changed):
 		streamed_terrain.status_changed.connect(_on_streamed_status_changed)
@@ -187,6 +207,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 	if helicopter_anchor.has_method("reset_altitude_smoothing"):
 		helicopter_anchor.reset_altitude_smoothing()
 	streamed_terrain.set_focus(helicopter_anchor)
+	launcher_field.populate(String(region.get("id", "")), streamed_terrain)
 	_camera_follow_enabled = true
 	_snap_follow_camera()
 
@@ -195,11 +216,19 @@ func _on_streamed_status_changed(message: String) -> void:
 	status_label.text = message
 
 
-## While R1 is held the right stick aims the camera and the view stays where it
-## is put; letting go eases it back to the flight view.
+## Cockpit aim turns the view. External aim updates the target cursor and its
+## delayed camera catch-up as separate pieces of state.
 func _update_free_look(delta: float) -> void:
-	if GamepadInput.is_free_look_held():
-		var look := GamepadInput.get_aim_vector()
+	var held := GamepadInput.is_free_look_held()
+	var look := GamepadInput.get_aim_vector() if held else Vector2.ZERO
+	if _view != View.COCKPIT:
+		var viewport_size := camera.get_viewport().get_visible_rect().size
+		_external_aim.set_projection(camera.fov, viewport_size.x / maxf(viewport_size.y, 1.0))
+		_external_aim.update(look, held, delta)
+		_free_look = _free_look.lerp(Vector2.ZERO, 1.0 - exp(-free_look_return_response * delta))
+		return
+	_external_aim.update(Vector2.ZERO, false, delta)
+	if held:
 		_free_look.x = clampf(_free_look.x - look.x * free_look_speed * delta, -1.0, 1.0)
 		_free_look.y = clampf(_free_look.y - look.y * free_look_speed * delta, -1.0, 1.0)
 		return
@@ -211,6 +240,10 @@ func _free_look_basis() -> Basis:
 		return Basis.IDENTITY
 	return Basis(Vector3.UP, deg_to_rad(_free_look.x * free_look_yaw_degrees)) \
 		* Basis(Vector3.RIGHT, deg_to_rad(_free_look.y * free_look_pitch_degrees))
+
+
+func _external_camera_aim_basis() -> Basis:
+	return _external_aim.camera_basis()
 
 
 func _update_follow_camera(delta: float) -> void:
@@ -338,14 +371,36 @@ func _update_instruments() -> void:
 ## Feeds the loopback telemetry socket the map layer's state alongside the
 ## engine's own counters, so a shell on the device sees both at once.
 func _telemetry_sample() -> Dictionary:
+	var aim_input := GamepadInput.get_aim_vector()
 	var sample := {
 		"theatre": String(LocationService.selected_region.get("display_name", "none")),
 		"view": View.keys()[_view],
+		"free_look_held": GamepadInput.is_free_look_held(),
+		"free_look_x": _free_look.x,
+		"free_look_y": _free_look.y,
+		"external_aim_cursor_x": _external_aim.cursor_offset.x,
+		"external_aim_cursor_y": _external_aim.cursor_offset.y,
+		"external_aim_camera_x": _external_aim.camera_offset.x,
+		"external_aim_camera_y": _external_aim.camera_offset.y,
+		"aim_input_x": aim_input.x,
+		"aim_input_y": aim_input.y,
+		"orbit_input": GamepadInput.get_camera_orbit_axis(),
+		"aircraft_yaw_degrees": helicopter_anchor.global_rotation_degrees.y,
+		"camera_yaw_degrees": camera.global_rotation_degrees.y,
+		"speed_fov_offset_degrees": _speed_fov_offset(),
+		"camera_shake_trauma": _arcade_camera_feedback.trauma,
+		"launchers_remaining": launcher_field.launcher_count(),
 		"compressed": TileClient.compression_available,
 		"cache_hits": TileClient.cache_hits,
 		"net_fetches": TileClient.network_fetches,
 		"tile_failures": TileClient.failures,
 	}
+	if cannon_weapon != null and cannon_weapon.aim != null:
+		sample.merge({
+			"gun_yaw_degrees": cannon_weapon.aim.yaw_degrees,
+			"gun_pitch_degrees": cannon_weapon.aim.pitch_degrees,
+			"gun_aim_source": cannon_weapon.aim.AimSource.keys()[cannon_weapon.aim.aim_source],
+		}, true)
 	if streamed_terrain.has_method("detail_report"):
 		var report: Dictionary = streamed_terrain.detail_report(_focus_position())
 		sample.merge({
@@ -434,7 +489,15 @@ func _update_target_marker() -> void:
 ## of the zoom blend, so it fades in exactly as the camera drops low.
 func _update_attack_reticle() -> void:
 	# The cockpit has no panel, so the sight and the instruments are always up.
-	var alpha := 1.0 if _view == View.COCKPIT else 1.0 - _zoom_profile.blend(_camera_zoom)
+	# Held R1 is also always a weapon view: the movable sight marks the manual
+	# ray while the pipper shows where the traversing barrel will land.
+	var manual_aim := GamepadInput.is_free_look_held()
+	var viewport_size := camera.get_viewport().get_visible_rect().size
+	var manual_position := viewport_size * 0.5
+	if manual_aim and _view != View.COCKPIT:
+		manual_position = _external_aim.screen_position(viewport_size)
+	attack_reticle.set_manual_aim(manual_aim, manual_position)
+	var alpha := 1.0 if _view == View.COCKPIT or manual_aim else 1.0 - _zoom_profile.blend(_camera_zoom)
 	if _view == View.COCKPIT:
 		_update_instruments()
 	else:
@@ -476,7 +539,7 @@ func _update_cockpit_camera() -> void:
 	# The airframe faces local +X, so the camera looks down that axis rather
 	# than its own -Z.
 	camera.global_basis = Basis.looking_at(frame.basis.x, Vector3.UP) * _free_look_basis()
-	camera.fov = cockpit_fov
+	camera.fov = cockpit_fov + _speed_fov_offset() * 0.55
 
 
 func _snap_follow_camera() -> void:
@@ -503,7 +566,15 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		desired_position.y,
 		_ground_height_at(desired_position) + camera_ground_clearance
 	)
-	var target_fov := _zoom_profile.fov(_camera_zoom)
+	if not _external_aim.camera_offset.is_zero_approx():
+		# External R1 is manual aim: rotate the view ray, not the camera boom.
+		# Recompute from the authored target every frame so a held angle is stable.
+		desired_look = EXTERNAL_FREE_LOOK.look_target(
+			desired_position,
+			desired_look,
+			_external_camera_aim_basis()
+		)
+	var target_fov := _zoom_profile.fov(_camera_zoom) + _speed_fov_offset()
 	if snap:
 		camera.global_position = desired_position
 		_look_target = desired_look
@@ -520,13 +591,32 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-camera_mode_response * delta))
 	if camera.global_position.distance_squared_to(_look_target) > 0.0001:
 		camera.look_at(_look_target, Vector3.UP)
-	if not _free_look.is_zero_approx():
-		# Swing the camera around the aircraft rather than turning it on the
-		# spot, so the airframe stays in frame while the view moves.
-		var offset := camera.global_position - focus
-		camera.global_position = focus + _free_look_basis() * offset
-		if camera.global_position.distance_squared_to(_look_target) > 0.0001:
-			camera.look_at(_look_target, Vector3.UP)
+
+
+func _horizontal_speed() -> float:
+	if helicopter_anchor != null and "velocity" in helicopter_anchor:
+		var velocity: Vector3 = helicopter_anchor.velocity
+		return Vector2(velocity.x, velocity.z).length()
+	return 0.0
+
+
+func _speed_fov_offset() -> float:
+	return ARCADE_CAMERA_FEEDBACK.speed_fov_offset(
+		_horizontal_speed(),
+		speed_fov_reference_mps,
+		speed_fov_degrees
+	)
+
+
+func _apply_arcade_camera_shake(delta: float) -> void:
+	var rotation_degrees: Vector3 = _arcade_camera_feedback.update(delta)
+	if rotation_degrees.is_zero_approx():
+		return
+	camera.global_basis = camera.global_basis * Basis.from_euler(Vector3(
+		deg_to_rad(rotation_degrees.x),
+		deg_to_rad(rotation_degrees.y),
+		deg_to_rad(rotation_degrees.z)
+	))
 
 
 func _on_gamepad_action_pressed(action: StringName) -> void:
@@ -659,6 +749,7 @@ func _wire_cannon_systems() -> void:
 	_building_hit_index = BUILDING_HIT_INDEX.new()
 	_hit_query = WORLD_HIT_QUERY.new()
 	_hit_query.configure(_ground_height_xz, _building_hit_index, _surface_resolver, 0.0)
+	_hit_query.entity_index = launcher_field
 	_building_damage = BUILDING_DAMAGE.new()
 	_building_damage.building_index = _building_hit_index
 
@@ -679,6 +770,7 @@ func _wire_cannon_systems() -> void:
 	cannon_weapon.aim.set_target_provider(_orbit_target_point)
 	cannon_weapon.aim.set_look_provider(_free_look_aim_point)
 	cannon_weapon.round_fired.connect(cannon_fx.on_round_fired)
+	cannon_weapon.round_fired.connect(_on_round_fired_feedback)
 
 	cannon_fx.projectile_manager = projectile_manager
 	cannon_fx.gun_mount = cannon_weapon.gun_mount
@@ -702,21 +794,32 @@ func _on_chunk_buildings_released(chunk_key: int) -> void:
 		_building_hit_index.remove_chunk(chunk_key)
 
 
-## Spec priority 1: an explicitly selected target outranks where the player is
-## looking. Reuses the existing orbit target rather than selecting its own.
+## A selected orbit point remains the automatic gun target whenever direct R1
+## aim is not held. CannonAim gives the manual look provider priority.
 func _orbit_target_point() -> Variant:
 	if helicopter_anchor != null and helicopter_anchor.has_orbit_target:
 		return helicopter_anchor.orbit_target
 	return null
 
 
-## Spec priority 2: while R1 is held the gun chases whatever the camera centre
-## is over. Returns null otherwise, so the turret eases back to the nose.
+## While R1 is held the gun chases the manual sight ray. Returns null otherwise,
+## allowing the selected orbit target or forward aim to resume.
 func _free_look_aim_point() -> Variant:
 	if camera == null or not GamepadInput.is_free_look_held():
 		return null
 	var origin := camera.global_position
-	var forward := -camera.global_basis.z.normalized()
+	# Camera shake is presentation only. Aim through the stable basis captured
+	# before shake so recoil cannot walk the player's held R1 aim off target.
+	var forward := -_camera_aim_basis.z.normalized()
+	if _view != View.COCKPIT:
+		var viewport_size := camera.get_viewport().get_visible_rect().size
+		var aspect := viewport_size.x / maxf(viewport_size.y, 1.0)
+		forward = EXTERNAL_AIM_CURSOR.ray_direction(
+			_camera_aim_basis,
+			camera.fov,
+			aspect,
+			_external_aim.cursor_offset
+		)
 	# Buildings first: the gun should aim at the facade, not the ground behind.
 	if _hit_query != null:
 		var travelled := 0.0
@@ -733,9 +836,30 @@ func _free_look_aim_point() -> Variant:
 	return origin + forward * 3000.0
 
 
+func _on_round_fired_feedback(_round_data: RefCounted) -> void:
+	_arcade_camera_feedback.add_recoil(cannon_recoil_trauma)
+
+
+func _play_destructive_hit_stop() -> void:
+	_hit_stop_serial += 1
+	var serial := _hit_stop_serial
+	Engine.time_scale = destructive_hit_time_scale
+	await get_tree().create_timer(destructive_hit_stop_seconds, true, false, true).timeout
+	if serial == _hit_stop_serial:
+		Engine.time_scale = 1.0
+
+
 func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> void:
 	if impact_fx != null:
 		impact_fx.spawn_impact(hit_result, round_data)
+	var destructive: bool = hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY
+	attack_reticle.show_hit_confirm(destructive)
+	_arcade_camera_feedback.add_impact(camera.global_position.distance_to(hit_result.position), destructive)
 	# Every round damages what it actually struck, selected target or not.
 	if hit_result.object_type == WORLD_HIT.ObjectKind.BUILDING and _building_damage != null:
 		_building_damage.apply_hit(hit_result, round_data)
+	elif hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY:
+		var explosion_position: Variant = launcher_field.destroy_launcher(hit_result.object_id)
+		if explosion_position is Vector3:
+			impact_fx.spawn_explosion(explosion_position)
+			_play_destructive_hit_stop()

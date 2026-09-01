@@ -226,7 +226,7 @@ func _arcade_step(delta: float) -> void:
 	var right_stick := Vector2.ZERO
 	if GamepadInput.is_controller_ready():
 		flight = GamepadInput.get_flight_vector()
-		right_stick = GamepadInput.get_aim_vector()
+		right_stick = GamepadInput.get_flight_yaw_collective_vector()
 	var sweep := orbit_input()
 	if not is_zero_approx(sweep):
 		_adjust_orbit_radius(flight.y, delta)
@@ -285,7 +285,7 @@ func _rotor_step(delta: float) -> void:
 	var pedals_collective := Vector2.ZERO
 	if GamepadInput.is_controller_ready():
 		cyclic = GamepadInput.get_flight_vector()
-		pedals_collective = GamepadInput.get_aim_vector()
+		pedals_collective = GamepadInput.get_flight_yaw_collective_vector()
 
 	# Collective holds where it is put, so releasing the stick does not drop the
 	# aircraft out of the sky.

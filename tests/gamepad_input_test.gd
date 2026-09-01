@@ -34,6 +34,14 @@ func _run() -> void:
 	_assert_button(&"camera_zoom_out", JoyButton.JOY_BUTTON_DPAD_DOWN)
 	assert(service.apply_response_curve(Vector2(0.1, 0.0)) == Vector2.ZERO)
 	assert(service.apply_response_curve(Vector2.RIGHT).is_equal_approx(Vector2.RIGHT))
+	assert(
+		service.route_aim_input_to_flight(Vector2(0.75, -0.5), true) == Vector2.ZERO,
+		"free look must own the right stick instead of also steering the aircraft"
+	)
+	assert(
+		service.route_aim_input_to_flight(Vector2(0.75, -0.5), false).is_equal_approx(Vector2(0.75, -0.5)),
+		"right-stick flight controls must resume when free look is released"
+	)
 	print("GAMEPAD_INPUT_TEST_PASS")
 	quit()
 
