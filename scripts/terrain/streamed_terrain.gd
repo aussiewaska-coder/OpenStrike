@@ -325,15 +325,31 @@ func set_quality(level: Quality) -> void:
 			near_detail_chunks = 0
 			max_detail_chunks = 10
 			detail_texture_px = 2048
+			near_detail_texture_px = 2048
 		Quality.QUALITY:
 			near_detail_chunks = 6
 			max_detail_chunks = 24
 			detail_texture_px = 2048
+			near_detail_texture_px = 4096
 		_:
 			near_detail_chunks = 3
 			max_detail_chunks = 16
 			detail_texture_px = 2048
+			near_detail_texture_px = 4096
+	_apply_memory_budget()
 	_refresh_detail_chunks()
+
+
+## A 2048 px chunk is 2 MB compressed and 16.7 MB not. Without a compressor the
+## same settings cost eight times the memory, so the resident set and the near
+## tier have to come down to stay inside a phone's budget.
+func _apply_memory_budget() -> void:
+	if TileClient.compression_available:
+		return
+	near_detail_texture_px = mini(near_detail_texture_px, 2048)
+	detail_texture_px = mini(detail_texture_px, 1024)
+	max_detail_chunks = mini(max_detail_chunks, 10)
+	near_detail_chunks = mini(near_detail_chunks, 2)
 
 
 func quality_name() -> String:
@@ -358,6 +374,7 @@ func _refresh_detail_chunks() -> void:
 	var wanted := ranked.slice(0, max_detail_chunks)
 	# Rank decides resolution: the nearest few get the high tier, the rest the
 	# standard one, and a chunk that changes tier is re-fetched.
+	_apply_memory_budget()
 	var moving_fast := _focus_speed() > near_detail_speed_limit
 	for position in range(wanted.size()):
 		var high_tier: bool = position < near_detail_chunks and not moving_fast

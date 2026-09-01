@@ -325,6 +325,7 @@ func _telemetry_sample() -> Dictionary:
 	var sample := {
 		"theatre": String(LocationService.selected_region.get("display_name", "none")),
 		"view": View.keys()[_view],
+		"compressed": TileClient.compression_available,
 		"cache_hits": TileClient.cache_hits,
 		"net_fetches": TileClient.network_fetches,
 		"tile_failures": TileClient.failures,

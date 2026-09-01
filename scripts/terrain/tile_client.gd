@@ -35,6 +35,12 @@ var _busy := false
 var cache_hits := 0
 var network_fetches := 0
 var failures := 0
+## Whether runtime texture compression is actually available. The editor ships
+## the ETC2 compressor; the Android export template does not, and Image.compress
+## fails there without raising. Believing it worked cost 317 MB of texture memory
+## on device against a 75 MB budget, which is what the frame rate was paying for.
+var compression_available := true
+var _compression_probed := false
 
 
 func _ready() -> void:
@@ -317,7 +323,13 @@ func _texture_from(image: Image) -> ImageTexture:
 ## Runs on a worker thread. Falling back to uncompressed only costs memory.
 func _prepare_image(image: Image) -> void:
 	image.generate_mipmaps()
-	image.compress(Image.COMPRESS_ETC2, Image.COMPRESS_SOURCE_SRGB)
+	if compression_available:
+		if image.compress(Image.COMPRESS_ETC2, Image.COMPRESS_SOURCE_SRGB) == OK:
+			return
+		compression_available = false
+	# Without a compressor, RGB565 is the only saving available at run time:
+	# two bytes a pixel against three, and no module required.
+	image.convert(Image.FORMAT_RGB565)
 
 
 ## Fetches a box as a grid of sub-requests and stitches them.
