@@ -11,7 +11,11 @@ extends Node3D
 signal status_changed(message: String)
 signal region_ready()
 
-@export var chunk_count := 12              ## chunks per side; 12 -> 3 km chunks over 36 km
+## Chunks per side. Ground resolution is set by how much ground one texture has
+## to cover, not by the texture size alone: at 12 the corridor's chunks were
+## 3 km wide and 2048 px bought only 1.46 m/px. At 24 they are 1.5 km, so the
+## same request buys twice the detail, and the near tier four times.
+@export var chunk_count := 24
 @export var chunk_resolution := 33         ## vertices per chunk edge
 @export var elevation_zoom := 12           ## Terrarium zoom; 12 is ~34 m/px, SRTM's native scale
 @export var heightfield_resolution := 513
@@ -24,9 +28,9 @@ signal region_ready()
 ## Compression is what makes the difference affordable: 4096 px costs about
 ## 10 MB compressed against 64 MB raw.
 @export var near_detail_texture_px := 4096
-@export var near_detail_chunks := 4
-@export var detail_radius_m := 7000.0
-@export var max_detail_chunks := 16
+@export var near_detail_chunks := 6
+@export var detail_radius_m := 6000.0
+@export var max_detail_chunks := 24
 @export var detail_update_interval_s := 0.6
 
 var _height_image: Image

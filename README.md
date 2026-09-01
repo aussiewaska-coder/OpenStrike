@@ -46,9 +46,11 @@ and every height query reads from it.
 
 Imagery is compressed to ETC2 on arrival -- 12 MB per 2048 px chunk becomes
 2 MB for about 70 ms of CPU -- which is what makes the detail ladder affordable:
-the four chunks nearest the aircraft carry 4096 px (0.73 m/px), the rest of the
-resident sixteen carry 2048 px (1.46 m/px), and everything else shows the
-region overview. Texture memory lands near 82 MB against 256 MB uncompressed.
+the six chunks nearest the aircraft carry 4096 px (0.37 m/px), the rest of the
+resident twenty-four carry 2048 px (0.73 m/px), and everything else shows the
+region overview. Ground resolution is set by how much ground one texture has to
+cover rather than by the texture size alone, which is why the corridor is split
+into 24 chunks a side rather than 12: the same request buys twice the detail. Texture memory lands near 82 MB against 256 MB uncompressed.
 
 The overview and any NSW imagery are stitched from a grid of smaller requests
 rather than asked for in one piece. Both servers cap the request, not the ground
