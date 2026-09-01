@@ -27,7 +27,7 @@ enum FlightMode {ARCADE, ROTOR}
 
 @export var flight_mode: FlightMode = FlightMode.ARCADE
 
-@export var terrain_path: NodePath = NodePath("../Terrain")
+@export var terrain_path: NodePath = NodePath("../StreamedTerrain")
 ## Kept clear of the very edge so the aircraft never sits on the boundary where
 ## the terrain mesh ends.
 @export var world_edge_margin := 50.0

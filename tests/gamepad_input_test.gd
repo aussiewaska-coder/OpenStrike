@@ -22,8 +22,9 @@ func _run() -> void:
 	# The panel's buttons are unreachable with a controller, so their actions
 	# have to exist on the pad.
 	_assert_button(&"flight_mode_toggle", JoyButton.JOY_BUTTON_Y)
-	_assert_button(&"theatre_cycle", JoyButton.JOY_BUTTON_X)
-	_assert_button(&"weapon_cannon", JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
+	_assert_button(&"settings_panel", JoyButton.JOY_BUTTON_X)
+	_assert_button(&"free_look", JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
+	_assert_button(&"weapon_cannon", JoyButton.JOY_BUTTON_A)
 	_assert_button(&"weapon_rockets", JoyButton.JOY_BUTTON_LEFT_SHOULDER)
 	_assert_button(&"camera_travel_toggle", JoyButton.JOY_BUTTON_RIGHT_STICK)
 	_assert_button(&"context_extract", JoyButton.JOY_BUTTON_LEFT_STICK)

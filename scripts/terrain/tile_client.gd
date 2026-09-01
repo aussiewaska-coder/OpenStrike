@@ -50,6 +50,36 @@ func _release() -> void:
 	_busy = false
 
 
+## What the map cache holds. Nothing prunes it and nothing reported it, so a
+## corridor flown end to end could put a gigabyte on the device unannounced.
+func cache_report() -> Dictionary:
+	var directory := DirAccess.open(CACHE_DIR)
+	if directory == null:
+		return {"files": 0, "bytes": 0}
+	var files := 0
+	var bytes := 0
+	for name in directory.get_files():
+		var file := FileAccess.open(_cache_path(name), FileAccess.READ)
+		if file == null:
+			continue
+		bytes += file.get_length()
+		file.close()
+		files += 1
+	return {"files": files, "bytes": bytes}
+
+
+## Empties the cache. Everything is re-fetchable, so this only costs bandwidth.
+func clear_cache() -> int:
+	var directory := DirAccess.open(CACHE_DIR)
+	if directory == null:
+		return 0
+	var removed := 0
+	for name in directory.get_files():
+		if directory.remove(name) == OK:
+			removed += 1
+	return removed
+
+
 func _cache_path(cache_name: String) -> String:
 	return "%s/%s" % [CACHE_DIR, cache_name]
 

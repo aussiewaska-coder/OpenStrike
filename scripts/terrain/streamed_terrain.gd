@@ -59,6 +59,10 @@ func load_region(region: Dictionary) -> bool:
 	_clear_terrain()
 	var region_id := String(region.get("id", "region"))
 	var world_size := float(region.get("world_size_m", 36000.0))
+	# A theatre may set its own grid: ground resolution depends on how much
+	# ground one chunk texture covers, so a small area wants more, finer chunks
+	# than the 36 km corridor does.
+	chunk_count = int(region.get("chunk_count", chunk_count))
 	var center_latitude := float(region.get("center_latitude", 0.0))
 	var center_longitude := float(region.get("center_longitude", 0.0))
 	_bounds = MapTiles.region_bounds(center_latitude, center_longitude, world_size)

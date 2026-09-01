@@ -121,6 +121,20 @@ func cycle_region() -> void:
 	region_selected.emit(selected_region)
 
 
+## The settings panel picks a theatre outright rather than by distance.
+func select_region_by_id(region_id: String) -> void:
+	for region in _regions:
+		if String(region.get("id", "")) == region_id:
+			selected_region = region.duplicate(true)
+			_emit_status("manual", "Theatre selected.")
+			region_selected.emit(selected_region)
+			return
+
+
+func installed_regions() -> Array:
+	return _regions.duplicate(true)
+
+
 func _load_region_catalog() -> Array:
 	if not FileAccess.file_exists(REGION_CATALOG_PATH):
 		push_error("Region catalog is missing: %s" % REGION_CATALOG_PATH)

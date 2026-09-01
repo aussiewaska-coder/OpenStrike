@@ -143,8 +143,9 @@ clearance stops the model flying you into a hill.
 | L2 / R2 | With a target: fly the aircraft around it, nose held on it. Without one: orbit the camera |
 | Left stick up/down, while orbiting | Close or widen the orbit, down to 100 m |
 | Y | Switch controls: arcade / realistic |
-| X | Switch theatre |
-| R1 | Cannon |
+| R1 (hold) | Free look: the right stick aims the camera, and the view holds until released |
+| X | Settings |
+| A | Cannon |
 | L1 | Rockets |
 | R3 | Cycle cockpit / chase / orbit view |
 | L3 | Context/extraction |
