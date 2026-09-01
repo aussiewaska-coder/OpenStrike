@@ -26,7 +26,7 @@ window/stretch/mode="canvas_items"
 [rendering]
 
 # Sharpens ground texture at the shallow angles this game is actually flown at.
-textures/default_filters/texture_mipmap_bias=-0.5
+textures/default_filters/texture_mipmap_bias=-0.25
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"

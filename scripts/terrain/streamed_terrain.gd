@@ -28,12 +28,12 @@ signal region_ready()
 ## Compression is what makes the difference affordable: 4096 px costs about
 ## 10 MB compressed against 64 MB raw.
 @export var near_detail_texture_px := 4096
-@export var near_detail_chunks := 6
+@export var near_detail_chunks := 3
 ## Above this ground speed the near tier is skipped. A 4096 px texture is the
 ## most expensive to prepare and is already behind the aircraft when it lands.
 @export var near_detail_speed_limit := 45.0
 @export var detail_radius_m := 6000.0
-@export var max_detail_chunks := 24
+@export var max_detail_chunks := 16
 @export var detail_update_interval_s := 0.6
 
 var _height_image: Image
@@ -44,6 +44,7 @@ var _overview_texture: ImageTexture
 var _focus: Node3D
 var _update_accumulator := 0.0
 var _pending_detail := {}
+var _pending_buildings := {}
 var _buildings_dir := ""
 
 
@@ -309,6 +310,36 @@ func detail_report(focus_position: Vector3) -> Dictionary:
 	}
 
 
+## Three points on the trade between texture load and frame rate. Guessing at
+## this from off-device is what cost the last few rounds, so it is a control
+## rather than a constant.
+enum Quality {PERFORMANCE, BALANCED, QUALITY}
+
+var quality: Quality = Quality.BALANCED
+
+
+func set_quality(level: Quality) -> void:
+	quality = level
+	match level:
+		Quality.PERFORMANCE:
+			near_detail_chunks = 0
+			max_detail_chunks = 10
+			detail_texture_px = 2048
+		Quality.QUALITY:
+			near_detail_chunks = 6
+			max_detail_chunks = 24
+			detail_texture_px = 2048
+		_:
+			near_detail_chunks = 3
+			max_detail_chunks = 16
+			detail_texture_px = 2048
+	_refresh_detail_chunks()
+
+
+func quality_name() -> String:
+	return Quality.keys()[quality]
+
+
 func _focus_speed() -> float:
 	if _focus == null or not ("velocity" in _focus):
 		return 0.0
@@ -381,12 +412,39 @@ func _request_chunk_detail(chunk: Dictionary, tier_px: int = 0) -> void:
 ## Buildings ship in the APK per chunk, so this needs no network -- it is the
 ## imagery that streams. One chunk is a few hundred footprints, cheap enough to
 ## build in place rather than spread over frames.
+## Parsing a chunk's buildings and extruding them is heavy -- the busiest chunk
+## here carries 171 footprints, each triangulated and walled -- and on the main
+## thread it stalls the frame just as the chunk comes into range. It runs on a
+## worker; only adding the finished mesh to the tree stays on the main thread.
 func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	if _buildings_dir.is_empty() or chunk["buildings"] != null:
+		return
+	var key := int(chunk["index"])
+	if _pending_buildings.has(key):
 		return
 	var path := "%s/%d_%d.json" % [_buildings_dir, int(chunk["cx"]), int(chunk["cz"])]
 	if not FileAccess.file_exists(path):
 		return
+	_pending_buildings[key] = true
+	var result := {"mesh": null}
+	var task := WorkerThreadPool.add_task(_build_buildings.bind(path, result), true)
+	while not WorkerThreadPool.is_task_completed(task):
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	_pending_buildings.erase(key)
+	var mesh: ArrayMesh = result["mesh"]
+	# The chunk may have fallen out of range, or been released, while this ran.
+	if mesh == null or chunk["buildings"] != null or not chunk["detailed"]:
+		return
+	var instance := MeshInstance3D.new()
+	instance.name = "Buildings_%d_%d" % [int(chunk["cx"]), int(chunk["cz"])]
+	instance.mesh = mesh
+	add_child(instance)
+	chunk["buildings"] = instance
+
+
+## Runs on a worker thread.
+func _build_buildings(path: String, result: Dictionary) -> void:
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		return
@@ -394,14 +452,7 @@ func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		push_warning("Chunk building data is invalid: %s" % path)
 		return
-	var mesh := BuildingMesh.build((parsed as Dictionary).get("buildings", []), sample_mesh_height)
-	if mesh == null:
-		return
-	var instance := MeshInstance3D.new()
-	instance.name = "Buildings_%d_%d" % [int(chunk["cx"]), int(chunk["cz"])]
-	instance.mesh = mesh
-	add_child(instance)
-	chunk["buildings"] = instance
+	result["mesh"] = BuildingMesh.build((parsed as Dictionary).get("buildings", []), sample_mesh_height)
 
 
 func _release_chunk_buildings(chunk: Dictionary) -> void:

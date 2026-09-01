@@ -90,6 +90,7 @@ func _ready() -> void:
 	settings_panel.theatre_chosen.connect(_on_theatre_chosen)
 	settings_panel.flight_mode_toggled.connect(_toggle_flight_mode)
 	settings_panel.cache_cleared.connect(_on_cache_cleared)
+	settings_panel.quality_cycled.connect(_on_quality_cycled)
 	flight_mode_button.pressed.connect(_toggle_flight_mode)
 	_refresh_flight_mode_button()
 	demo_button.pressed.connect(_toggle_settings)
@@ -519,6 +520,8 @@ func _refresh_settings() -> void:
 		String(LocationService.selected_region.get("id", ""))
 	)
 	settings_panel.set_flight_mode_text(flight_mode_button.text)
+	if streamed_terrain.has_method("quality_name"):
+		settings_panel.set_quality_text("GRAPHICS: %s" % streamed_terrain.quality_name())
 	var report: Dictionary = TileClient.cache_report()
 	settings_panel.set_cache_report(int(report["files"]), int(report["bytes"]))
 	var focus := _focus_position()
@@ -533,6 +536,18 @@ func _on_theatre_chosen(region_id: String) -> void:
 		helicopter_anchor.clear_orbit_target()
 	_has_target_point = false
 	LocationService.select_region_by_id(region_id)
+
+
+## Cycles performance, balanced, quality. Fewer resident textures is the lever
+## that matters on a phone; the detail directly under the aircraft is the last
+## thing to go.
+func _on_quality_cycled() -> void:
+	if not streamed_terrain.has_method("set_quality"):
+		return
+	var next: int = (int(streamed_terrain.quality) + 1) % 3
+	streamed_terrain.set_quality(next)
+	status_label.text = "GRAPHICS: %s" % streamed_terrain.quality_name()
+	_refresh_settings()
 
 
 func _on_cache_cleared() -> void:

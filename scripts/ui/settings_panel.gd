@@ -9,12 +9,14 @@ extends Control
 signal theatre_chosen(region_id: String)
 signal flight_mode_toggled
 signal cache_cleared
+signal quality_cycled
 
 const PANEL_WIDTH := 520.0
 
 var _theatre_box: VBoxContainer
 var _mode_button: Button
 var _cache_label: Label
+var _quality_button: Button
 var _stats_label: Label
 
 
@@ -56,6 +58,11 @@ func _ready() -> void:
 	_mode_button = Button.new()
 	_mode_button.pressed.connect(func(): flight_mode_toggled.emit())
 	column.add_child(_mode_button)
+
+	column.add_child(_heading("GRAPHICS"))
+	_quality_button = Button.new()
+	_quality_button.pressed.connect(func(): quality_cycled.emit())
+	column.add_child(_quality_button)
 
 	column.add_child(_heading("MAP CACHE"))
 	_cache_label = Label.new()
@@ -99,6 +106,10 @@ func populate_theatres(regions: Array, selected_id: String) -> void:
 
 func set_flight_mode_text(text: String) -> void:
 	_mode_button.text = text
+
+
+func set_quality_text(text: String) -> void:
+	_quality_button.text = text
 
 
 func set_cache_report(files: int, bytes: int) -> void:

@@ -152,6 +152,13 @@ clearance stops the model flying you into a hill.
 | D-pad left/right | Previous/next target |
 | D-pad up/down | Camera zoom in/out, continuing into the attack close-up |
 
+Both texture compression and building-mesh construction run on worker threads.
+Each cost tens to hundreds of milliseconds and both land exactly when the
+aircraft is moving into new ground, so on the main thread they stuttered
+precisely when it was worst. Settings carries a graphics preset -- performance,
+balanced, quality -- which trades how many detailed chunks stay resident, since
+that is the lever that matters on a phone.
+
 ### Views
 
 R3 cycles three perspectives. **Cockpit** is the default and takes the
