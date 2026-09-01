@@ -8,6 +8,7 @@ extends Control
 
 signal theatre_chosen(region_id: String)
 signal flight_mode_toggled
+signal aircraft_switched
 signal cache_cleared
 signal quality_cycled
 
@@ -15,6 +16,7 @@ const PANEL_WIDTH := 520.0
 
 var _theatre_box: VBoxContainer
 var _mode_button: Button
+var _aircraft_button: Button
 var _cache_label: Label
 var _quality_button: Button
 var _stats_label: Label
@@ -81,6 +83,11 @@ func _ready() -> void:
 	_theatre_box.add_theme_constant_override("separation", 4)
 	column.add_child(_theatre_box)
 
+	column.add_child(_heading("AIRCRAFT"))
+	_aircraft_button = Button.new()
+	_aircraft_button.pressed.connect(func(): aircraft_switched.emit())
+	column.add_child(_aircraft_button)
+
 	column.add_child(_heading("CONTROLS"))
 	_mode_button = Button.new()
 	_mode_button.pressed.connect(func(): flight_mode_toggled.emit())
@@ -133,6 +140,10 @@ func populate_theatres(regions: Array, selected_id: String) -> void:
 
 func set_flight_mode_text(text: String) -> void:
 	_mode_button.text = text
+
+
+func set_aircraft_text(text: String) -> void:
+	_aircraft_button.text = text
 
 
 func set_quality_text(text: String) -> void:

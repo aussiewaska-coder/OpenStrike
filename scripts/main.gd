@@ -1,6 +1,8 @@
 extends Node3D
 
 const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
+const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const JET_CAMERA := preload("res://scripts/camera/jet_camera.gd")
 const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
 const EXTERNAL_FREE_LOOK := preload("res://scripts/camera/external_free_look.gd")
@@ -51,6 +53,20 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @export var free_look_speed := 2.4
 @export var free_look_return_response := 6.0
 
+@export_group("Jet Camera")
+## The Raptor is 19 m long and the helicopter's 110 m chase distance leaves it a
+## dot on a phone screen. Framed close enough to actually see the aircraft.
+@export var jet_camera_distance := 42.0
+@export var jet_camera_height := 12.0
+## The camera falls back as the aircraft accelerates. Field of view is left to
+## the shared speed-driven offset, which now reads whichever aircraft is flying.
+@export var jet_distance_gain := 26.0
+## How much of the airframe's bank the camera takes, and how far behind. The lag
+## is the trick: a snap roll throws the horizon and the camera catches up after.
+@export var jet_camera_bank := 0.72
+@export var jet_bank_response := 3.4
+@export var jet_cockpit_fov := 84.0
+
 @export_group("Cockpit View")
 ## Pilot station relative to the airframe: forward along the nose and up.
 @export var cockpit_offset := Vector3(2.6, 1.1, 0.0)
@@ -63,6 +79,7 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @onready var launcher_field: Node3D = $LauncherField
 @onready var cannon_weapon: Node3D = $HelicopterAnchor/CannonWeapon
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
+@onready var jet_anchor: Node3D = $JetAnchor
 @onready var camera: Camera3D = $Camera3D
 @onready var mission_panel: Control = $UI/Margin
 @onready var status_label: Label = $UI/Margin/Panel/Content/Status
@@ -100,6 +117,8 @@ var _camera_aim_basis := Basis.IDENTITY
 var _hit_stop_serial := 0
 var _target_point := Vector3.ZERO
 var _has_target_point := false
+var _flying_jet := false
+var _camera_up := Vector3.UP
 var _active_terrain: Node
 var _building_hit_index: RefCounted
 var _surface_resolver: RefCounted
@@ -119,6 +138,7 @@ func _ready() -> void:
 	Telemetry.add_source(_telemetry_sample)
 	settings_panel.theatre_chosen.connect(_on_theatre_chosen)
 	settings_panel.flight_mode_toggled.connect(_toggle_flight_mode)
+	settings_panel.aircraft_switched.connect(_switch_aircraft)
 	settings_panel.cache_cleared.connect(_on_cache_cleared)
 	settings_panel.quality_cycled.connect(_on_quality_cycled)
 	flight_mode_button.pressed.connect(_toggle_flight_mode)
@@ -127,6 +147,11 @@ func _ready() -> void:
 	demo_button.text = "SETTINGS"
 	demo_button.visible = true
 	_spawn_helicopter()
+	_spawn_jet()
+	_refresh_aircraft_button()
+	jet_anchor.crashed.connect(_on_jet_crashed)
+	jet_anchor.respawned.connect(_on_jet_respawned)
+	jet_anchor.boundary_warning.connect(_on_jet_boundary_warning)
 	# The gun mount appears when the helicopter controller finds its visual on
 	# the next frame, so the weapon graph is assembled after that.
 	call_deferred("_wire_cannon_systems")
@@ -153,6 +178,91 @@ func _process(delta: float) -> void:
 		_apply_arcade_camera_shake(delta)
 		_update_attack_reticle()
 		_update_target_marker()
+
+
+## The one place that knows which aircraft is being flown. Everything that is
+## vehicle-agnostic -- the camera, the gunsight, the instruments, the orbit
+## target -- goes through here rather than naming an anchor.
+func _vehicle() -> Node3D:
+	return jet_anchor if _flying_jet else helicopter_anchor
+
+
+func _spawn_jet() -> void:
+	var jet := JET_SCENE.instantiate()
+	jet.name = "HeroJet"
+	jet_anchor.add_child(jet)
+	# The controller measures the wingspan and scales the model itself, so
+	# there is no magic number here the way there is for the Apache.
+	_set_vehicle_active(jet_anchor, false)
+
+
+func _set_vehicle_active(anchor: Node3D, active: bool) -> void:
+	anchor.visible = active
+	anchor.process_mode = Node.PROCESS_MODE_INHERIT if active else Node.PROCESS_MODE_DISABLED
+
+
+## Swap aircraft in place, so the player keeps the piece of coastline they were
+## looking at. The jet needs height and speed to exist at all, so it is launched
+## rather than simply moved.
+func _switch_aircraft() -> void:
+	var leaving := _vehicle()
+	var handover := leaving.global_position
+	var heading := 0.0
+	var nose := leaving.global_basis.x
+	nose.y = 0.0
+	if not nose.is_zero_approx():
+		nose = nose.normalized()
+		heading = atan2(nose.x, -nose.z)
+
+	_flying_jet = not _flying_jet
+	_set_vehicle_active(leaving, false)
+	var arriving := _vehicle()
+	_set_vehicle_active(arriving, true)
+
+	var ground := _ground_height_at(handover)
+	if _flying_jet:
+		jet_anchor.launch(
+			Vector3(handover.x, maxf(handover.y, ground + 600.0), handover.z),
+			heading
+		)
+		# An aircraft this size is worth looking at, so arrive in the chase view.
+		_view = View.CHASE
+	else:
+		helicopter_anchor.global_position = Vector3(
+			handover.x,
+			ground + helicopter_anchor.terrain_clearance,
+			handover.z
+		)
+		helicopter_anchor.rotation.y = heading
+		helicopter_anchor.velocity = Vector3.ZERO
+		if helicopter_anchor.has_method("reset_altitude_smoothing"):
+			helicopter_anchor.reset_altitude_smoothing()
+
+	_has_target_point = false
+	attack_reticle.clear_target()
+	_bind_cannon_to(arriving)
+	if _active_terrain != null and _active_terrain.has_method("set_focus"):
+		_active_terrain.set_focus(arriving)
+	_camera_up = Vector3.UP
+	_apply_view_chrome()
+	_snap_follow_camera()
+	_refresh_aircraft_button()
+	_refresh_flight_mode_button()
+	settings_panel.set_flight_mode_text(flight_mode_button.text)
+	status_label.text = "F-22 RAPTOR -- L2/R2 throttle, R2 past the detent for afterburner" if _flying_jet else "AH-64D APACHE"
+
+
+func _bind_cannon_to(vehicle: Node3D) -> void:
+	if cannon_weapon == null or not vehicle.has_method("get_gun_mount"):
+		return
+	cannon_weapon.gun_mount = vehicle.get_gun_mount()
+	cannon_weapon.carrier = vehicle
+	if cannon_fx != null:
+		cannon_fx.gun_mount = cannon_weapon.gun_mount
+
+
+func _refresh_aircraft_button() -> void:
+	settings_panel.set_aircraft_text("AIRCRAFT: %s" % ("F-22 RAPTOR" if _flying_jet else "AH-64D APACHE"))
 
 
 func _spawn_helicopter() -> void:
@@ -201,12 +311,21 @@ func _load_streamed_region(region: Dictionary) -> void:
 		float(region.get("spawn_yaw_degrees", -35.0))
 	)
 	_active_terrain = streamed_terrain
+	# Both aircraft need the terrain: whichever is parked still has to know the
+	# theatre's extent so it is not fenced into the wrong one when swapped to.
+	jet_anchor.set_terrain(streamed_terrain)
 	helicopter_anchor.set_terrain(streamed_terrain)
 	helicopter_anchor.position = streamed_terrain.get_spawn_position(120.0)
 	helicopter_anchor.rotation_degrees.y = streamed_terrain.get_spawn_yaw_degrees(-35.0)
 	if helicopter_anchor.has_method("reset_altitude_smoothing"):
 		helicopter_anchor.reset_altitude_smoothing()
-	streamed_terrain.set_focus(helicopter_anchor)
+	# The jet is parked level over the same spawn, high enough to have somewhere
+	# to fall, so swapping to it never starts inside a hill.
+	jet_anchor.launch(
+		streamed_terrain.get_spawn_position(900.0),
+		deg_to_rad(streamed_terrain.get_spawn_yaw_degrees(-35.0))
+	)
+	streamed_terrain.set_focus(_vehicle())
 	launcher_field.populate(String(region.get("id", "")), streamed_terrain)
 	_camera_follow_enabled = true
 	_snap_follow_camera()
@@ -268,6 +387,18 @@ func _update_follow_camera(delta: float) -> void:
 	_camera_travel_direction = Vector3(0.0, 0.0, -1.0).rotated(Vector3.UP, _camera_orbit_radians)
 	var target_height := travel_camera_height if _view == View.CHASE else camera_height
 	var target_distance := travel_camera_trailing_distance if _view == View.CHASE else camera_trailing_distance
+	if _flying_jet:
+		# Framed for a 19 m airframe rather than a helicopter's loiter, and
+		# falling back as the aircraft accelerates away from the viewer.
+		var speed: float = jet_anchor.airspeed() if jet_anchor.has_method("airspeed") else 0.0
+		target_height = jet_camera_height
+		target_distance = JET_CAMERA.trailing_distance(
+			speed,
+			jet_anchor.minimum_display_speed,
+			jet_anchor.maximum_display_speed,
+			jet_camera_distance,
+			jet_distance_gain
+		)
 	var mode_weight := 1.0 - exp(-camera_mode_response * delta)
 	_camera_current_height = lerpf(_camera_current_height, target_height, mode_weight)
 	_camera_current_distance = lerpf(_camera_current_distance, target_distance, mode_weight)
@@ -336,9 +467,10 @@ func _ground_height_at(point: Vector3) -> float:
 
 
 func _focus_position() -> Vector3:
-	if helicopter_anchor.has_method("get_focus_position"):
-		return helicopter_anchor.get_focus_position()
-	return helicopter_anchor.global_position
+	var vehicle := _vehicle()
+	if vehicle.has_method("get_focus_position"):
+		return vehicle.get_focus_position()
+	return vehicle.global_position
 
 
 func _ground_point_under_helicopter() -> Vector3:
@@ -347,6 +479,12 @@ func _ground_point_under_helicopter() -> Vector3:
 
 
 func _update_instruments() -> void:
+	if _flying_jet:
+		# The Raptor's GLB carries its own cockpit panel, instrument glass and
+		# HUD combiner. Drawing a second set of readings over the top of real
+		# modelled instruments is worse than drawing none.
+		attack_reticle.hide_instruments()
+		return
 	var focus := _focus_position()
 	var speed_knots := 0.0
 	var collective := 0.0
@@ -437,7 +575,8 @@ func _metadata_world_size() -> float:
 
 
 func _aircraft_is_orbiting() -> bool:
-	return helicopter_anchor.has_method("orbit_input") and not is_zero_approx(helicopter_anchor.orbit_input())
+	var vehicle := _vehicle()
+	return vehicle.has_method("orbit_input") and not is_zero_approx(vehicle.orbit_input())
 
 
 ## A tap picks a point on the ground to orbit. There are no collision shapes
@@ -460,14 +599,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if hit.is_empty():
 		_has_target_point = false
 		attack_reticle.clear_target()
-		if helicopter_anchor.has_method("clear_orbit_target"):
-			helicopter_anchor.clear_orbit_target()
+		if _vehicle().has_method("clear_orbit_target"):
+			_vehicle().clear_orbit_target()
 		status_label.text = "TARGET CLEARED"
 		return
 	_target_point = hit["point"]
 	_has_target_point = true
-	if helicopter_anchor.has_method("set_orbit_target"):
-		helicopter_anchor.set_orbit_target(_target_point)
+	if _vehicle().has_method("set_orbit_target"):
+		_vehicle().set_orbit_target(_target_point)
 	status_label.text = "TARGET SET %d m -- L2/R2 to orbit it" % roundi(_focus_position().distance_to(_target_point))
 
 
@@ -505,11 +644,12 @@ func _update_attack_reticle() -> void:
 	if alpha <= 0.001:
 		attack_reticle.clear()
 		return
-	if not helicopter_anchor.has_method("get_muzzle_transform"):
+	var vehicle := _vehicle()
+	if not vehicle.has_method("get_muzzle_transform"):
 		attack_reticle.set_solution(alpha, Vector2.ZERO, false, {})
 		return
-	var muzzle: Transform3D = helicopter_anchor.get_muzzle_transform()
-	var carrier: Vector3 = helicopter_anchor.velocity if "velocity" in helicopter_anchor else Vector3.ZERO
+	var muzzle: Transform3D = vehicle.get_muzzle_transform()
+	var carrier: Vector3 = vehicle.velocity if "velocity" in vehicle else Vector3.ZERO
 	var solution := _ballistics.solve(
 		muzzle.origin,
 		muzzle.basis.x,
@@ -534,8 +674,16 @@ func _update_cockpit_camera() -> void:
 	# The pilot station is measured off the airframe mesh: the GLB renders about
 	# 31 m long, so an offset written in metres sat inside the fuselage and the
 	# view was black.
-	var frame: Transform3D = helicopter_anchor.get_cockpit_transform() if helicopter_anchor.has_method("get_cockpit_transform") else helicopter_anchor.global_transform
+	var vehicle := _vehicle()
+	var frame: Transform3D = vehicle.get_cockpit_transform() if vehicle.has_method("get_cockpit_transform") else vehicle.global_transform
 	camera.global_position = frame.origin
+	if _flying_jet:
+		# The jet's horizon banks with the aircraft. Levelling it here, the way
+		# the helicopter does, would throw away the one thing the cockpit view
+		# exists to show.
+		camera.global_basis = Basis.looking_at(frame.basis.x, frame.basis.y) * _free_look_basis()
+		camera.fov = jet_cockpit_fov
+		return
 	# The airframe faces local +X, so the camera looks down that axis rather
 	# than its own -Z.
 	camera.global_basis = Basis.looking_at(frame.basis.x, Vector3.UP) * _free_look_basis()
@@ -590,12 +738,34 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		# stepped, or the forced perspective would snap on every press.
 		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-camera_mode_response * delta))
 	if camera.global_position.distance_squared_to(_look_target) > 0.0001:
-		camera.look_at(_look_target, Vector3.UP)
+		camera.look_at(_look_target, _camera_horizon(delta, snap))
 
 
+## The camera's up vector. Level for the helicopter; for the jet it takes most
+## of the airframe's bank, a beat late. One lag constant gives both the horizon
+## roll and the sense that the camera is a chase plane rather than a rigid mount.
+func _camera_horizon(delta: float, snap: bool) -> Vector3:
+	if not _flying_jet:
+		_camera_up = Vector3.UP
+		return Vector3.UP
+	var wanted := JET_CAMERA.bank_blend(jet_anchor.global_basis.y, jet_camera_bank)
+	if snap or delta <= 0.0:
+		_camera_up = wanted
+	else:
+		_camera_up = JET_CAMERA.lagged_up(_camera_up, wanted, jet_bank_response, delta)
+	# Straight up the nose the up vector degenerates and look_at fails.
+	var along := (_look_target - camera.global_position).normalized()
+	if absf(_camera_up.dot(along)) > 0.999:
+		return Vector3.UP
+	return _camera_up
+
+
+## Whichever aircraft is being flown, so the speed-driven field of view works
+## for the jet without a second mechanism competing with this one.
 func _horizontal_speed() -> float:
-	if helicopter_anchor != null and "velocity" in helicopter_anchor:
-		var velocity: Vector3 = helicopter_anchor.velocity
+	var vehicle := _vehicle()
+	if vehicle != null and "velocity" in vehicle:
+		var velocity: Vector3 = vehicle.velocity
 		return Vector2(velocity.x, velocity.z).length()
 	return 0.0
 
@@ -626,6 +796,8 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
 		_cycle_view()
+	elif action == GamepadInput.ACTION_SWITCH_AIRCRAFT:
+		_switch_aircraft()
 	elif action == GamepadInput.ACTION_FLIGHT_MODE:
 		_toggle_flight_mode()
 	elif action == GamepadInput.ACTION_SETTINGS:
@@ -637,6 +809,9 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 ## Arcade is pick-up-and-fly: the stick sets a speed and the aircraft holds its
 ## height. Realistic is the rotor model, where only disc tilt moves you.
 func _toggle_flight_mode() -> void:
+	if _flying_jet:
+		status_label.text = "THE RAPTOR IS FLY-BY-WIRE ONLY -- THE ASSIST IS THE AIRCRAFT"
+		return
 	if not helicopter_anchor.has_method("set_flight_mode"):
 		return
 	var arcade: int = helicopter_anchor.FlightMode.ARCADE
@@ -696,6 +871,9 @@ func _on_cache_cleared() -> void:
 
 
 func _refresh_flight_mode_button() -> void:
+	if _flying_jet:
+		flight_mode_button.text = "CONTROLS: FLY-BY-WIRE"
+		return
 	if not ("flight_mode" in helicopter_anchor):
 		return
 	var arcade: int = helicopter_anchor.FlightMode.ARCADE
@@ -743,6 +921,23 @@ func _on_controller_attention_changed(required: bool, title: String, detail: Str
 		controller_detail.text = detail
 
 
+func _on_jet_crashed(_point: Vector3) -> void:
+	status_label.text = "IMPACT -- RECOVERING"
+
+
+func _on_jet_respawned() -> void:
+	status_label.text = "AIRBORNE -- L2/R2 throttle, R2 past the detent for afterburner"
+	_snap_follow_camera()
+
+
+## The theatre edge warns rather than walling: a hard clamp at 260 m/s stops the
+## aircraft dead and reads as a bug.
+func _on_jet_boundary_warning(urgency: float) -> void:
+	if urgency <= 0.0:
+		return
+	status_label.text = "LEAVING THE THEATRE -- TURNING BACK"
+
+
 func _wire_cannon_systems() -> void:
 	_surface_resolver = WORLD_SURFACE_RESOLVER.new()
 	_surface_resolver.configure(_ground_height_xz, 0.0)
@@ -762,9 +957,8 @@ func _wire_cannon_systems() -> void:
 	projectile_manager.hit_query = _hit_query
 	projectile_manager.projectile_impacted.connect(_on_projectile_impacted)
 
-	cannon_weapon.gun_mount = helicopter_anchor.get_gun_mount()
 	cannon_weapon.projectile_manager = projectile_manager
-	cannon_weapon.carrier = helicopter_anchor
+	_bind_cannon_to(_vehicle())
 	cannon_weapon.hit_query = _hit_query
 	cannon_weapon.ground_height = _ground_height_xz
 	cannon_weapon.aim.set_target_provider(_orbit_target_point)
@@ -797,8 +991,9 @@ func _on_chunk_buildings_released(chunk_key: int) -> void:
 ## A selected orbit point remains the automatic gun target whenever direct R1
 ## aim is not held. CannonAim gives the manual look provider priority.
 func _orbit_target_point() -> Variant:
-	if helicopter_anchor != null and helicopter_anchor.has_orbit_target:
-		return helicopter_anchor.orbit_target
+	var vehicle := _vehicle()
+	if vehicle != null and "has_orbit_target" in vehicle and vehicle.has_orbit_target:
+		return vehicle.orbit_target
 	return null
 
 

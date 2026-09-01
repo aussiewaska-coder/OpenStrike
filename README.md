@@ -249,6 +249,47 @@ world; the camera then sweeps around that point and keeps looking at it, so the
 helicopter can fly out of frame mid-sweep. Releasing the trigger hands the
 sweep's final heading back to the follow camera.
 
+## The F-22
+
+A second playable aircraft over the same theatre, which is what proves the
+world carries both low-altitude rotor combat and high-speed fixed-wing flight
+without a second map. Switch with **B**, or from the settings panel.
+
+The flight model is an assisted arcade one: a lift curve and a drag polar, with
+a fly-by-wire layer between the stick and the aerodynamics. Nothing in it turns
+the aircraft. The stick commands a roll rate, the aircraft banks, the lift
+vector tilts, and its horizontal component is the only sideways force there is.
+Ease off and the assist holds the bank rather than rolling upright, which is the
+difference between an aircraft and a spaceship.
+
+Three behaviours fall out of single terms rather than being scripted. Induced
+drag goes as the square of the lift coefficient, so hard turns bleed speed. The
+load limiter caps pitch rate at `n = v * omega / g`, so flying faster is crisper
+but turns wider. Control authority follows dynamic pressure, so low speed is
+mushy. Corner speed is not a chosen number either: it is where the wing's limit
+and the airframe's limit cross, at 155 m/s.
+
+The envelope is deliberately compressed to roughly 90-260 m/s. At true Raptor
+speed the 36 km corridor is a sixty-second dash and the terrain cannot stream
+ahead of the aircraft. The drag constants are compressed to match, so they are
+game-feel numbers rather than F-22 numbers; what is preserved is the shape.
+
+Throttle is on the analog triggers, because proportional throttle and an
+afterburner detent need an analog axis, and the orbit sweep those triggers carry
+for the helicopter has no fixed-wing meaning. L1, R1 and L3 keep the meanings
+learned on the helicopter.
+
+There is no departure. The angle-of-attack limiter eases off nose-up commands
+near the stall and actively pushes past it, the bank ceiling tightens as the
+aircraft slows to whatever the wing can still hold a level turn at, and the
+theatre edge warns and turns the aircraft back rather than walling it. Running
+out of speed still leaves the aircraft mushing and sinking; it just cannot be
+made to depart.
+
+Known limitation: `streamed_terrain.gd` suppresses near-detail imagery above
+45 m/s, which the jet is always above, so low passes render coarser than the
+helicopter's until the streaming layer is given a fixed-wing budget.
+
 ## Tests
 
 Head-less `SceneTree` scripts, run one at a time:
@@ -266,6 +307,9 @@ godot --headless --script tests/camera_orbit_lock_test.gd
 godot --headless --script tests/camera_zoom_profile_test.gd
 godot --headless --script tests/ballistics_test.gd
 godot --headless --script tests/airframe_motion_test.gd
+godot --headless --script tests/aero_model_test.gd
+godot --headless --script tests/flight_assist_test.gd
+godot --headless --script tests/jet_controls_test.gd
 ```
 
 `map_tiles_test.gd` pins the coordinate chain — region bounds, tile range,
