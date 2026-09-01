@@ -36,6 +36,28 @@ static func desired_velocity(
 	return tangent * direction * speed + outward * radial_error * radial_gain
 
 
+## Closing or widening the orbit. The left stick works the radius while the
+## triggers work the sweep, so the aircraft can be walked in toward a target
+## without letting go of the circle.
+static func adjust_radius(
+	radius: float,
+	input: float,
+	rate: float,
+	delta: float,
+	minimum: float,
+	maximum: float
+) -> float:
+	return clampf(radius + input * rate * delta, minimum, maximum)
+
+
+## Keeps the commanded radius within reach of the one the aircraft is actually
+## flying. Without this the command runs away from the airframe -- the stick
+## reads 100 m while the aircraft is still 235 m out -- and letting go leaves a
+## long unexplained drift inward.
+static func leash_radius(commanded: float, actual: float, lead: float) -> float:
+	return clampf(commanded, actual - lead, actual + lead)
+
+
 ## The heading that points the nose at the target, in radians, in the same
 ## convention as the airframe's own yaw.
 static func heading_to(position: Vector3, target: Vector3) -> float:

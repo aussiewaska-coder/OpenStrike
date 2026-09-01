@@ -139,6 +139,7 @@ clearance stops the model flying you into a hill.
 | Right stick up/down | Collective: rotor thrust, and it stays where you put it |
 | Tap the screen | Pick a ground point to orbit; tap the sky to clear it |
 | L2 / R2 | With a target: fly the aircraft around it, nose held on it. Without one: orbit the camera |
+| Left stick up/down, while orbiting | Close or widen the orbit, down to 100 m |
 | Y | Switch controls: arcade / realistic |
 | X | Switch theatre |
 | R1 | Cannon |
@@ -165,7 +166,12 @@ Tapping the screen marches a ray against the height field -- there are no
 collision shapes under the streamed terrain -- and drops a target on the ground,
 shown on the HUD with its range. The triggers then fly the aircraft around that
 point rather than moving the camera, holding the nose on it, at whatever radius
-the aircraft happened to be at when the trigger came in. A radial term pulls the
+the aircraft happened to be at when the trigger came in. The left stick works
+that radius while the triggers sweep, so the aircraft can be walked in toward a
+target without letting go of the circle, down to a 100 m minimum. The commanded
+radius is leashed to the one being flown: without that the command runs away
+from the airframe -- reading 100 m while the aircraft is still 235 m out -- and
+releasing the stick leaves a long unexplained drift inward. A radial term pulls the
 aircraft back onto the circle so the orbit does not spiral. Both flight models
 fly it: arcade takes the commanded velocity directly, while the rotor model has
 no way to be handed a velocity and instead tilts the disc toward the one it

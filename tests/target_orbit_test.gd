@@ -72,6 +72,30 @@ func _init() -> void:
 	if uphill_slope.is_empty() or float(uphill_slope["distance"]) >= float(uphill["distance"]):
 		push_error("rising ground must be hit sooner than flat")
 		quit(1)
+	# The left stick walks the orbit in and out between its limits. Stick
+	# forward is negative, and must close the circle rather than widen it.
+	var closer: float = ORBIT.adjust_radius(500.0, -1.0, 80.0, 0.5, 100.0, 4000.0)
+	if closer >= 500.0:
+		push_error("stick forward must close the orbit, got %f" % closer)
+		quit(1)
+	_assert_approx(closer, 460.0, "the radius moves at the commanded rate")
+	var wider: float = ORBIT.adjust_radius(500.0, 1.0, 80.0, 0.5, 100.0, 4000.0)
+	_assert_approx(wider, 540.0, "stick back widens the orbit")
+	_assert_approx(
+		ORBIT.adjust_radius(110.0, -1.0, 80.0, 1.0, 100.0, 4000.0),
+		100.0,
+		"the orbit cannot be closed past its minimum"
+	)
+	_assert_approx(
+		ORBIT.adjust_radius(3980.0, 1.0, 80.0, 1.0, 100.0, 4000.0),
+		4000.0,
+		"the orbit cannot be widened past its maximum"
+	)
+	# The command must stay within reach of the aircraft, or the stick reads a
+	# radius the airframe is nowhere near.
+	_assert_approx(ORBIT.leash_radius(100.0, 400.0, 120.0), 280.0, "the command cannot outrun the aircraft")
+	_assert_approx(ORBIT.leash_radius(390.0, 400.0, 120.0), 390.0, "a reachable command passes through")
+	_assert_approx(ORBIT.leash_radius(900.0, 400.0, 120.0), 520.0, "widening is leashed too")
 	print("TARGET_ORBIT_TEST_PASS")
 	quit()
 

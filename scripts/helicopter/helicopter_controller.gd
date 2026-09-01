@@ -86,6 +86,12 @@ enum FlightMode {ARCADE, ROTOR}
 @export var orbit_radial_gain := 0.5
 @export var orbit_yaw_response := 4.0
 @export var orbit_tilt_gain := 0.9
+## The left stick closes and widens the orbit while the triggers sweep it.
+@export var orbit_radius_rate := 80.0
+@export var minimum_orbit_radius := 100.0
+@export var maximum_orbit_radius := 4000.0
+## How far the commanded radius may lead the one being flown.
+@export var orbit_radius_lead := 120.0
 
 @export_group("Airframe Motion")
 @export var hover_bob_metres := 0.6
@@ -127,7 +133,35 @@ func _ready() -> void:
 func set_orbit_target(point: Vector3) -> void:
 	orbit_target = point
 	has_orbit_target = true
-	_orbit_radius = TARGET_ORBIT.radius_to(position, point)
+	_orbit_radius = clampf(
+		TARGET_ORBIT.radius_to(position, point),
+		minimum_orbit_radius,
+		maximum_orbit_radius
+	)
+
+
+## Stick forward closes the circle, back widens it.
+func _adjust_orbit_radius(stick_forward: float, delta: float) -> void:
+	_orbit_radius = TARGET_ORBIT.adjust_radius(
+		_orbit_radius,
+		stick_forward,
+		orbit_radius_rate,
+		delta,
+		minimum_orbit_radius,
+		maximum_orbit_radius
+	)
+	_orbit_radius = maxf(
+		TARGET_ORBIT.leash_radius(
+			_orbit_radius,
+			TARGET_ORBIT.radius_to(position, orbit_target),
+			orbit_radius_lead
+		),
+		minimum_orbit_radius
+	)
+
+
+func orbit_radius() -> float:
+	return _orbit_radius
 
 
 func clear_orbit_target() -> void:
@@ -193,6 +227,7 @@ func _arcade_step(delta: float) -> void:
 		right_stick = GamepadInput.get_aim_vector()
 	var sweep := orbit_input()
 	if not is_zero_approx(sweep):
+		_adjust_orbit_radius(flight.y, delta)
 		velocity = velocity.move_toward(_orbit_velocity(sweep), acceleration * delta)
 		velocity.y = 0.0
 		position += velocity * delta
@@ -259,6 +294,7 @@ func _rotor_step(delta: float) -> void:
 	var target_roll := cyclic.x * maximum_cyclic_degrees
 	var sweep := orbit_input()
 	if not is_zero_approx(sweep):
+		_adjust_orbit_radius(cyclic.y, delta)
 		# The rotor model has no way to be given a velocity, so the orbit is
 		# flown by tilting toward the velocity it wants.
 		var wanted := _orbit_velocity(sweep)
