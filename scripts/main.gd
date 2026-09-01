@@ -87,6 +87,7 @@ func _ready() -> void:
 	GamepadInput.action_pressed.connect(_on_gamepad_action_pressed)
 	_configure_zoom_profile()
 	_apply_view_chrome()
+	Telemetry.add_source(_telemetry_sample)
 	settings_panel.theatre_chosen.connect(_on_theatre_chosen)
 	settings_panel.flight_mode_toggled.connect(_toggle_flight_mode)
 	settings_panel.cache_cleared.connect(_on_cache_cleared)
@@ -318,6 +319,30 @@ func _update_instruments() -> void:
 ## Says plainly what the map layer is doing: how big a chunk is, how many are
 ## detailed, what the chunk under the aircraft is textured at, and whether that
 ## imagery came off the disk or the network.
+## Feeds the loopback telemetry socket the map layer's state alongside the
+## engine's own counters, so a shell on the device sees both at once.
+func _telemetry_sample() -> Dictionary:
+	var sample := {
+		"theatre": String(LocationService.selected_region.get("display_name", "none")),
+		"view": View.keys()[_view],
+		"cache_hits": TileClient.cache_hits,
+		"net_fetches": TileClient.network_fetches,
+		"tile_failures": TileClient.failures,
+	}
+	if streamed_terrain.has_method("detail_report"):
+		var report: Dictionary = streamed_terrain.detail_report(_focus_position())
+		sample.merge({
+			"chunk_m": report["chunk_metres"],
+			"chunks": report["chunks"],
+			"detailed": report["detailed"],
+			"pending": report["pending"],
+			"under_px": report["under_px"],
+			"under_detailed": report["under_detailed"],
+			"quality": streamed_terrain.quality_name() if streamed_terrain.has_method("quality_name") else "?",
+		}, true)
+	return sample
+
+
 func _map_diagnostic_text() -> String:
 	if not streamed_terrain.has_method("detail_report"):
 		return "MAP: --"

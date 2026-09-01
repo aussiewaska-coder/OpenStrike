@@ -26,29 +26,56 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
 	var dim := ColorRect.new()
-	dim.color = Color(0.03, 0.05, 0.06, 0.88)
+	dim.color = Color(0.03, 0.05, 0.06, 0.92)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(dim)
 
-	var centre := CenterContainer.new()
-	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(centre)
+	# Filling the screen with a margin, rather than centring a box that grows
+	# with the theatre list: the list ran off the bottom of the viewport and took
+	# the close button with it.
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_%s" % side, 24)
+	add_child(margin)
 
 	var frame := PanelContainer.new()
-	frame.custom_minimum_size = Vector2(PANEL_WIDTH, 0.0)
-	centre.add_child(frame)
+	margin.add_child(frame)
 
-	var margin := MarginContainer.new()
+	var inner := MarginContainer.new()
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_%s" % side, 22)
-	frame.add_child(margin)
+		inner.add_theme_constant_override("margin_%s" % side, 18)
+	frame.add_child(inner)
+
+	var layout := VBoxContainer.new()
+	layout.add_theme_constant_override("separation", 8)
+	inner.add_child(layout)
+
+	# A fixed header, so the way out is always on screen no matter how long the
+	# list below grows.
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 12)
+	layout.add_child(header)
+	var title := Label.new()
+	title.text = "SETTINGS"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close_top := Button.new()
+	close_top.text = "CLOSE  (X)"
+	close_top.pressed.connect(close_panel)
+	header.add_child(close_top)
+
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	layout.add_child(scroll)
 
 	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.add_theme_constant_override("separation", 10)
-	margin.add_child(column)
+	scroll.add_child(column)
 
-	column.add_child(_heading("SETTINGS"))
 	column.add_child(_heading("THEATRE"))
 	_theatre_box = VBoxContainer.new()
 	_theatre_box.add_theme_constant_override("separation", 4)
