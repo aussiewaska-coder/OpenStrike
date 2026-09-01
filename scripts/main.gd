@@ -73,6 +73,7 @@ var _zoom_profile := ZOOM_PROFILE.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
+var _probe := 0
 var _target_point := Vector3.ZERO
 var _has_target_point := false
 var _active_terrain: Node
@@ -112,11 +113,14 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	gamepad_diagnostic.text = GamepadInput.get_diagnostic_text()
+	gamepad_diagnostic.text = "%s\n%s" % [GamepadInput.get_diagnostic_text(), _map_diagnostic_text()]
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
 		_update_attack_reticle()
 		_update_target_marker()
+		_probe += 1
+		if _probe % 3000 == 0:
+			print("DIAG ", _map_diagnostic_text().replace("\n", " | "))
 
 
 func _spawn_helicopter() -> void:
@@ -312,6 +316,30 @@ func _update_instruments() -> void:
 		collective,
 		heading + 360.0
 	)
+
+
+## Says plainly what the map layer is doing: how big a chunk is, how many are
+## detailed, what the chunk under the aircraft is textured at, and whether that
+## imagery came off the disk or the network.
+func _map_diagnostic_text() -> String:
+	if not streamed_terrain.has_method("detail_report"):
+		return "MAP: --"
+	var report: Dictionary = streamed_terrain.detail_report(_focus_position())
+	var chunk_metres := float(report["chunk_metres"])
+	var under_px := int(report["under_px"])
+	var resolution := "--"
+	if under_px > 0 and chunk_metres > 0.0:
+		var covered: float = chunk_metres if bool(report["under_detailed"]) else float(_metadata_world_size())
+		resolution = "%.2f m/px" % (covered / float(under_px))
+	return "MAP chunk %dm  detail %d/%d (+%d)\nUNDER %s %dpx %s\nTILES cache %d net %d fail %d" % [
+		roundi(chunk_metres), int(report["detailed"]), int(report["chunks"]), int(report["pending"]),
+		"DETAIL" if bool(report["under_detailed"]) else "overview", under_px, resolution,
+		TileClient.cache_hits, TileClient.network_fetches, TileClient.failures,
+	]
+
+
+func _metadata_world_size() -> float:
+	return float(LocationService.selected_region.get("world_size_m", 0.0))
 
 
 func _aircraft_is_orbiting() -> bool:

@@ -273,6 +273,39 @@ func _process(delta: float) -> void:
 	_refresh_detail_chunks()
 
 
+## What the streamer is actually doing, for the on-screen diagnostic: guessing
+## at this from outside the device is how three rounds of "improvements" went
+## unnoticed.
+func detail_report(focus_position: Vector3) -> Dictionary:
+	var world_size := float(_metadata.get("world_size_m", 0.0))
+	var chunk_metres := world_size / float(maxi(chunk_count, 1))
+	var detailed := 0
+	var under_px := 0
+	var under_detailed := false
+	for chunk in _chunks:
+		if chunk["detailed"]:
+			detailed += 1
+	var half := world_size * 0.5
+	if world_size > 0.0:
+		var cx: int = clampi(int((focus_position.x + half) / chunk_metres), 0, chunk_count - 1)
+		var cz: int = clampi(int((focus_position.z + half) / chunk_metres), 0, chunk_count - 1)
+		for chunk in _chunks:
+			if int(chunk["cx"]) == cx and int(chunk["cz"]) == cz:
+				under_detailed = bool(chunk["detailed"])
+				var material: StandardMaterial3D = chunk["material"]
+				if material != null and material.albedo_texture != null:
+					under_px = material.albedo_texture.get_width()
+				break
+	return {
+		"chunk_metres": chunk_metres,
+		"chunks": _chunks.size(),
+		"detailed": detailed,
+		"pending": _pending_detail.size(),
+		"under_detailed": under_detailed,
+		"under_px": under_px,
+	}
+
+
 func _refresh_detail_chunks() -> void:
 	var focus_xz := Vector2(_focus.global_position.x, _focus.global_position.z)
 	var ranked: Array = []

@@ -30,6 +30,11 @@ const ELEVATION_FLOOR_M := -30.0
 
 var _http: HTTPRequest
 var _busy := false
+## Counted so the on-screen diagnostic can say whether imagery is coming off the
+## disk, off the network, or not arriving at all.
+var cache_hits := 0
+var network_fetches := 0
+var failures := 0
 
 
 func _ready() -> void:
@@ -105,6 +110,7 @@ func _write_cache(cache_name: String, body: PackedByteArray) -> void:
 func fetch_bytes(url: String, cache_name: String) -> PackedByteArray:
 	var cached := _read_cache(cache_name)
 	if not cached.is_empty():
+		cache_hits += 1
 		return cached
 	await _acquire()
 	var started := _http.request(url)
@@ -118,8 +124,10 @@ func fetch_bytes(url: String, cache_name: String) -> PackedByteArray:
 	var status := int(outcome[1])
 	var body: PackedByteArray = outcome[3]
 	if result != HTTPRequest.RESULT_SUCCESS or status != 200 or body.is_empty():
+		failures += 1
 		push_warning("Map request failed (result %d, HTTP %d): %s" % [result, status, url])
 		return PackedByteArray()
+	network_fetches += 1
 	_write_cache(cache_name, body)
 	return body
 
