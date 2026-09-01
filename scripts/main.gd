@@ -5,6 +5,11 @@ const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
 const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 const GROUND_RAY := preload("res://scripts/terrain/ground_ray.gd")
+const BUILDING_HIT_INDEX := preload("res://scripts/terrain/building_hit_index.gd")
+const WORLD_SURFACE_RESOLVER := preload("res://scripts/world/world_surface_resolver.gd")
+const WORLD_HIT_QUERY := preload("res://scripts/world/world_hit_query.gd")
+const BUILDING_DAMAGE := preload("res://scripts/world/building_damage_system.gd")
+const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 
 @export_group("Follow Camera")
 @export var camera_height := 150.0
@@ -41,6 +46,10 @@ const GROUND_RAY := preload("res://scripts/terrain/ground_ray.gd")
 @export var cockpit_fov := 78.0
 
 @onready var streamed_terrain = $StreamedTerrain
+@onready var projectile_manager: Node3D = $ProjectileManager
+@onready var impact_fx: Node3D = $ImpactFX
+@onready var cannon_fx: Node3D = $CannonFX
+@onready var cannon_weapon: Node3D = $HelicopterAnchor/CannonWeapon
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
 @onready var camera: Camera3D = $Camera3D
 @onready var mission_panel: Control = $UI/Margin
@@ -76,6 +85,10 @@ var _free_look := Vector2.ZERO
 var _target_point := Vector3.ZERO
 var _has_target_point := false
 var _active_terrain: Node
+var _building_hit_index: RefCounted
+var _surface_resolver: RefCounted
+var _hit_query: RefCounted
+var _building_damage: RefCounted
 
 
 func _ready() -> void:
@@ -98,6 +111,9 @@ func _ready() -> void:
 	demo_button.text = "SETTINGS"
 	demo_button.visible = true
 	_spawn_helicopter()
+	# The gun mount appears when the helicopter controller finds its visual on
+	# the next frame, so the weapon graph is assembled after that.
+	call_deferred("_wire_cannon_systems")
 	if not LocationService.selected_region.is_empty():
 		_on_region_selected(LocationService.selected_region)
 	_on_gamepad_connection_changed(
@@ -430,7 +446,14 @@ func _update_attack_reticle() -> void:
 		attack_reticle.set_solution(alpha, Vector2.ZERO, false, {})
 		return
 	var muzzle: Transform3D = helicopter_anchor.get_muzzle_transform()
-	var solution := _ballistics.solve(muzzle.origin, muzzle.basis.x, _ground_height_xz)
+	var carrier: Vector3 = helicopter_anchor.velocity if "velocity" in helicopter_anchor else Vector3.ZERO
+	var solution := _ballistics.solve(
+		muzzle.origin,
+		muzzle.basis.x,
+		_ground_height_xz,
+		carrier,
+		_hit_query.query_segment if _hit_query != null else Callable()
+	)
 	var pipper := Vector2.ZERO
 	var has_pipper := false
 	if not solution.is_empty():
@@ -628,3 +651,91 @@ func _on_controller_attention_changed(required: bool, title: String, detail: Str
 	if required:
 		controller_title.text = title
 		controller_detail.text = detail
+
+
+func _wire_cannon_systems() -> void:
+	_surface_resolver = WORLD_SURFACE_RESOLVER.new()
+	_surface_resolver.configure(_ground_height_xz, 0.0)
+	_building_hit_index = BUILDING_HIT_INDEX.new()
+	_hit_query = WORLD_HIT_QUERY.new()
+	_hit_query.configure(_ground_height_xz, _building_hit_index, _surface_resolver, 0.0)
+	_building_damage = BUILDING_DAMAGE.new()
+	_building_damage.building_index = _building_hit_index
+
+	# One profile and one Ballistics instance behind the sight and the rounds,
+	# so the pipper cannot be tuned away from where the shells actually go.
+	_ballistics.adopt(cannon_weapon.profile)
+	cannon_weapon.ballistics = _ballistics
+	projectile_manager.profile = cannon_weapon.profile
+	projectile_manager.ballistics = _ballistics
+	projectile_manager.hit_query = _hit_query
+	projectile_manager.projectile_impacted.connect(_on_projectile_impacted)
+
+	cannon_weapon.gun_mount = helicopter_anchor.get_gun_mount()
+	cannon_weapon.projectile_manager = projectile_manager
+	cannon_weapon.carrier = helicopter_anchor
+	cannon_weapon.hit_query = _hit_query
+	cannon_weapon.ground_height = _ground_height_xz
+	cannon_weapon.aim.set_target_provider(_orbit_target_point)
+	cannon_weapon.aim.set_look_provider(_free_look_aim_point)
+	cannon_weapon.round_fired.connect(cannon_fx.on_round_fired)
+
+	cannon_fx.projectile_manager = projectile_manager
+	cannon_fx.gun_mount = cannon_weapon.gun_mount
+	cannon_fx.weapon = cannon_weapon
+
+	# Collision mirrors the streamed render data: chunks bring their footprints
+	# in when they go detailed and take them away when they fall behind.
+	if not streamed_terrain.chunk_buildings_ready.is_connected(_on_chunk_buildings_ready):
+		streamed_terrain.chunk_buildings_ready.connect(_on_chunk_buildings_ready)
+	if not streamed_terrain.chunk_buildings_released.is_connected(_on_chunk_buildings_released):
+		streamed_terrain.chunk_buildings_released.connect(_on_chunk_buildings_released)
+
+
+func _on_chunk_buildings_ready(chunk_key: int, records: Array, ground_height: Callable) -> void:
+	if _building_hit_index != null:
+		_building_hit_index.add_chunk(chunk_key, records, ground_height)
+
+
+func _on_chunk_buildings_released(chunk_key: int) -> void:
+	if _building_hit_index != null:
+		_building_hit_index.remove_chunk(chunk_key)
+
+
+## Spec priority 1: an explicitly selected target outranks where the player is
+## looking. Reuses the existing orbit target rather than selecting its own.
+func _orbit_target_point() -> Variant:
+	if helicopter_anchor != null and helicopter_anchor.has_orbit_target:
+		return helicopter_anchor.orbit_target
+	return null
+
+
+## Spec priority 2: while R1 is held the gun chases whatever the camera centre
+## is over. Returns null otherwise, so the turret eases back to the nose.
+func _free_look_aim_point() -> Variant:
+	if camera == null or not GamepadInput.is_free_look_held():
+		return null
+	var origin := camera.global_position
+	var forward := -camera.global_basis.z.normalized()
+	# Buildings first: the gun should aim at the facade, not the ground behind.
+	if _hit_query != null:
+		var travelled := 0.0
+		while travelled < 4000.0:
+			var step := minf(40.0, 4000.0 - travelled)
+			var from := origin + forward * travelled
+			var blocked: RefCounted = _hit_query.query_segment(from, from + forward * step)
+			if blocked != null and blocked.hit:
+				return blocked.position
+			travelled += step
+	var ground := GROUND_RAY.intersect(origin, forward, _ground_height_xz)
+	if not ground.is_empty():
+		return ground["point"]
+	return origin + forward * 3000.0
+
+
+func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> void:
+	if impact_fx != null:
+		impact_fx.spawn_impact(hit_result, round_data)
+	# Every round damages what it actually struck, selected target or not.
+	if hit_result.object_type == WORLD_HIT.ObjectKind.BUILDING and _building_damage != null:
+		_building_damage.apply_hit(hit_result, round_data)

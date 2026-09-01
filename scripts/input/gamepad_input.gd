@@ -218,10 +218,13 @@ func _register_input_actions() -> void:
 	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	# The cannon moves off R1, which is now free look. Nothing fires yet, so
 	# this costs nothing today.
-	_add_button_action(ACTION_CANNON, JoyButton.JOY_BUTTON_A)
+	# L3: the only button reachable without releasing either stick, so the gun
+	# fires while the player is still flying and holding R1 to aim.
+	_add_button_action(ACTION_CANNON, JoyButton.JOY_BUTTON_LEFT_STICK)
 	_add_button_action(ACTION_ROCKETS, JoyButton.JOY_BUTTON_LEFT_SHOULDER)
 	_add_button_action(ACTION_CAMERA_TRAVEL_TOGGLE, JoyButton.JOY_BUTTON_RIGHT_STICK)
-	_add_button_action(ACTION_CONTEXT, JoyButton.JOY_BUTTON_LEFT_STICK)
+	# Displaced from L3 by the cannon; A is the slot the cannon vacated.
+	_add_button_action(ACTION_CONTEXT, JoyButton.JOY_BUTTON_A)
 	_add_button_action(ACTION_TARGET_PREVIOUS, JoyButton.JOY_BUTTON_DPAD_LEFT)
 	_add_button_action(ACTION_TARGET_NEXT, JoyButton.JOY_BUTTON_DPAD_RIGHT)
 	_add_button_action(ACTION_ZOOM_IN, JoyButton.JOY_BUTTON_DPAD_UP)

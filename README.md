@@ -101,6 +101,35 @@ with no signal shows the overview imagery rather than detail.
   `tile_client.gd` clamps them off; genuine negatives here are dredged canals
   no deeper than about -20 m and open ocean reads a flat 0.
 
+## 30 mm chin cannon
+
+Hold R1 and the chin turret slews to wherever the camera centre is pointing,
+within its articulation limits; L3 fires. A selected orbit target outranks the
+view, and with neither the gun eases back to the nose. The turret aims at a
+world point rather than a direction, so it corrects itself as the airframe
+drifts underneath it, and it stops at its limit rather than firing through the
+aircraft.
+
+Rounds are individually simulated - 805 m/s, gravity, drag, and the
+helicopter's own velocity inherited at launch - and are stopped by a swept
+segment test against OSM building volumes and the terrain height field. No
+round is a RigidBody3D and no building has a physics node: `BuildingHitIndex`
+mirrors the batched render mesh as footprints in a spatial grid, streaming in
+and out with the chunks that own them.
+
+The attack reticle and the live rounds share one `Ballistics` instance and one
+`BallisticProfile`, and integrate through the same `advance()`. The agreement
+is asserted to within 5 cm in `tests/pipper_agreement_test.gd`, including with
+the aircraft moving sideways.
+
+Impact material comes from `WorldSurfaceResolver`: buildings, then water, then
+a terrain lookup that reads the compiled splat weights when a theatre has them.
+Nothing keeps a second hand-written material map, so if it looks like sand it
+behaves like sand. Until the world pipeline emits splat masks,
+`set_splat_provider()` is unset and provisional elevation banding stands in.
+
+Tuning is in `scripts/weapons/ballistic_profile.gd`.
+
 ## Run in Godot
 
 Open this directory in Godot 4.7.2 and run `scenes/main.tscn`. Desktop/editor
@@ -145,10 +174,10 @@ clearance stops the model flying you into a hill.
 | Y | Switch controls: arcade / realistic |
 | R1 (hold) | Free look: the right stick aims the camera, and the view holds until released |
 | X | Settings |
-| A | Cannon |
+| L3 | Fire the 30 mm chin cannon |
 | L1 | Rockets |
 | R3 | Cycle cockpit / chase / orbit view |
-| L3 | Context/extraction |
+| A | Context/extraction |
 | D-pad left/right | Previous/next target |
 | D-pad up/down | Camera zoom in/out, continuing into the attack close-up |
 

@@ -16,6 +16,7 @@ const ROTOR := preload("res://scripts/helicopter/rotor_model.gd")
 const FLIGHT_MATH := preload("res://scripts/helicopter/flight_math.gd")
 const TARGET_ORBIT := preload("res://scripts/helicopter/target_orbit.gd")
 const AIRFRAME_MOTION := preload("res://scripts/helicopter/airframe_motion.gd")
+const GUN_MOUNT := preload("res://scripts/weapons/gun_mount.gd")
 
 const GRAVITY := 9.80665
 
@@ -107,6 +108,7 @@ var pitch_degrees := 0.0
 var roll_degrees := 0.0
 var _terrain: Node
 var _visual: Node3D
+var _gun_mount: Node3D
 var _yaw_velocity_degrees := 0.0
 var _smoothed_ground_height := 0.0
 var _ground_height_initialized := false
@@ -381,6 +383,21 @@ func _sample_ground(delta: float) -> float:
 func _find_visual() -> void:
 	_visual = get_node_or_null("HeroHelicopter")
 	_measure_cockpit()
+	_attach_gun_mount()
+
+
+## The AH-64D GLB is three merged static meshes with no bones and no separate
+## cannon geometry, so the M230 assembly is built and hung under the airframe.
+func _attach_gun_mount() -> void:
+	if _visual == null or _gun_mount != null:
+		return
+	_gun_mount = GUN_MOUNT.new()
+	_gun_mount.name = "GunMount"
+	_visual.add_child(_gun_mount)
+
+
+func get_gun_mount() -> Node3D:
+	return _gun_mount
 
 
 ## The airframe GLB is not to scale -- it renders about 31 m long -- so a
@@ -451,6 +468,10 @@ func get_focus_position() -> Vector3:
 
 ## The gun fires along the airframe's nose, which is its local +X.
 func get_muzzle_transform() -> Transform3D:
+	# Local +X is the firing direction throughout. Once the chin turret exists
+	# the sight follows the barrel; until then it follows the airframe.
+	if _gun_mount != null:
+		return _gun_mount.get_muzzle_transform()
 	return _visual.global_transform if _visual != null else global_transform
 
 

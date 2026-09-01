@@ -10,6 +10,10 @@ extends Node3D
 
 signal status_changed(message: String)
 signal region_ready()
+## Mirrors the batched building mesh for collision. The renderer keeps its
+## ArrayMesh; the cannon gets footprints it can intersect mathematically.
+signal chunk_buildings_ready(chunk_key: int, records: Array, ground_height: Callable)
+signal chunk_buildings_released(chunk_key: int)
 
 ## Chunks per side. Ground resolution is set by how much ground one texture has
 ## to cover, not by the texture size alone: at 12 the corridor's chunks were
@@ -482,7 +486,7 @@ func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	if not FileAccess.file_exists(path):
 		return
 	_pending_buildings[key] = true
-	var result := {"mesh": null}
+	var result := {"mesh": null, "records": []}
 	var task := WorkerThreadPool.add_task(_build_buildings.bind(path, result), true)
 	while not WorkerThreadPool.is_task_completed(task):
 		await get_tree().process_frame
@@ -497,6 +501,7 @@ func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	instance.mesh = mesh
 	add_child(instance)
 	chunk["buildings"] = instance
+	chunk_buildings_ready.emit(key, result.get("records", []), sample_mesh_height)
 
 
 ## Runs on a worker thread.
@@ -508,7 +513,9 @@ func _build_buildings(path: String, result: Dictionary) -> void:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		push_warning("Chunk building data is invalid: %s" % path)
 		return
-	result["mesh"] = BuildingMesh.build((parsed as Dictionary).get("buildings", []), sample_mesh_height)
+	var records: Array = (parsed as Dictionary).get("buildings", [])
+	result["records"] = records
+	result["mesh"] = BuildingMesh.build(records, sample_mesh_height)
 
 
 func _release_chunk_buildings(chunk: Dictionary) -> void:
@@ -516,6 +523,7 @@ func _release_chunk_buildings(chunk: Dictionary) -> void:
 		if is_instance_valid(chunk["buildings"]):
 			chunk["buildings"].queue_free()
 		chunk["buildings"] = null
+		chunk_buildings_released.emit(int(chunk["index"]))
 
 
 func _on_tile_progress(done: int, total: int, message: String) -> void:

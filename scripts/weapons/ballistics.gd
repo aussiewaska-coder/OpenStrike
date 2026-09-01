@@ -16,22 +16,64 @@ var maximum_flight_seconds := 20.0
 var step_seconds := 0.05
 
 
+## Adopts a BallisticProfile so the sight and the live rounds cannot be tuned
+## apart. Both read the one resource (spec section 14).
+func adopt(profile: Resource) -> void:
+	muzzle_velocity = profile.muzzle_velocity
+	drag_per_second = profile.drag_per_second
+	maximum_range = profile.maximum_range
+	maximum_flight_seconds = profile.maximum_flight_seconds
+	step_seconds = profile.simulation_step
+
+
+## Muzzle velocity plus the airframe's own, which is what makes fire from a
+## sideways orbit lead correctly (spec section 13).
+func launch_velocity(direction: Vector3, inherited_velocity: Vector3) -> Vector3:
+	return direction.normalized() * muzzle_velocity + inherited_velocity
+
+
+## One integration step, trapezoidal like solve() below. Live rounds advance
+## through this exact function, so a round cannot drift from the pipper.
+## Returns [next_point, next_velocity].
+func advance(point: Vector3, velocity: Vector3, delta: float) -> Array:
+	var next_velocity := velocity * exp(-drag_per_second * delta)
+	next_velocity.y -= GRAVITY * delta
+	return [point + (velocity + next_velocity) * 0.5 * delta, next_velocity]
+
+
 ## Marches the round until it crosses the terrain, returning the impact point,
 ## slant range and time of flight. Returns an empty dictionary when nothing is
 ## hit inside the maximum range — the sight then has no firing solution to show.
-func solve(origin: Vector3, direction: Vector3, ground_height: Callable) -> Dictionary:
+func solve(
+	origin: Vector3,
+	direction: Vector3,
+	ground_height: Callable,
+	inherited_velocity := Vector3.ZERO,
+	segment_query := Callable()
+) -> Dictionary:
 	if direction.is_zero_approx() or step_seconds <= 0.0:
 		return {}
-	var velocity := direction.normalized() * muzzle_velocity
+	var velocity := launch_velocity(direction, inherited_velocity)
 	var point := origin
 	var time := 0.0
 	var travelled := 0.0
 	var previous_gap: float = point.y - float(ground_height.call(point.x, point.z))
-	var decay := exp(-drag_per_second * step_seconds)
 	while travelled < maximum_range and time < maximum_flight_seconds:
-		var next_velocity := velocity * decay
-		next_velocity.y -= GRAVITY * step_seconds
-		var next_point := point + (velocity + next_velocity) * 0.5 * step_seconds
+		var stepped := advance(point, velocity, step_seconds)
+		var next_point: Vector3 = stepped[0]
+		var next_velocity: Vector3 = stepped[1]
+		# Buildings stand in front of the terrain, so when a world query is
+		# supplied the sight must stop on the facade the rounds will stop on.
+		if segment_query.is_valid():
+			var blocked: RefCounted = segment_query.call(point, next_point)
+			if blocked != null and blocked.hit:
+				return {
+					"point": blocked.position,
+					"range": origin.distance_to(blocked.position),
+					"time": time + step_seconds * float(blocked.t),
+					"surface_type": int(blocked.surface_type),
+					"object_type": int(blocked.object_type),
+				}
 		var gap: float = next_point.y - float(ground_height.call(next_point.x, next_point.z))
 		time += step_seconds
 		travelled += point.distance_to(next_point)
