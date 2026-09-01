@@ -23,13 +23,10 @@ window/size/viewport_height=720
 window/size/window_width_override=1280
 window/size/window_height_override=720
 window/stretch/mode="canvas_items"
-# Landscape either way up, so the phone can be turned to suit whichever side the
-# controller cable or the light is on.
 window/handheld/orientation=4
 
 [rendering]
 
-# Sharpens ground texture at the shallow angles this game is actually flown at.
 textures/default_filters/texture_mipmap_bias=-0.25
 
 renderer/rendering_method="gl_compatibility"

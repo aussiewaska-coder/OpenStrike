@@ -17,7 +17,8 @@
       "spawn_latitude": -28.0023,
       "spawn_longitude": 153.431,
       "spawn_yaw_degrees": -15.0,
-      "buildings_dir": "res://data/regions/au_qld_surfers/buildings"
+      "buildings_dir": "res://data/regions/au_qld_surfers/buildings",
+      "elevation_smoothing": 3
     },
     {
       "id": "au_qld_burleigh",
@@ -35,7 +36,8 @@
       "spawn_latitude": -28.0894,
       "spawn_longitude": 153.4506,
       "spawn_yaw_degrees": -15.0,
-      "buildings_dir": "res://data/regions/au_qld_burleigh/buildings"
+      "buildings_dir": "res://data/regions/au_qld_burleigh/buildings",
+      "elevation_smoothing": 2
     },
     {
       "id": "au_nsw_tweed",
@@ -53,7 +55,8 @@
       "spawn_latitude": -28.1739,
       "spawn_longitude": 153.545,
       "spawn_yaw_degrees": -15.0,
-      "buildings_dir": "res://data/regions/au_nsw_tweed/buildings"
+      "buildings_dir": "res://data/regions/au_nsw_tweed/buildings",
+      "elevation_smoothing": 2
     },
     {
       "id": "au_qld_tamborine",
@@ -71,7 +74,8 @@
       "spawn_latitude": -27.96,
       "spawn_longitude": 153.19,
       "spawn_yaw_degrees": -15.0,
-      "buildings_dir": "res://data/regions/au_qld_tamborine/buildings"
+      "buildings_dir": "res://data/regions/au_qld_tamborine/buildings",
+      "elevation_smoothing": 1
     },
     {
       "id": "au_gold_coast_tweed_corridor",
@@ -89,7 +93,8 @@
       "spawn_latitude": -28.0023,
       "spawn_longitude": 153.431,
       "spawn_yaw_degrees": -15.0,
-      "buildings_dir": "res://data/regions/au_gold_coast_tweed_corridor/buildings"
+      "buildings_dir": "res://data/regions/au_gold_coast_tweed_corridor/buildings",
+      "elevation_smoothing": 2
     }
   ]
 }

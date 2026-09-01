@@ -144,8 +144,32 @@ func fetch_bytes(url: String, cache_name: String) -> PackedByteArray:
 ## Returns {"image": Image (FORMAT_RF, normalised 0..1),
 ##          "elevation_min_m": float, "elevation_max_m": float}
 ## or an empty dictionary if no tile could be fetched.
-func fetch_heightfield(region_id: String, bounds: Dictionary, zoom: int, resolution: int) -> Dictionary:
-	var cache_name := "height_%s_z%d_r%d.bin" % [region_id, zoom, resolution]
+## Terrarium is a surface model, not a bare-earth one: over Surfers Paradise its
+## samples sit on the roofs of the towers, so a beach that is flat in life
+## arrives as a ridge of spikes. A few box-blur passes take the buildings out
+## while leaving the landform -- the headland, the river channel, the escarpment
+## -- intact. Buildings are drawn separately from OSM footprints, so nothing real
+## is lost by taking them out of the ground.
+static func _smooth_heights(heights: PackedFloat32Array, side: int, passes: int) -> PackedFloat32Array:
+	var current := heights
+	for _pass in range(passes):
+		var next := PackedFloat32Array()
+		next.resize(current.size())
+		for j in range(side):
+			for i in range(side):
+				var total := 0.0
+				for dj in range(-1, 2):
+					for di in range(-1, 2):
+						total += current[clampi(j + dj, 0, side - 1) * side + clampi(i + di, 0, side - 1)]
+				next[j * side + i] = total / 9.0
+		current = next
+	return current
+
+
+func fetch_heightfield(
+	region_id: String, bounds: Dictionary, zoom: int, resolution: int, smoothing_passes := 0
+) -> Dictionary:
+	var cache_name := "height_%s_z%d_r%d_s%d.bin" % [region_id, zoom, resolution, smoothing_passes]
 	var cached := _read_cache(cache_name)
 	if cached.size() == (resolution * resolution + 2) * 4:
 		return _heightfield_from_buffer(cached, resolution)
@@ -208,6 +232,14 @@ func fetch_heightfield(region_id: String, bounds: Dictionary, zoom: int, resolut
 		if j % 32 == 0:
 			load_progress.emit(j, resolution, "Building elevation grid")
 			await get_tree().process_frame
+
+	if smoothing_passes > 0:
+		heights = _smooth_heights(heights, resolution, smoothing_passes)
+		minimum = INF
+		maximum = -INF
+		for value in heights:
+			minimum = minf(minimum, value)
+			maximum = maxf(maximum, value)
 
 	var span := maxf(maximum - minimum, 1.0)
 	var normalised := PackedFloat32Array()

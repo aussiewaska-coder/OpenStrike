@@ -19,6 +19,9 @@ signal region_ready()
 @export var chunk_resolution := 33         ## vertices per chunk edge
 @export var elevation_zoom := 12           ## Terrarium zoom; 12 is ~34 m/px, SRTM's native scale
 @export var heightfield_resolution := 513
+## Box-blur passes over the elevation grid. Terrarium reads rooftops as ground,
+## so a built-up theatre needs a couple; open country needs none.
+@export var elevation_smoothing := 0
 ## The overview is stitched rather than asked for in one piece: Queensland's
 ## ImageServer answers 4100 px for a chunk but 500s for a 36 km extent.
 @export var overview_texture_px := 2048
@@ -71,6 +74,7 @@ func load_region(region: Dictionary) -> bool:
 	# ground one chunk texture covers, so a small area wants more, finer chunks
 	# than the 36 km corridor does.
 	chunk_count = int(region.get("chunk_count", chunk_count))
+	elevation_smoothing = int(region.get("elevation_smoothing", elevation_smoothing))
 	var center_latitude := float(region.get("center_latitude", 0.0))
 	var center_longitude := float(region.get("center_longitude", 0.0))
 	_bounds = MapTiles.region_bounds(center_latitude, center_longitude, world_size)
@@ -80,7 +84,7 @@ func load_region(region: Dictionary) -> bool:
 	status_changed.emit("Streaming elevation for %s..." % region.get("display_name", region_id))
 	TileClient.load_progress.connect(_on_tile_progress)
 	var field: Dictionary = await TileClient.fetch_heightfield(
-		region_id, _bounds, elevation_zoom, heightfield_resolution
+		region_id, _bounds, elevation_zoom, heightfield_resolution, elevation_smoothing
 	)
 	TileClient.load_progress.disconnect(_on_tile_progress)
 	if field.is_empty():
