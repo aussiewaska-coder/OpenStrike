@@ -44,6 +44,17 @@ The elevation grid for a whole region is small — the 36 km corridor is 30
 Terrarium tiles, under a megabyte — so it is fetched once and kept resident,
 and every height query reads from it.
 
+Imagery is compressed to ETC2 on arrival -- 12 MB per 2048 px chunk becomes
+2 MB for about 70 ms of CPU -- which is what makes the detail ladder affordable:
+the four chunks nearest the aircraft carry 4096 px (0.73 m/px), the rest of the
+resident sixteen carry 2048 px (1.46 m/px), and everything else shows the
+region overview. Texture memory lands near 82 MB against 256 MB uncompressed.
+
+The overview and any NSW imagery are stitched from a grid of smaller requests
+rather than asked for in one piece. Both servers cap the request, not the ground
+it covers: NSW SIX refuses more than 1024 px, and Queensland answers 4100 px for
+a 3 km chunk but returns HTTP 500 for the whole 36 km corridor.
+
 Imagery is the opposite problem. Covering 36 km at the imagery's true 10 cm
 resolution would need a 360,000 pixel texture, so the region is split into a
 grid of chunks (12 x 12 by default, 3 km each). Every chunk starts on a single

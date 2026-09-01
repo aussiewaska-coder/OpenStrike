@@ -15,8 +15,16 @@ signal region_ready()
 @export var chunk_resolution := 33         ## vertices per chunk edge
 @export var elevation_zoom := 12           ## Terrarium zoom; 12 is ~34 m/px, SRTM's native scale
 @export var heightfield_resolution := 513
+## The overview is stitched rather than asked for in one piece: Queensland's
+## ImageServer answers 4100 px for a chunk but 500s for a 36 km extent.
 @export var overview_texture_px := 2048
+@export var overview_grid_per_side := 2
 @export var detail_texture_px := 2048
+## The chunks right under the aircraft carry twice the detail of the rest.
+## Compression is what makes the difference affordable: 4096 px costs about
+## 10 MB compressed against 64 MB raw.
+@export var near_detail_texture_px := 4096
+@export var near_detail_chunks := 4
 @export var detail_radius_m := 7000.0
 @export var max_detail_chunks := 16
 @export var detail_update_interval_s := 0.6
@@ -72,8 +80,11 @@ func load_region(region: Dictionary) -> bool:
 	}
 
 	status_changed.emit("Streaming overview imagery...")
-	_overview_texture = await TileClient.fetch_aerial(
-		_bounds, overview_texture_px, String(region.get("imagery_server", "qld"))
+	_overview_texture = await TileClient.fetch_aerial_grid(
+		_bounds,
+		overview_texture_px,
+		overview_grid_per_side,
+		String(region.get("imagery_server", "qld"))
 	)
 
 	status_changed.emit("Building terrain...")
@@ -263,6 +274,11 @@ func _refresh_detail_chunks() -> void:
 			ranked.append({"chunk": chunk, "distance": distance})
 	ranked.sort_custom(func(a, b): return a["distance"] < b["distance"])
 	var wanted := ranked.slice(0, max_detail_chunks)
+	# Rank decides resolution: the nearest few get the high tier, the rest the
+	# standard one, and a chunk that changes tier is re-fetched.
+	for position in range(wanted.size()):
+		var tier_px: int = near_detail_texture_px if position < near_detail_chunks else detail_texture_px
+		wanted[position]["tier"] = tier_px
 
 	var keep := {}
 	for entry in wanted:
@@ -277,13 +293,16 @@ func _refresh_detail_chunks() -> void:
 			_release_chunk_buildings(chunk)
 	for entry in wanted:
 		var chunk: Dictionary = entry["chunk"]
+		var tier: int = int(entry["tier"])
 		_ensure_chunk_buildings(chunk)
-		if chunk["detailed"] or _pending_detail.has(int(chunk["index"])):
+		if _pending_detail.has(int(chunk["index"])):
 			continue
-		_request_chunk_detail(chunk)
+		if chunk["detailed"] and int(chunk.get("tier", 0)) == tier:
+			continue
+		_request_chunk_detail(chunk, tier)
 
 
-func _request_chunk_detail(chunk: Dictionary) -> void:
+func _request_chunk_detail(chunk: Dictionary, tier_px: int = 0) -> void:
 	var key := int(chunk["index"])
 	_pending_detail[key] = true
 	var cx: int = chunk["cx"]
@@ -292,8 +311,10 @@ func _request_chunk_detail(chunk: Dictionary) -> void:
 	var south := lerpf(float(_bounds["north"]), float(_bounds["south"]), float(cz + 1) / float(chunk_count))
 	var west := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx) / float(chunk_count))
 	var east := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx + 1) / float(chunk_count))
+	var requested_px: int = tier_px if tier_px > 0 else detail_texture_px
+	chunk["tier"] = requested_px
 	var texture: ImageTexture = await TileClient.fetch_aerial(
-		{"north": north, "south": south, "west": west, "east": east}, detail_texture_px
+		{"north": north, "south": south, "west": west, "east": east}, requested_px
 	)
 	_pending_detail.erase(key)
 	if texture == null or not is_instance_valid(chunk["instance"]):

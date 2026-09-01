@@ -211,6 +211,14 @@ func _sample_terrarium(data: PackedByteArray, width: int, height: int, px: float
 ## returned image is linear in lat/lon and shares the heightfield's UV space.
 func fetch_aerial(bounds: Dictionary, pixels: int, server: String = "qld") -> ImageTexture:
 	var use_nsw := server == "nsw"
+	# NSW SIX refuses anything over 1024, which left the southern half of the
+	# corridor at a fraction of Queensland's detail. Ask for it as a grid of
+	# 1024 requests and stitch them instead of accepting the cap.
+	if use_nsw and pixels > NSW_MAX_PX:
+		var per_side: int = clampi(int(ceil(float(pixels) / float(NSW_MAX_PX))), 2, 4)
+		var tiled := await fetch_aerial_grid(bounds, NSW_MAX_PX, per_side, "nsw")
+		if tiled != null:
+			return tiled
 	var size_px: int = mini(pixels, NSW_MAX_PX if use_nsw else QLD_MAX_PX)
 	var bbox := "%f,%f,%f,%f" % [
 		float(bounds["west"]), float(bounds["south"]),
@@ -246,5 +254,61 @@ func fetch_aerial(bounds: Dictionary, pixels: int, server: String = "qld") -> Im
 	if image.load_jpg_from_buffer(body) != OK:
 		push_warning("Aerial imagery did not decode for bbox %s" % bbox)
 		return null
+	return _texture_from(image)
+
+
+## Uploading aerial imagery uncompressed costs 12 MB per 2048 px chunk; ETC2
+## takes that to 2 MB for about 70 ms of CPU, which is what makes a near/far
+## detail ladder affordable at all. Falling back to uncompressed is fine -- it
+## only costs memory.
+func _texture_from(image: Image) -> ImageTexture:
 	image.generate_mipmaps()
+	var compressed := Image.new()
+	compressed.copy_from(image)
+	if compressed.compress(Image.COMPRESS_ETC2, Image.COMPRESS_SOURCE_SRGB) == OK:
+		return ImageTexture.create_from_image(compressed)
 	return ImageTexture.create_from_image(image)
+
+
+## Fetches a box as a grid of sub-requests and stitches them.
+##
+## Two limits make this necessary. NSW SIX refuses anything over 1024 px, and
+## Queensland's ImageServer answers 4100 px happily for a 3 km chunk but returns
+## HTTP 500 for the whole 36 km corridor -- the cap is on the request, not on the
+## ground it covers, so asking for several smaller boxes gets past both.
+func fetch_aerial_grid(
+	bounds: Dictionary, per_tile_px: int, per_side: int, server: String = "qld"
+) -> ImageTexture:
+	var north: float = bounds["north"]
+	var south: float = bounds["south"]
+	var west: float = bounds["west"]
+	var east: float = bounds["east"]
+	var mosaic: Image = null
+	var tile_size := Vector2i.ZERO
+	for row in range(per_side):
+		for column in range(per_side):
+			var cell := {
+				"north": lerpf(north, south, float(row) / float(per_side)),
+				"south": lerpf(north, south, float(row + 1) / float(per_side)),
+				"west": lerpf(west, east, float(column) / float(per_side)),
+				"east": lerpf(west, east, float(column + 1) / float(per_side)),
+			}
+			var texture: ImageTexture = await fetch_aerial(cell, per_tile_px, server)
+			if texture == null:
+				return null
+			var tile := texture.get_image()
+			if tile == null:
+				return null
+			tile.decompress()
+			tile.convert(Image.FORMAT_RGB8)
+			if mosaic == null:
+				tile_size = Vector2i(tile.get_width(), tile.get_height())
+				mosaic = Image.create(tile_size.x * per_side, tile_size.y * per_side, false, Image.FORMAT_RGB8)
+			mosaic.blit_rect(
+				tile,
+				Rect2i(Vector2i.ZERO, tile_size),
+				Vector2i(column * tile_size.x, row * tile_size.y)
+			)
+	if mosaic == null:
+		return null
+	return _texture_from(mosaic)
