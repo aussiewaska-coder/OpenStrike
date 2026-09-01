@@ -73,7 +73,6 @@ var _zoom_profile := ZOOM_PROFILE.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
-var _probe := 0
 var _target_point := Vector3.ZERO
 var _has_target_point := false
 var _active_terrain: Node
@@ -118,9 +117,6 @@ func _process(delta: float) -> void:
 		_update_follow_camera(delta)
 		_update_attack_reticle()
 		_update_target_marker()
-		_probe += 1
-		if _probe % 3000 == 0:
-			print("DIAG ", _map_diagnostic_text().replace("\n", " | "))
 
 
 func _spawn_helicopter() -> void:

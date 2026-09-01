@@ -29,6 +29,9 @@ signal region_ready()
 ## 10 MB compressed against 64 MB raw.
 @export var near_detail_texture_px := 4096
 @export var near_detail_chunks := 6
+## Above this ground speed the near tier is skipped. A 4096 px texture is the
+## most expensive to prepare and is already behind the aircraft when it lands.
+@export var near_detail_speed_limit := 45.0
 @export var detail_radius_m := 6000.0
 @export var max_detail_chunks := 24
 @export var detail_update_interval_s := 0.6
@@ -306,6 +309,13 @@ func detail_report(focus_position: Vector3) -> Dictionary:
 	}
 
 
+func _focus_speed() -> float:
+	if _focus == null or not ("velocity" in _focus):
+		return 0.0
+	var velocity: Vector3 = _focus.velocity
+	return Vector2(velocity.x, velocity.z).length()
+
+
 func _refresh_detail_chunks() -> void:
 	var focus_xz := Vector2(_focus.global_position.x, _focus.global_position.z)
 	var ranked: Array = []
@@ -317,9 +327,10 @@ func _refresh_detail_chunks() -> void:
 	var wanted := ranked.slice(0, max_detail_chunks)
 	# Rank decides resolution: the nearest few get the high tier, the rest the
 	# standard one, and a chunk that changes tier is re-fetched.
+	var moving_fast := _focus_speed() > near_detail_speed_limit
 	for position in range(wanted.size()):
-		var tier_px: int = near_detail_texture_px if position < near_detail_chunks else detail_texture_px
-		wanted[position]["tier"] = tier_px
+		var high_tier: bool = position < near_detail_chunks and not moving_fast
+		wanted[position]["tier"] = near_detail_texture_px if high_tier else detail_texture_px
 
 	var keep := {}
 	for entry in wanted:
