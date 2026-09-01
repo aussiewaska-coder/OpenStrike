@@ -23,6 +23,13 @@ const ACTION_TARGET_PREVIOUS := &"target_previous"
 const ACTION_TARGET_NEXT := &"target_next"
 const ACTION_ZOOM_IN := &"camera_zoom_in"
 const ACTION_ZOOM_OUT := &"camera_zoom_out"
+## The on-screen buttons cannot be reached with a controller, so the two things
+## they do are bound to the face buttons instead of making the panel navigable.
+const ACTION_FLIGHT_MODE := &"flight_mode_toggle"
+const ACTION_SETTINGS := &"settings_panel"
+## Held, not pressed: the right stick looks around while R1 is down and the view
+## returns when it is let go.
+const ACTION_FREE_LOOK := &"free_look"
 const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
 
@@ -33,6 +40,8 @@ const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_TARGET_NEXT,
 	ACTION_ZOOM_IN,
 	ACTION_ZOOM_OUT,
+	ACTION_FLIGHT_MODE,
+	ACTION_SETTINGS,
 ]
 
 var active_device := -1
@@ -83,6 +92,10 @@ func get_aim_vector() -> Vector2:
 		ACTION_AIM_BACK,
 		DEAD_ZONE
 	))
+
+
+func is_free_look_held() -> bool:
+	return is_controller_ready() and Input.is_action_pressed(ACTION_FREE_LOOK)
 
 
 func is_cannon_firing() -> bool:
@@ -198,9 +211,14 @@ func _register_input_actions() -> void:
 	_add_axis_action(ACTION_AIM_RIGHT, JoyAxis.JOY_AXIS_RIGHT_X, 1.0)
 	_add_axis_action(ACTION_AIM_FORWARD, JoyAxis.JOY_AXIS_RIGHT_Y, -1.0)
 	_add_axis_action(ACTION_AIM_BACK, JoyAxis.JOY_AXIS_RIGHT_Y, 1.0)
-	_add_axis_action(ACTION_CAMERA_ORBIT_LEFT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
-	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
-	_add_button_action(ACTION_CANNON, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
+	_add_axis_action(ACTION_CAMERA_ORBIT_LEFT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
+	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
+	_add_button_action(ACTION_FLIGHT_MODE, JoyButton.JOY_BUTTON_Y)
+	_add_button_action(ACTION_SETTINGS, JoyButton.JOY_BUTTON_X)
+	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
+	# The cannon moves off R1, which is now free look. Nothing fires yet, so
+	# this costs nothing today.
+	_add_button_action(ACTION_CANNON, JoyButton.JOY_BUTTON_A)
 	_add_button_action(ACTION_ROCKETS, JoyButton.JOY_BUTTON_LEFT_SHOULDER)
 	_add_button_action(ACTION_CAMERA_TRAVEL_TOGGLE, JoyButton.JOY_BUTTON_RIGHT_STICK)
 	_add_button_action(ACTION_CONTEXT, JoyButton.JOY_BUTTON_LEFT_STICK)

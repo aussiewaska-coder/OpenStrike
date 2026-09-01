@@ -13,6 +13,8 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 LocationService="*res://scripts/location/location_service.gd"
 GamepadInput="*res://scripts/input/gamepad_input.gd"
+TileClient="*res://scripts/terrain/tile_client.gd"
+Telemetry="*res://scripts/debug/telemetry_server.gd"
 
 [display]
 
@@ -21,8 +23,11 @@ window/size/viewport_height=720
 window/size/window_width_override=1280
 window/size/window_height_override=720
 window/stretch/mode="canvas_items"
+window/handheld/orientation=4
 
 [rendering]
+
+textures/default_filters/texture_mipmap_bias=-0.25
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"

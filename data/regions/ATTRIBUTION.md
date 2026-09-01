@@ -18,5 +18,15 @@ all rights reserved, 2026.
 
 https://spatial-img.information.qld.gov.au/arcgis/rest/services/Basemaps/LatestStateProgram_AllUsers/ImageServer
 
-All map data is preprocessed into game assets and is not fetched while the game
-is running.
+Streamed theatres additionally fetch Mapzen/Terrarium elevation tiles from the
+same AWS Open Data `elevation-tiles-prod` dataset, and aerial imagery from the
+Queensland service above. Where Queensland imagery thins out south of the
+border, NSW imagery comes from the SIX public image service:
+
+https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Imagery/MapServer
+
+Service attribution: © Department of Customer Service.
+
+Packaged theatres preprocess all map data into game assets and fetch nothing at
+run time. Streamed theatres fetch on demand and cache to `user://map_cache`, so
+each area is downloaded once and is then available offline.
