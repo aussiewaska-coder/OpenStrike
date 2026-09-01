@@ -1,0 +1,519 @@
+extends Node3D
+
+## Fixed-wing flight.
+##
+## The aircraft has no direct control over its heading. The stick commands a
+## roll rate and a pitch rate; rolling tilts the lift vector; the horizontal
+## component of tilted lift is the only thing that turns the aircraft. Throttle
+## commands a target thrust, and airspeed is whatever thrust and drag settle on.
+##
+## That chain -- stick, roll, bank, lift tilt, turn, ease off, assist holds the
+## bank -- is the difference between an aircraft and a spaceship, and it is why
+## none of the code below contains a turn.
+##
+## The structural difference from helicopter_controller.gd: that one keeps only
+## rotation.y on the anchor and puts pitch and roll on the visual as decoration.
+## This one cannot. Bank has to be real, because it is what produces the turn,
+## so the anchor carries a full three-axis basis and the visual carries nothing
+## but buffet.
+##
+## Aerodynamic coefficients live in aero_model.gd with the reasoning for their
+## numbers.
+
+const AERO := preload("res://scripts/jet/aero_model.gd")
+const ASSIST := preload("res://scripts/jet/flight_assist.gd")
+const FEEL := preload("res://scripts/jet/airframe_feel.gd")
+const GUN_MOUNT := preload("res://scripts/weapons/gun_mount.gd")
+
+const GRAVITY := 9.80665
+
+signal crashed(point: Vector3)
+signal respawned()
+signal boundary_warning(urgency: float)
+
+@export var terrain_path: NodePath = NodePath("../StreamedTerrain")
+@export var world_edge_margin := 50.0
+
+@export_group("Airframe")
+## The GLB is ten times real scale, so the wingspan is measured and the model
+## scaled to match rather than trusting a magic number that breaks if the asset
+## is ever swapped.
+@export var reference_wingspan_m := 13.56
+## Hull half-height, for deciding when the aircraft has touched the ground.
+@export var hull_clearance_m := 2.5
+
+@export_group("Control")
+## Deliberately below the real aircraft's 200 degrees per second. The assist
+## caps bank at 80 degrees, so the whole usable range has to take about a
+## second to cross rather than a third of one, or the stick is uncontrollable.
+@export var maximum_roll_rate := 1.8          ## rad/s at full stick, before authority
+@export var maximum_pitch_rate := 0.95        ## rad/s at full stick, before limits
+@export var yaw_trim_rate := 0.22             ## rad/s, the right stick's fine yaw
+@export var sideslip_damping_gain := 0.8
+@export var control_response := 7.0           ## how quickly commanded rates are reached
+
+@export_group("Throttle")
+## Throttle is a position the triggers move, not a spring: releasing them holds
+## the setting, the way a real throttle quadrant does.
+@export var throttle_rate := 0.55
+@export var starting_throttle := 0.62
+## Past 1.0 is afterburner. The travel above military power is the detent.
+@export var maximum_throttle := 1.35
+@export var afterburner_travel := 0.35
+## Engines spool. Afterburner lights faster than the core spools.
+@export var spool_response := 1.6
+
+@export_group("Envelope")
+@export var minimum_display_speed := 90.0
+@export var maximum_display_speed := 260.0
+@export var service_ceiling_m := 6000.0
+@export var respawn_clearance_m := 420.0
+@export var respawn_delay_s := 2.2
+## Where the assist starts flying the aircraft home. Not a wall.
+@export var boundary_margin_m := 1200.0
+@export var boundary_roll_gain := 1.8
+
+@export_group("Cockpit")
+## Where along the cockpit tub the seat sits, and how high in it the pilot's
+## eyes are. Fractions rather than metres, so they survive the model being
+## rescaled or replaced.
+@export var cockpit_seat_fraction := 0.45
+@export var cockpit_eye_height_fraction := 0.72
+## The view sits a few degrees nose-down so the instrument panel is in frame
+## below the HUD combiner, rather than only the sky ahead of it.
+@export var cockpit_pitch_degrees := -6.0
+
+@export_group("Airframe Feel")
+@export var buffet_degrees := 1.4
+@export var vibration_degrees := 0.22
+@export var oscillation_degrees := 2.6
+@export var buffet_shake_metres := 0.35
+
+var velocity := Vector3.ZERO
+## 0 to 1 is idle to military power; above 1 is afterburner.
+var throttle := 0.62
+var alpha := 0.0
+var beta := 0.0
+var load_factor := 1.0
+var bank := 0.0
+
+var _terrain: Node
+var _visual: Node3D
+var _gun_mount: Node3D
+var _thrust_setting := 0.62
+var _roll_rate := 0.0
+var _pitch_rate := 0.0
+var _yaw_rate := 0.0
+var _world_limit := 1950.0
+var _feel_time := 0.0
+var _oscillation_time := 99.0
+var _oscillation_amount := 0.0
+var _peak_load := 1.0
+var _crashed := false
+var _respawn_timer := 0.0
+var _cockpit_local := Vector3(9.5, 1.05, 0.0)
+var _boundary_urgency := 0.0
+
+
+func _ready() -> void:
+	_terrain = get_node_or_null(terrain_path)
+	_adopt_world_bounds(_terrain)
+	throttle = starting_throttle
+	_thrust_setting = starting_throttle
+	call_deferred("_find_visual")
+
+
+func set_terrain(node: Node) -> void:
+	_terrain = node
+	_adopt_world_bounds(node)
+
+
+func _adopt_world_bounds(node: Node) -> void:
+	if node != null and node.has_method("world_half_extent"):
+		_world_limit = maxf(float(node.world_half_extent()) - world_edge_margin, 1.0)
+
+
+## Put the aircraft into level flight at cruise, on its current heading. Used
+## both on entering the aircraft and after a crash.
+func launch(at_position: Vector3, heading_radians: float) -> void:
+	var nose := Vector3(sin(heading_radians), 0.0, -cos(heading_radians))
+	global_position = at_position
+	basis = _basis_from_nose(nose, Vector3.UP)
+	velocity = nose * ((minimum_display_speed + maximum_display_speed) * 0.5)
+	throttle = starting_throttle
+	_thrust_setting = starting_throttle
+	_roll_rate = 0.0
+	_pitch_rate = 0.0
+	_yaw_rate = 0.0
+	alpha = 0.0
+	beta = 0.0
+	load_factor = 1.0
+	bank = 0.0
+	_crashed = false
+	_respawn_timer = 0.0
+	_oscillation_amount = 0.0
+
+
+func is_crashed() -> bool:
+	return _crashed
+
+
+func _physics_process(delta: float) -> void:
+	if _crashed:
+		_respawn_timer -= delta
+		if _respawn_timer <= 0.0:
+			_respawn()
+		return
+	_read_controls(delta)
+	_integrate(delta)
+	_check_boundaries()
+	_check_ground()
+	_update_visual(delta)
+
+
+## The stick commands rates; the assist decides which of them the aircraft is
+## willing to fly.
+func _read_controls(delta: float) -> void:
+	var stick := Vector2.ZERO
+	var trim := Vector2.ZERO
+	var throttle_axis := 0.0
+	if GamepadInput.is_controller_ready():
+		stick = GamepadInput.get_flight_vector()
+		trim = GamepadInput.get_aim_vector()
+		throttle_axis = GamepadInput.get_throttle_axis()
+		# The right stick belongs to the camera while free look is held.
+		if GamepadInput.is_free_look_held():
+			trim = Vector2.ZERO
+
+	throttle = clampf(throttle + throttle_axis * throttle_rate * delta, 0.0, maximum_throttle)
+	_thrust_setting = AERO.spool(_thrust_setting, throttle, spool_response, delta)
+
+	var speed := velocity.length()
+	bank = bank_angle(basis)
+
+	var commanded_roll := ASSIST.commanded_roll_rate(
+		stick.x,
+		maximum_roll_rate,
+		speed,
+		bank,
+		_roll_rate
+	)
+	commanded_roll += _boundary_roll_command()
+	var commanded_pitch := ASSIST.commanded_pitch_rate(
+		-stick.y,
+		maximum_pitch_rate,
+		speed,
+		bank,
+		alpha
+	)
+	var commanded_yaw := ASSIST.level_turn_yaw_rate(bank, speed)
+	commanded_yaw += trim.x * yaw_trim_rate
+	commanded_yaw += ASSIST.sideslip_damping(beta, sideslip_damping_gain)
+
+	# Control surfaces move quickly but not instantly, which is what stops the
+	# aircraft snapping between attitudes.
+	var weight := 1.0 - exp(-control_response * delta)
+	_roll_rate = lerpf(_roll_rate, commanded_roll, weight)
+	_pitch_rate = lerpf(_pitch_rate, commanded_pitch, weight)
+	_yaw_rate = lerpf(_yaw_rate, commanded_yaw, weight)
+
+	basis = rotate_body(basis, _roll_rate, _pitch_rate, _yaw_rate, delta)
+
+
+## Roll about the nose, pitch about the right wing, yaw about the aircraft's own
+## up. Positive roll drops the right wing, positive pitch raises the nose, and
+## positive yaw swings the nose right.
+##
+## Static so the flight test can fly the real rotation rather than a copy of it.
+static func rotate_body(
+	from_basis: Basis,
+	roll_rate: float,
+	pitch_rate: float,
+	yaw_rate: float,
+	delta: float
+) -> Basis:
+	var turned := from_basis
+	turned = turned.rotated(from_basis.x, roll_rate * delta)
+	turned = turned.rotated(from_basis.z, pitch_rate * delta)
+	turned = turned.rotated(from_basis.y, -yaw_rate * delta)
+	return turned.orthonormalized()
+
+
+## Bank is the roll of the wings against a level horizon: positive is right wing
+## down. It is read back off the basis rather than tracked, so it cannot drift
+## away from what the aircraft is actually doing.
+static func bank_angle(from_basis: Basis) -> float:
+	var nose := from_basis.x
+	var right := from_basis.z
+	var level_right := nose.cross(Vector3.UP)
+	if level_right.is_zero_approx():
+		return 0.0
+	level_right = level_right.normalized()
+	var level_up := level_right.cross(nose).normalized()
+	return atan2(-right.dot(level_up), right.dot(level_right))
+
+
+static func heading_of(from_basis: Basis) -> float:
+	var nose := from_basis.x
+	nose.y = 0.0
+	if nose.is_zero_approx():
+		return 0.0
+	nose = nose.normalized()
+	return atan2(nose.x, -nose.z)
+
+
+func _integrate(delta: float) -> void:
+	var speed := velocity.length()
+	var nose := basis.x
+	var up := basis.y
+
+	var body_velocity := basis.inverse() * velocity
+	var angles := AERO.alpha_beta(body_velocity)
+	alpha = angles.x
+	beta = angles.y
+
+	var ground_height := _sample_ground()
+	var altitude := global_position.y - ground_height
+	var falloff := AERO.altitude_falloff(altitude, service_ceiling_m)
+
+	var dry := clampf(_thrust_setting, 0.0, 1.0)
+	var wet := clampf((_thrust_setting - 1.0) / maxf(afterburner_travel, 0.001), 0.0, 1.0)
+	var thrust := AERO.thrust_acceleration(dry, wet)
+
+	var acceleration := AERO.flight_acceleration(nose, up, velocity, thrust, alpha, falloff)
+	velocity += acceleration * delta
+	global_position += velocity * delta
+
+	load_factor = AERO.lift_acceleration(speed, alpha) * falloff / GRAVITY
+	_track_manoeuvre(delta)
+
+
+## The wallow after a hard pull. Amplitude is set at the moment the aircraft
+## unloads, so it only appears once the manoeuvre is over.
+func _track_manoeuvre(delta: float) -> void:
+	_oscillation_time += delta
+	if absf(load_factor) > _peak_load:
+		_peak_load = absf(load_factor)
+	elif _peak_load > 3.0 and absf(load_factor) < 2.0:
+		_oscillation_amount = FEEL.oscillation_amplitude(_peak_load, oscillation_degrees)
+		_oscillation_time = 0.0
+		_peak_load = 1.0
+	elif absf(load_factor) < 2.0:
+		_peak_load = maxf(absf(load_factor), 1.0)
+
+
+## Roll the assist adds to bring the aircraft back over the theatre. Zero
+## anywhere inside the margin, so ordinary flying never feels it.
+func _boundary_roll_command() -> float:
+	var here := Vector2(global_position.x, global_position.z)
+	var heading := _heading()
+	var wanted := ASSIST.turn_back_bank(here, heading, _world_limit, boundary_margin_m)
+	if is_zero_approx(wanted):
+		return 0.0
+	return (wanted - bank) * boundary_roll_gain
+
+
+func _check_boundaries() -> void:
+	var here := Vector2(global_position.x, global_position.z)
+	var urgency := ASSIST.boundary_urgency(here, _world_limit, boundary_margin_m)
+	if not is_equal_approx(urgency, _boundary_urgency):
+		_boundary_urgency = urgency
+		boundary_warning.emit(urgency)
+
+
+func _check_ground() -> void:
+	var ground_height := _sample_ground()
+	if global_position.y - hull_clearance_m > ground_height:
+		return
+	_crashed = true
+	_respawn_timer = respawn_delay_s
+	global_position.y = ground_height + hull_clearance_m
+	velocity = Vector3.ZERO
+	crashed.emit(global_position)
+
+
+func _respawn() -> void:
+	var ground_height := _sample_ground()
+	var point := Vector3(
+		clampf(global_position.x, -_world_limit, _world_limit),
+		ground_height + respawn_clearance_m,
+		clampf(global_position.z, -_world_limit, _world_limit)
+	)
+	launch(point, _heading())
+	respawned.emit()
+
+
+func _heading() -> float:
+	return heading_of(basis)
+
+
+static func _basis_from_nose(nose: Vector3, up: Vector3) -> Basis:
+	var forward := nose.normalized()
+	var right := forward.cross(up)
+	if right.is_zero_approx():
+		right = Vector3.BACK
+	right = right.normalized()
+	var true_up := right.cross(forward).normalized()
+	return Basis(forward, true_up, right)
+
+
+func _sample_ground() -> float:
+	if _terrain == null or not _terrain.has_method("sample_height_world"):
+		return 0.0
+	return _terrain.sample_height_world(global_position.x, global_position.z)
+
+
+func altitude_above_ground() -> float:
+	return global_position.y - _sample_ground()
+
+
+func airspeed() -> float:
+	return velocity.length()
+
+
+func throttle_percent() -> float:
+	return clampf(throttle, 0.0, 1.0) * 100.0
+
+
+func afterburner_fraction() -> float:
+	return clampf((throttle - 1.0) / maxf(afterburner_travel, 0.001), 0.0, 1.0)
+
+
+func _find_visual() -> void:
+	_visual = get_node_or_null("HeroJet")
+	if _visual == null:
+		return
+	_scale_to_reference()
+	_stow_landing_gear()
+	_measure_cockpit()
+	_attach_gun_mount()
+
+
+## The GLB is ten times real scale. Measure the wingspan and scale to the real
+## one, so swapping the asset cannot silently change the aircraft's size.
+func _scale_to_reference() -> void:
+	var bounds := _measure_bounds()
+	if bounds.size.z <= 0.001:
+		return
+	var factor := reference_wingspan_m / bounds.size.z
+	_visual.scale = Vector3.ONE * factor
+
+
+## The model carries both a gear-up and a gear-down assembly, and renders them
+## both unless told otherwise. This aircraft never lands, so the gear stays up.
+func _stow_landing_gear() -> void:
+	for child in _visual.find_children("*", "Node3D", true, false):
+		var name_lower := String(child.name).to_lower()
+		if name_lower.contains("landingon"):
+			(child as Node3D).visible = false
+
+
+func _attach_gun_mount() -> void:
+	if _visual == null or _gun_mount != null:
+		return
+	_gun_mount = GUN_MOUNT.new()
+	_gun_mount.name = "GunMount"
+	_visual.add_child(_gun_mount)
+
+
+func get_gun_mount() -> Node3D:
+	return _gun_mount
+
+
+func _measure_bounds() -> AABB:
+	var bounds := AABB()
+	var found := false
+	if _visual == null:
+		return bounds
+	for child in _visual.find_children("*", "MeshInstance3D", true, false):
+		var instance := child as MeshInstance3D
+		var local: AABB = _visual.global_transform.affine_inverse() * (instance.global_transform * instance.get_aabb())
+		bounds = local if not found else bounds.merge(local)
+		found = true
+	return bounds
+
+
+## The Apache's GLB has no interior at all, which is why its cockpit camera
+## floats out in front of the nose. This one carries a modelled cockpit tub,
+## instrument glass and HUD combiner, so the pilot station is a real place
+## inside the aircraft. Sit far enough back and high enough in the tub that the
+## panel and the combiner are both in frame.
+func _measure_cockpit() -> void:
+	var tub := _find_named("cockpit")
+	var bounds := _mesh_bounds(tub) if tub != null else _measure_bounds()
+	if bounds.size.is_zero_approx():
+		return
+	_cockpit_local = Vector3(
+		bounds.position.x + bounds.size.x * cockpit_seat_fraction,
+		bounds.position.y + bounds.size.y * cockpit_eye_height_fraction,
+		bounds.get_center().z
+	)
+
+
+## One node's bounds, in the visual's own units.
+func _mesh_bounds(node: Node3D) -> AABB:
+	var bounds := AABB()
+	var found := false
+	for child in node.find_children("*", "MeshInstance3D", true, false):
+		var instance := child as MeshInstance3D
+		var local: AABB = _visual.global_transform.affine_inverse() * (instance.global_transform * instance.get_aabb())
+		bounds = local if not found else bounds.merge(local)
+		found = true
+	if not found and node is MeshInstance3D:
+		var self_instance := node as MeshInstance3D
+		bounds = _visual.global_transform.affine_inverse() * (self_instance.global_transform * self_instance.get_aabb())
+	return bounds
+
+
+func _find_named(fragment: String) -> Node3D:
+	for child in _visual.find_children("*", "Node3D", true, false):
+		if String(child.name).to_lower().contains(fragment):
+			return child as Node3D
+	return null
+
+
+## The pilot station, with the airframe's real orientation -- bank included.
+## A jet cockpit whose horizon stays level is not a cockpit.
+func get_cockpit_transform() -> Transform3D:
+	if _visual == null:
+		return global_transform
+	var frame := _visual.global_transform
+	var orientation := frame.basis.orthonormalized()
+	# Tilt down about the right wing so the panel is in frame under the HUD.
+	orientation = orientation.rotated(orientation.z, deg_to_rad(cockpit_pitch_degrees))
+	return Transform3D(orientation, frame * _cockpit_local)
+
+
+func get_focus_position() -> Vector3:
+	return _visual.global_position if _visual != null else global_position
+
+
+func get_muzzle_transform() -> Transform3D:
+	if _gun_mount != null:
+		return _gun_mount.get_muzzle_transform()
+	return _visual.global_transform if _visual != null else global_transform
+
+
+## Buffet and vibration only. The airframe's real attitude is on the anchor, so
+## unlike the helicopter there is no lean to fake here.
+func _update_visual(delta: float) -> void:
+	if _visual == null:
+		return
+	_feel_time += delta
+	var speed := velocity.length()
+	var buffet := FEEL.buffet(alpha, speed)
+	var vibration := FEEL.vibration(speed, maximum_display_speed)
+	var shake := FEEL.shake_degrees(
+		_feel_time,
+		buffet,
+		buffet_degrees,
+		vibration,
+		vibration_degrees
+	)
+	var wallow := FEEL.oscillation(_oscillation_time, _oscillation_amount)
+	_visual.position = FEEL.phases(_feel_time, FEEL.BUFFET_FREQUENCY) * buffet_shake_metres * buffet
+	_visual.rotation = Vector3(
+		deg_to_rad(shake.y),
+		deg_to_rad(shake.z),
+		deg_to_rad(shake.x + wallow)
+	)

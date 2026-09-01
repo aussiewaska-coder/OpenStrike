@@ -1,7 +1,8 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/helicopter/helicopter_controller.gd" id="3_helicopter"]
+[ext_resource type="Script" path="res://scripts/jet/jet_controller.gd" id="3_jet"]
 [ext_resource type="Script" path="res://scripts/terrain/streamed_terrain.gd" id="4_streamed"]
 [ext_resource type="Script" path="res://scripts/ui/attack_reticle.gd" id="5_reticle"]
 [ext_resource type="Script" path="res://scripts/ui/settings_panel.gd" id="6_settings"]
@@ -54,6 +55,11 @@ light_color = Color(1, 1, 1, 1)
 light_energy = 1.6
 omni_range = 120.0
 shadow_enabled = false
+
+[node name="JetAnchor" type="Node3D" parent="."]
+visible = false
+process_mode = 4
+script = ExtResource("3_jet")
 
 [node name="Camera3D" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55, 520, 68)

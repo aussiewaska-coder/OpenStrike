@@ -1,0 +1,223 @@
+extends SceneTree
+
+## The constants in aero_model.gd are derived from the envelope rather than
+## chosen, and these are the derivations, asserted. If a coefficient is retuned
+## and one of these fails, the retune broke a relationship the flight model
+## depends on -- not merely a number someone liked.
+
+const AERO := preload("res://scripts/jet/aero_model.gd")
+
+const KNOT_MPS := 0.5144
+
+
+func _init() -> void:
+	_lift_curve()
+	_drag_polar()
+	_thrust()
+	_authority()
+	_turn_limits()
+	_envelope()
+	print("AERO_MODEL_TEST_PASS")
+	quit()
+
+
+func _lift_curve() -> void:
+	_assert_approx(AERO.lift_coefficient(0.0), 0.0, "no lift coefficient at zero alpha")
+
+	# It must rise monotonically to the stall: a dip would read as the aircraft
+	# sagging as it pulls.
+	var previous := -1.0
+	var stall := deg_to_rad(AERO.STALL_ALPHA_DEGREES)
+	for step in range(0, 241):
+		var alpha := deg_to_rad(float(step) * 0.1)
+		if alpha > stall:
+			break
+		var lift: float = AERO.lift_coefficient(alpha)
+		if lift < previous - 0.0001:
+			_fail("lift coefficient dipped at %f degrees" % rad_to_deg(alpha))
+		previous = lift
+
+	_assert_approx(AERO.lift_coefficient(stall), AERO.CL_MAX, "the stall angle is where lift peaks")
+
+	# Past the stall it must fall away, or the model cannot express a stall at
+	# all and the limiter is guarding nothing.
+	if AERO.lift_coefficient(deg_to_rad(32.0)) >= AERO.CL_MAX:
+		_fail("lift must fall away past the stall angle")
+
+	# Symmetric: pushing must work the same as pulling.
+	_assert_approx(
+		AERO.lift_coefficient(-0.2),
+		-AERO.lift_coefficient(0.2),
+		"the lift curve is symmetric about zero alpha"
+	)
+
+
+func _drag_polar() -> void:
+	# Induced drag follows the square of the lift coefficient. This one term is
+	# why hard turns cost speed, so it is worth pinning exactly.
+	var at_one: float = AERO.drag_coefficient(1.0, 100.0) - AERO.drag_coefficient(0.0, 100.0)
+	var at_two: float = AERO.drag_coefficient(2.0, 100.0) - AERO.drag_coefficient(0.0, 100.0)
+	if absf(at_two - at_one * 4.0) > 0.0001:
+		_fail("induced drag must go as the square of lift: %f then %f" % [at_one, at_two])
+
+	# Wave drag is zero below the divergence speed and rising above it.
+	_assert_approx(AERO.wave_drag(AERO.DRAG_DIVERGENCE_MPS), 0.0, "no wave drag below divergence")
+	_assert_approx(AERO.wave_drag(100.0), 0.0, "no wave drag in the cruise")
+	if AERO.wave_drag(260.0) <= AERO.wave_drag(220.0):
+		_fail("wave drag must rise with speed past divergence")
+
+	# A hard turn must cost several times the level drag, or energy management
+	# is not a thing the player has to think about.
+	var level: float = AERO.drag_acceleration(155.0, _trim_alpha(155.0))
+	var hard: float = AERO.drag_acceleration(155.0, deg_to_rad(AERO.STALL_ALPHA_DEGREES))
+	if hard <= level * 3.0:
+		_fail("a hard turn must cost over three times the level drag: %f against %f" % [hard, level])
+
+	# And it must cost more than the engines can replace, or a sustained turn
+	# is free and nothing is at stake.
+	var afterburner: float = AERO.thrust_acceleration(1.0, 1.0)
+	if afterburner >= hard:
+		_fail("a sustained 9G turn must lose speed even in afterburner")
+
+
+func _thrust() -> void:
+	var idle: float = AERO.thrust_acceleration(0.0, 0.0)
+	var military: float = AERO.thrust_acceleration(1.0, 0.0)
+	var wet: float = AERO.thrust_acceleration(1.0, 1.0)
+	if idle <= 0.0:
+		_fail("a jet engine still pushes with the throttle closed")
+	if not (idle < military and military < wet):
+		_fail("thrust must rise through idle, military and afterburner")
+
+	# Engines spool rather than step: this is what makes the throttle command a
+	# thrust rather than a speed.
+	var setting := 0.0
+	var previous := -1.0
+	for _step in range(0, 200):
+		setting = AERO.spool(setting, 1.0, 1.6, 1.0 / 60.0)
+		if setting < previous:
+			_fail("spooling must be monotonic toward its command")
+		previous = setting
+	if setting <= 0.98:
+		_fail("the engine must reach its commanded setting, got %f" % setting)
+	_assert_approx(AERO.spool(0.5, 0.5, 1.6, 0.016), 0.5, "a matched command does not move the engine")
+
+
+func _authority() -> void:
+	# Control effectiveness follows dynamic pressure, which is the single term
+	# that makes low-speed flight mushy.
+	if AERO.pitch_authority(90.0) >= 0.4:
+		_fail("the envelope floor must be mushy, got %f" % AERO.pitch_authority(90.0))
+	_assert_approx(AERO.pitch_authority(AERO.CORNER_SPEED_MPS), 1.0, "corner speed has full pitch authority")
+	_assert_approx(AERO.pitch_authority(260.0), 1.0, "pitch authority saturates above corner speed")
+
+	# Roll is not load limited the way pitch is, so it keeps sharpening. This is
+	# what "fast is more responsive but turns wider" actually means.
+	if AERO.roll_authority(260.0) <= AERO.roll_authority(AERO.CORNER_SPEED_MPS):
+		_fail("roll must keep sharpening past corner speed")
+	if AERO.roll_authority(400.0) > AERO.MAX_ROLL_AUTHORITY + 0.0001:
+		_fail("roll authority must stay bounded")
+
+
+func _turn_limits() -> void:
+	# Corner speed is not a chosen number: it is where the wing's limit and the
+	# airframe's limit cross. Everything about turning depends on this holding.
+	_assert_approx(
+		AERO.aerodynamic_load_limit(AERO.CORNER_SPEED_MPS),
+		AERO.LOAD_LIMIT_G,
+		"the aerodynamic and load limits must meet at corner speed"
+	)
+	if AERO.aerodynamic_load_limit(110.0) >= AERO.LOAD_LIMIT_G:
+		_fail("below corner speed the wing must run out of lift first")
+	if AERO.aerodynamic_load_limit(230.0) <= AERO.LOAD_LIMIT_G:
+		_fail("above corner speed the load limiter must bind first")
+
+	# The load limiter caps pitch rate, and because n = v * omega / g that cap
+	# falls as speed rises. Fast turns are therefore wide turns.
+	var previous_rate := 1000.0
+	var previous_radius := -1.0
+	for speed in [110.0, 155.0, 200.0, 260.0]:
+		var rate: float = AERO.load_limited_pitch_rate(speed, 10.0)
+		var radius: float = speed / rate
+		if rate > previous_rate:
+			_fail("pitch rate must not rise with speed, at %f m/s" % speed)
+		if radius <= previous_radius:
+			_fail("turn radius must grow with speed, at %f m/s" % speed)
+		_assert_approx(
+			AERO.load_factor(speed, rate),
+			AERO.LOAD_LIMIT_G,
+			"a limited pitch rate pulls exactly the limit at %f m/s" % speed
+		)
+		previous_rate = rate
+		previous_radius = radius
+
+	# A gentle command must pass through untouched.
+	_assert_approx(
+		AERO.load_limited_pitch_rate(155.0, 0.1),
+		0.1,
+		"the limiter leaves a gentle command alone"
+	)
+	# And it must work symmetrically, or pushing behaves differently to pulling.
+	_assert_approx(
+		AERO.load_limited_pitch_rate(260.0, -10.0),
+		-AERO.load_limited_pitch_rate(260.0, 10.0),
+		"the load limiter is symmetric"
+	)
+
+
+func _envelope() -> void:
+	# The mush point is derived from the lift curve, so retuning lift moves it
+	# rather than leaving a stale constant behind.
+	var mush: float = AERO.mush_speed()
+	if mush >= 90.0:
+		_fail("the mush point must sit below the cruise envelope, got %f m/s" % mush)
+	if mush <= 30.0:
+		_fail("a mush point this low is unreachable and the degraded state is dead code")
+
+	_assert_approx(AERO.mush_fraction(300.0), 0.0, "no mush in the cruise")
+	_assert_approx(AERO.mush_fraction(mush), 1.0, "total mush at the mush speed")
+	if AERO.mush_fraction(110.0) <= 0.0:
+		_fail("the degraded state must begin to be felt below 110 m/s")
+
+	# Level flight must be possible across the whole stated envelope, and must
+	# need more alpha the slower it is flown.
+	var slow := _trim_alpha(90.0)
+	var fast := _trim_alpha(260.0)
+	if slow <= fast:
+		_fail("slower flight must need more alpha")
+	if slow >= deg_to_rad(AERO.STALL_ALPHA_DEGREES):
+		_fail("the envelope floor must not itself be a stall")
+
+	# Angle of attack is read off the body velocity; pitching the nose up
+	# without changing the flight path must show as positive alpha.
+	var angles: Vector2 = AERO.alpha_beta(Vector3(100.0, -10.0, 0.0))
+	if angles.x <= 0.0:
+		_fail("velocity below the nose must read as positive alpha")
+	var slipping: Vector2 = AERO.alpha_beta(Vector3(100.0, 0.0, 10.0))
+	if slipping.y <= 0.0:
+		_fail("velocity out to the right must read as positive sideslip")
+	_assert_approx(AERO.alpha_beta(Vector3(100.0, 0.0, 0.0)).x, 0.0, "flying along the nose is zero alpha")
+
+	# The ceiling is soft: thrust and lift fade rather than the aircraft
+	# striking a limit.
+	_assert_approx(AERO.altitude_falloff(0.0, 6000.0), 1.0, "full performance on the deck")
+	if AERO.altitude_falloff(6000.0, 6000.0) >= AERO.altitude_falloff(3000.0, 6000.0):
+		_fail("performance must fall away with altitude")
+	if AERO.altitude_falloff(6000.0, 6000.0) <= 0.0:
+		_fail("the ceiling must be soft, not a wall")
+
+
+## The angle of attack that holds level flight at a given speed.
+func _trim_alpha(speed: float) -> float:
+	var needed: float = AERO.GRAVITY / (AERO.AERO_AUTHORITY * speed * speed)
+	return needed / AERO.CL_SLOPE
+
+
+func _assert_approx(actual: float, expected: float, label: String) -> void:
+	if absf(actual - expected) > 0.001:
+		_fail("%s: expected %f, got %f" % [label, expected, actual])
+
+
+func _fail(message: String) -> void:
+	push_error(message)
+	quit(1)

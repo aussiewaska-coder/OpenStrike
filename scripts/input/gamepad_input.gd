@@ -27,11 +27,19 @@ const ACTION_ZOOM_OUT := &"camera_zoom_out"
 ## they do are bound to the face buttons instead of making the panel navigable.
 const ACTION_FLIGHT_MODE := &"flight_mode_toggle"
 const ACTION_SETTINGS := &"settings_panel"
+## B is the only face button the existing scheme leaves free.
+const ACTION_SWITCH_AIRCRAFT := &"switch_aircraft"
 ## Held, not pressed: the right stick looks around while R1 is down and the view
 ## returns when it is let go.
 const ACTION_FREE_LOOK := &"free_look"
 const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
+## The analog triggers again, read as a throttle rather than a camera sweep.
+## Throttle needs a proportional axis and an afterburner detent, which the
+## shoulder buttons cannot give; the orbit sweep those triggers carry has no
+## fixed-wing meaning, so the jet reads the same hardware differently.
+const ACTION_THROTTLE_DOWN := &"throttle_down"
+const ACTION_THROTTLE_UP := &"throttle_up"
 
 const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_CAMERA_TRAVEL_TOGGLE,
@@ -42,6 +50,7 @@ const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_ZOOM_OUT,
 	ACTION_FLIGHT_MODE,
 	ACTION_SETTINGS,
+	ACTION_SWITCH_AIRCRAFT,
 ]
 
 var active_device := -1
@@ -116,6 +125,16 @@ func get_camera_orbit_axis() -> float:
 	var left_strength := Input.get_action_strength(ACTION_CAMERA_ORBIT_LEFT)
 	var right_strength := Input.get_action_strength(ACTION_CAMERA_ORBIT_RIGHT)
 	return clampf(right_strength - left_strength, -1.0, 1.0)
+
+
+## Positive opens the throttle, negative closes it. This is a rate, not a
+## position: the triggers move a throttle that then stays where it is put.
+func get_throttle_axis() -> float:
+	if not is_controller_ready():
+		return 0.0
+	var open_strength := Input.get_action_strength(ACTION_THROTTLE_UP)
+	var close_strength := Input.get_action_strength(ACTION_THROTTLE_DOWN)
+	return clampf(open_strength - close_strength, -1.0, 1.0)
 
 
 func requires_controller_attention() -> bool:
@@ -213,8 +232,11 @@ func _register_input_actions() -> void:
 	_add_axis_action(ACTION_AIM_BACK, JoyAxis.JOY_AXIS_RIGHT_Y, 1.0)
 	_add_axis_action(ACTION_CAMERA_ORBIT_LEFT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
+	_add_axis_action(ACTION_THROTTLE_UP, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
+	_add_axis_action(ACTION_THROTTLE_DOWN, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
 	_add_button_action(ACTION_FLIGHT_MODE, JoyButton.JOY_BUTTON_Y)
 	_add_button_action(ACTION_SETTINGS, JoyButton.JOY_BUTTON_X)
+	_add_button_action(ACTION_SWITCH_AIRCRAFT, JoyButton.JOY_BUTTON_B)
 	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	# The cannon moves off R1, which is now free look. Nothing fires yet, so
 	# this costs nothing today.
