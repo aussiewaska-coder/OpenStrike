@@ -189,10 +189,27 @@ func _build_chunks(world_size: float) -> void:
 	var chunk_size := world_size / float(chunk_count)
 	var spacing := chunk_size / float(chunk_resolution - 1)
 	for cz in range(chunk_count):
+		# A row of chunk meshes is built across the worker pool. Built on the
+		# main thread this cost 212 to 460 ms a row on device -- the load
+		# sequence ran at 3 to 5 frames a second until all 144 were done.
+		var row: Array = []
+		row.resize(chunk_count)
+		var row_origin_z := -world_size * 0.5 + float(cz) * chunk_size
+		var group := WorkerThreadPool.add_group_task(
+			func(index: int) -> void:
+				var task_origin_x := -world_size * 0.5 + float(index) * chunk_size
+				row[index] = _build_chunk_surface(task_origin_x, row_origin_z, spacing, world_size),
+			chunk_count,
+			-1,
+			true
+		)
+		while not WorkerThreadPool.is_group_task_completed(group):
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_group_task_completion(group)
 		for cx in range(chunk_count):
 			var origin_x := -world_size * 0.5 + float(cx) * chunk_size
-			var origin_z := -world_size * 0.5 + float(cz) * chunk_size
-			var mesh := _build_chunk_mesh(origin_x, origin_z, chunk_size, spacing, world_size)
+			var origin_z := row_origin_z
+			var mesh := _mesh_from_surface(row[cx])
 			var material := StandardMaterial3D.new()
 			material.albedo_texture = _overview_texture
 			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -213,13 +230,14 @@ func _build_chunks(world_size: float) -> void:
 				"detailed": false,
 				"buildings": null,
 			})
-		# Yield a frame per row so a 144-chunk build cannot trip Android's ANR.
 		await get_tree().process_frame
 
 
-func _build_chunk_mesh(
-	origin_x: float, origin_z: float, chunk_size: float, spacing: float, world_size: float
-) -> ArrayMesh:
+## Runs on a worker thread: samples the height field and lays out the surface
+## arrays. Only turning those arrays into an ArrayMesh stays on the main thread.
+func _build_chunk_surface(
+	origin_x: float, origin_z: float, spacing: float, world_size: float
+) -> Array:
 	var side := chunk_resolution
 	var heights := PackedFloat32Array()
 	heights.resize(side * side)
@@ -266,7 +284,13 @@ func _build_chunk_mesh(
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_INDEX] = indices
+	return arrays
+
+
+func _mesh_from_surface(arrays: Array) -> ArrayMesh:
 	var mesh := ArrayMesh.new()
+	if arrays.is_empty():
+		return mesh
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
 
@@ -350,8 +374,13 @@ func set_quality(level: Quality) -> void:
 func _apply_memory_budget() -> void:
 	if TileClient.compression_available:
 		return
+	# Measured on device: 317 MB of texture stuttered badly, 104 MB held 111
+	# frames a second. 2048 px everywhere with ten chunks resident lands near
+	# 150 MB, which spends the headroom between those two on detail rather than
+	# leaving it unused. 4096 px is out without a compressor -- one such texture
+	# alone is 45 MB.
 	near_detail_texture_px = mini(near_detail_texture_px, 2048)
-	detail_texture_px = mini(detail_texture_px, 1024)
+	detail_texture_px = mini(detail_texture_px, 2048)
 	max_detail_chunks = mini(max_detail_chunks, 10)
 	near_detail_chunks = mini(near_detail_chunks, 2)
 
