@@ -35,6 +35,10 @@ signal region_ready()
 @export var detail_radius_m := 6000.0
 @export var max_detail_chunks := 16
 @export var detail_update_interval_s := 0.6
+## Requests are serialised through one HTTPRequest, so queueing a dozen only
+## makes the last of them arrive a dozen fetches late -- by which time the
+## aircraft has moved on. Ask for a few and re-rank as they land.
+@export var max_pending_detail := 3
 
 var _height_image: Image
 var _metadata: Dictionary = {}
@@ -397,6 +401,8 @@ func _refresh_detail_chunks() -> void:
 		_ensure_chunk_buildings(chunk)
 		if _pending_detail.has(int(chunk["index"])):
 			continue
+		if _pending_detail.size() >= max_pending_detail:
+			break
 		if chunk["detailed"] and int(chunk.get("tier", 0)) == tier:
 			continue
 		_request_chunk_detail(chunk, tier)

@@ -294,17 +294,39 @@ func fetch_aerial(bounds: Dictionary, pixels: int, server: String = "qld") -> Im
 		return await fetch_aerial(bounds, pixels, "nsw")
 	if body.is_empty():
 		return null
-	var image := Image.new()
-	if image.load_jpg_from_buffer(body) != OK:
-		push_warning("Aerial imagery did not decode for bbox %s" % bbox)
-		return null
-	return await _texture_from(image)
+	return await _texture_from_jpeg(body, bbox)
 
 
 ## Uploading aerial imagery uncompressed costs 12 MB per 2048 px chunk; ETC2
 ## takes that to 2 MB for about 70 ms of CPU, which is what makes a near/far
 ## detail ladder affordable at all. Falling back to uncompressed is fine -- it
 ## only costs memory.
+## Decoding a 2048 px JPEG costs 30 to 46 ms, measured from the device's own
+## telemetry, and on the main thread that is a stutter every time a chunk lands.
+## The decode joins the mipmap build and the format conversion on the worker, so
+## only the upload stays on the main thread.
+func _texture_from_jpeg(body: PackedByteArray, label: String) -> ImageTexture:
+	var result := {"image": null}
+	var task := WorkerThreadPool.add_task(_decode_and_prepare.bind(body, result), true)
+	while not WorkerThreadPool.is_task_completed(task):
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	var image: Image = result["image"]
+	if image == null:
+		push_warning("Aerial imagery did not decode for %s" % label)
+		return null
+	return ImageTexture.create_from_image(image)
+
+
+## Runs on a worker thread.
+func _decode_and_prepare(body: PackedByteArray, result: Dictionary) -> void:
+	var image := Image.new()
+	if image.load_jpg_from_buffer(body) != OK:
+		return
+	_prepare_image(image)
+	result["image"] = image
+
+
 func _texture_from(image: Image) -> ImageTexture:
 	# The mipmap build and the compression run on a worker thread. Together they
 	# cost 73 ms at 2048 px and 188 ms at 4096, measured on device, and on the
