@@ -267,10 +267,11 @@ difference between an aircraft and a spaceship.
 
 Three behaviours fall out of single terms rather than being scripted. Induced
 drag goes as the square of the lift coefficient, so hard turns bleed speed. The
-load limiter caps pitch rate at `n = v * omega / g`, so flying faster is crisper
-but turns wider. Control authority follows dynamic pressure, so low speed is
-mushy. Corner speed is not a chosen number either: it is where the wing's limit
-and the airframe's limit cross, at 155 m/s.
+load limiter caps pitch rate at `n = v * omega / g`, so fast turns are wider.
+Pilot roll and pitch-rate commands stay responsive at low speed; available lift
+still falls with dynamic pressure, so an energy-starved aircraft cannot hold a
+steep level turn. Corner speed is where the wing and airframe limits cross, at
+155 m/s.
 
 The envelope is deliberately compressed to roughly 90-260 m/s. At true Raptor
 speed the 36 km corridor is a sixty-second dash and the terrain cannot stream
@@ -290,8 +291,8 @@ There is no departure. The angle-of-attack limiter eases off nose-up commands
 near the stall and actively pushes past it, the bank ceiling tightens as the
 aircraft slows to whatever the wing can still hold a level turn at, and the
 theatre edge warns and turns the aircraft back rather than walling it. Running
-out of speed still leaves the aircraft mushing and sinking; it just cannot be
-made to depart.
+out of speed still reduces lift and makes the aircraft sink, but it never
+suppresses the pilot's roll or recovery pitch command.
 
 Known limitation: `streamed_terrain.gd` suppresses near-detail imagery above
 45 m/s, which the jet is always above, so low passes render coarser than the

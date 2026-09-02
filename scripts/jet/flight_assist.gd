@@ -47,6 +47,10 @@ const BANK_LEAD_S := 0.2
 ## and departs the aircraft. This is the clamp that stops that.
 const MAX_SIDESLIP_RATE := 0.20
 
+## The level-turn hold fades out as soon as the pilot makes a deliberate pitch
+## command. It must never cancel a recovery input after an energy-bleeding turn.
+const PITCH_HOLD_OVERRIDE_STICK := 0.35
+
 ## The turn-back only exists to stop the player leaving the theatre. It is not a
 ## wall: a hard clamp at 260 m/s stops the aircraft dead and reads as a bug.
 const TURN_BACK_RAMP_M := 900.0
@@ -189,6 +193,8 @@ static func turn_back_bank(
 
 
 ## Roll rate the pilot's stick asks for, after the aircraft's own bank ceiling.
+## Pilot rate authority stays constant across the arcade speed envelope; the
+## wing's available lift still determines what path the aircraft can fly.
 static func commanded_roll_rate(
 	stick: float,
 	maximum_rate: float,
@@ -196,14 +202,13 @@ static func commanded_roll_rate(
 	bank_radians: float,
 	roll_rate: float
 ) -> float:
-	var pilot := stick * maximum_rate * AERO.roll_authority(speed_mps)
+	var pilot := stick * maximum_rate
 	return bank_limited_roll_rate(pilot, bank_radians, roll_rate, speed_mps)
 
 
-## Pitch rate the stick asks for, put through every limit in turn: the pilot's
-## command on top of the bank hold, then the wing's angle-of-attack ceiling,
-## then the airframe's load ceiling. With the stick centred what survives is the
-## level-turn hold.
+## Pitch rate the stick asks for, put through every limit in turn. The automatic
+## level-turn hold exists only near stick centre and fades completely before a
+## deliberate pilot command, so it can never cancel an unload or recovery.
 static func commanded_pitch_rate(
 	stick: float,
 	maximum_rate: float,
@@ -212,6 +217,7 @@ static func commanded_pitch_rate(
 	alpha_radians: float
 ) -> float:
 	var hold := level_turn_pitch_rate(bank_radians, speed_mps)
-	var pilot := stick * maximum_rate * AERO.pitch_authority(speed_mps)
-	var limited := alpha_limited_pitch_rate(hold + pilot, alpha_radians)
+	var pilot := stick * maximum_rate
+	var hold_weight := 1.0 - clampf(absf(stick) / PITCH_HOLD_OVERRIDE_STICK, 0.0, 1.0)
+	var limited := alpha_limited_pitch_rate(hold * hold_weight + pilot, alpha_radians)
 	return AERO.load_limited_pitch_rate(speed_mps, limited)

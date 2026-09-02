@@ -3,13 +3,14 @@ extends RefCounted
 ## Fixed-wing aerodynamics, as accelerations rather than forces.
 ##
 ## The model is a lift curve and a drag polar, not a panel method: each frame
-## the wing produces one lift acceleration along the body's up axis and one drag
-## acceleration back along the velocity, and gravity and thrust do the rest.
+## the wing produces one lift acceleration perpendicular to airflow toward the
+## body's upper side and one drag acceleration back along the velocity, and
+## gravity and thrust do the rest.
 ##
 ## The consequence, and the point of the whole thing: the aircraft has no way to
-## turn except by banking, because the horizontal component of the tilted lift
-## vector is the only sideways force there is. Heading is a result of attitude,
-## never a commanded value.
+## turn except by banking, because the horizontal component of the lift vector
+## is the only sideways force there is. Heading is a result of attitude, never
+## a commanded value.
 ##
 ## Everything here divides through by mass, so 0.5 * air density * wing area /
 ## mass folds into the single AERO_AUTHORITY below. That leaves one number to
@@ -37,7 +38,7 @@ const CL_DECAY_DEGREES := 20.0
 ## is the compressibility rise that actually sets a real aircraft's top speed --
 ## reproduced here at our compressed scale so the last of the speed is hard won.
 const CD0 := 0.067962
-const K_INDUCED := 0.11
+const K_INDUCED := 0.055
 const CD_WAVE := 0.076438
 const DRAG_DIVERGENCE_MPS := 180.0
 
@@ -54,19 +55,10 @@ const THRUST_IDLE_G := 0.05
 
 const LOAD_LIMIT_G := 9.0
 
-## How far above the mush speed the degraded state is still felt, as a multiple
-## of that speed. Wide enough that running the speed down is a gradual loss of
-## the aircraft rather than a cliff.
-const MUSH_BAND := 1.2
-
 ## Best turn rate, and the speed the whole model is pinned to. Below it the
 ## wing runs out of lift first; above it the load limiter binds first. That
 ## crossing is what corner speed means.
 const CORNER_SPEED_MPS := 155.0
-
-## Roll is not load limited the way pitch is, so it keeps sharpening past corner
-## speed. This is the "responsive but wider" feel of flying fast.
-const MAX_ROLL_AUTHORITY := 1.5
 
 
 ## Lift coefficient. Linear to the stall angle, then falling away -- the model
@@ -96,7 +88,7 @@ static func drag_coefficient(lift_c: float, speed_mps: float) -> float:
 	return CD0 + K_INDUCED * lift_c * lift_c + CD_WAVE * wave_drag(speed_mps)
 
 
-## Lift acceleration along the body's up axis, in m/s^2.
+## Lift acceleration magnitude, in m/s^2.
 static func lift_acceleration(speed_mps: float, alpha_radians: float) -> float:
 	var lift_c := lift_coefficient(alpha_radians)
 	return AERO_AUTHORITY * speed_mps * speed_mps * lift_c
@@ -131,19 +123,6 @@ static func spool(current: float, commanded: float, response: float, delta: floa
 	return lerpf(current, commanded, 1.0 - exp(-response * delta))
 
 
-## Control effectiveness, which follows dynamic pressure and so goes as the
-## square of speed. This single term is what makes low-speed flight mushy.
-static func pitch_authority(speed_mps: float) -> float:
-	var ratio := (speed_mps * speed_mps) / (CORNER_SPEED_MPS * CORNER_SPEED_MPS)
-	return clampf(ratio, 0.0, 1.0)
-
-
-## Roll keeps sharpening past corner speed, where pitch has saturated.
-static func roll_authority(speed_mps: float) -> float:
-	var ratio := (speed_mps * speed_mps) / (CORNER_SPEED_MPS * CORNER_SPEED_MPS)
-	return clampf(ratio, 0.0, MAX_ROLL_AUTHORITY)
-
-
 ## The most G the wing can generate at this speed, whatever the pilot asks for.
 static func aerodynamic_load_limit(speed_mps: float) -> float:
 	return AERO_AUTHORITY * speed_mps * speed_mps * CL_MAX / GRAVITY
@@ -171,16 +150,6 @@ static func mush_speed() -> float:
 	return sqrt(GRAVITY / (AERO_AUTHORITY * CL_MAX))
 
 
-## How deep into the degraded low-speed state the aircraft is, 0 to 1. It is
-## total at the mush speed and has faded out MUSH_BAND above it, which puts the
-## first hint of it around 114 m/s -- below the cruise envelope, but reachable
-## by anyone who lets the speed decay.
-static func mush_fraction(speed_mps: float) -> float:
-	var floor_speed := mush_speed()
-	var band := maxf(floor_speed * MUSH_BAND, 0.001)
-	return 1.0 - clampf((speed_mps - floor_speed) / band, 0.0, 1.0)
-
-
 ## Angle of attack and sideslip, from the velocity expressed in body axes.
 ## The airframe's nose is local +X, its up +Y and its right wing +Z.
 static func alpha_beta(velocity_body: Vector3) -> Vector2:
@@ -191,11 +160,25 @@ static func alpha_beta(velocity_body: Vector3) -> Vector2:
 	return Vector2(alpha, beta)
 
 
+## Lift is normal to the airflow, toward the wing's upper side. Applying it
+## directly along body-up gives it a rearward component at positive angle of
+## attack, making lift itself destroy energy on top of induced drag.
+static func lift_direction(body_up: Vector3, velocity: Vector3) -> Vector3:
+	if velocity.length_squared() < 0.0001:
+		return body_up.normalized()
+	var airflow := velocity.normalized()
+	var perpendicular := body_up - airflow * body_up.dot(airflow)
+	if perpendicular.length_squared() < 0.0001:
+		return body_up.normalized()
+	return perpendicular.normalized()
+
+
 ## The whole force balance, as one acceleration in world space.
 ##
-## This is the model: thrust along the nose, lift along the body's up, drag back
-## along the velocity, and gravity. Nothing here knows what a turn is. Turning
-## happens because banking tilts `up`, and with it the lift vector.
+## This is the model: thrust along the nose, lift normal to airflow toward the
+## body's upper side, drag back along the velocity, and gravity. Nothing here
+## knows what a turn is. Turning happens because banking tilts the wing and with
+## it the lift vector.
 static func flight_acceleration(
 	nose: Vector3,
 	up: Vector3,
@@ -207,7 +190,11 @@ static func flight_acceleration(
 	var speed := velocity.length()
 	var lift := lift_acceleration(speed, alpha_radians) * falloff
 	var drag := drag_acceleration(speed, alpha_radians)
-	var acceleration := nose * (thrust * falloff) + up * lift + Vector3.DOWN * GRAVITY
+	var acceleration := (
+		nose * (thrust * falloff)
+		+ lift_direction(up, velocity) * lift
+		+ Vector3.DOWN * GRAVITY
+	)
 	if speed > 0.01:
 		acceleration -= velocity.normalized() * drag
 	return acceleration

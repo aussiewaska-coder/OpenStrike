@@ -67,10 +67,16 @@ func _bank_hold() -> void:
 		0.0,
 		"a centred stick commands no roll, which is what holds the bank"
 	)
-	var quick: float = ASSIST.commanded_roll_rate(1.0, 1.8, 260.0, 0.0, 0.0)
-	var slow: float = ASSIST.commanded_roll_rate(1.0, 1.8, CRUISE, 0.0, 0.0)
-	if quick <= slow:
-		_fail("roll must be crisper at speed: %f at 260 against %f at cruise" % [quick, slow])
+	_assert_approx(
+		ASSIST.commanded_roll_rate(1.0, 1.8, 70.0, 0.0, 0.0),
+		1.8,
+		"low speed must not suppress the pilot's roll-rate command"
+	)
+	_assert_approx(
+		ASSIST.commanded_pitch_rate(-1.0, 0.95, 79.0, deg_to_rad(66.0), deg_to_rad(18.0)),
+		-0.95,
+		"a hard-turn hold must not cancel the pilot's nose-down recovery"
+	)
 
 
 ## The bank ceiling. Without it a rate-commanded roll goes straight past

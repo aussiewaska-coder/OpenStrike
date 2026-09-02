@@ -45,7 +45,7 @@ signal boundary_warning(urgency: float)
 ## Deliberately below the real aircraft's 200 degrees per second. The assist
 ## caps bank at 80 degrees, so the whole usable range has to take about a
 ## second to cross rather than a third of one, or the stick is uncontrollable.
-@export var maximum_roll_rate := 1.8          ## rad/s at full stick, before authority
+@export var maximum_roll_rate := 1.8          ## rad/s at full stick
 @export var maximum_pitch_rate := 0.95        ## rad/s at full stick, before limits
 @export var yaw_trim_rate := 0.22             ## rad/s, trigger rudder authority
 @export var sideslip_damping_gain := 0.8
@@ -370,6 +370,10 @@ func throttle_percent() -> float:
 
 func afterburner_fraction() -> float:
 	return clampf((throttle - 1.0) / maxf(afterburner_travel, 0.001), 0.0, 1.0)
+
+
+func body_rates() -> Vector3:
+	return Vector3(_roll_rate, _pitch_rate, _yaw_rate)
 
 
 func _find_visual() -> void:

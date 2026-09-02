@@ -55,7 +55,7 @@ and because it keeps the entire flight model provable without running the game:
 
 | File | Kind | Responsibility |
 |---|---|---|
-| `scripts/jet/aero_model.gd` | pure statics | Lift coefficient against angle of attack, drag polar, thrust spool, control authority against dynamic pressure, load-limited pitch rate |
+| `scripts/jet/aero_model.gd` | pure statics | Lift coefficient against angle of attack, drag polar, thrust spool, aerodynamic and structural load limits |
 | `scripts/jet/flight_assist.gd` | pure statics | Bank hold, angle-of-attack limiter, turn coordination, boundary turn-back |
 | `scripts/jet/jet_controller.gd` | `Node3D` | Owns state, integrates forces, drives the visual |
 
@@ -81,15 +81,19 @@ v_body = basis.inverse() * velocity
 alpha  = atan2(-v_body.y, v_body.x)              # angle of attack
 beta   = atan2( v_body.z, v_body.x)              # sideslip
 
+lift_dir = normalize(up - v_hat * dot(up, v_hat)) # normal to airflow
+
 accel  = nose * thrust                           # spooled, never instant
-       + up * lift_authority * v^2 * Cl(alpha)
+       + lift_dir * lift_authority * v^2 * Cl(alpha)
        - v_hat * (Cd0 + k * Cl^2) * v^2 * drag_authority
        + Vector3.DOWN * GRAVITY
 ```
 
 The aerodynamic constants are folded: `0.5 * rho * S / m` becomes a single
 `lift_authority`, so the model yields acceleration directly and there is one
-number to tune per axis rather than four.
+number to tune per axis rather than four. Projecting body-up perpendicular to
+velocity is essential: lift does no work along the flight path, and induced
+drag is the only aerodynamic term that deliberately removes manoeuvre energy.
 
 ### What falls out of this rather than being scripted
 
@@ -103,20 +107,22 @@ Three further behaviours come from single terms:
 
 - **High-G turns bleed speed** — `k * Cl^2` is induced drag. Pulling G raises
   the lift coefficient, which raises drag quadratically.
-- **Overspeed is more responsive but turns wider** — the load limiter caps
-  pitch rate at `n = v * omega / g <= g_limit`, so the same stick gives a lower
-  pitch rate at higher speed.
-- **Low speed is mushy** — control authority scales with dynamic pressure, so
-  it collapses as speed falls.
+- **Overspeed turns wider** — the load limiter caps pitch rate at
+  `n = v * omega / g <= g_limit`, so the same stick gives a lower pitch rate at
+  higher speed.
+- **Low speed loses flight-path authority, not stick response** — pilot roll
+  and pitch-rate commands remain available while the wing's lift still falls
+  with dynamic pressure.
 
 ### Degraded low-speed state
 
 There is no departure. Flight assist is always on, per the design decision.
 
-Below roughly 110 m/s the aircraft enters a degraded state that is emergent
-rather than scripted: control authority falls with `v^2`, and lift can no
-longer hold the aircraft's weight, so the nose mushes and the aircraft sinks.
-Recovery is to unload and let it accelerate.
+At low speed the degraded state is aerodynamic rather than an input modifier:
+lift can no longer hold a steep level turn, so the aircraft sinks. Roll and
+nose-down recovery commands retain their full rate authority, and deliberate
+pitch input overrides the automatic level-turn hold instead of fighting it.
+Recovery is to unload and let the aircraft accelerate.
 
 The lift coefficient curve still falls off past the stall angle, so the model
 can express a stall. The angle-of-attack limiter simply prevents the aircraft
@@ -136,7 +142,7 @@ corridor crossing takes two to four minutes and the coastline stays readable.
 - **Bank holds; it does not auto-level.** With the stick centred, roll rate
   damps to zero and the bank stays where the pilot left it.
 - **Pitch holds flight-path angle** with the stick centred, rather than
-  snapping to the horizon.
+  snapping to the horizon. Deliberate pitch input fades this hold completely.
 - **Angle-of-attack limiter** caps commanded pitch rate so alpha never reaches
   the stall angle.
 - **Load limiter** at 9 G.
@@ -206,8 +212,8 @@ carry it as a third entry without further structural work.
 
 The fixed-wing HUD keeps throttle percentage and afterburner state visible in
 both cockpit and external views. Detailed airspeed, altitude, vertical speed,
-attitude, load, aerodynamic angles, and raw control inputs are available through
-the loopback telemetry stream for flight-model diagnosis.
+attitude, load, aerodynamic angles, raw control inputs, and achieved body rates
+are available through the loopback telemetry stream for flight-model diagnosis.
 
 ## Testing
 
@@ -215,9 +221,9 @@ The pure modules are tested headless, in the established `SceneTree` style.
 
 | Test | Asserts |
 |---|---|
-| `tests/aero_model_test.gd` | Lift coefficient rises to the stall angle then falls; induced drag follows `Cl^2`; thrust spools monotonically toward its command; load-limited pitch rate *decreases* as speed rises; control authority follows dynamic pressure |
-| `tests/flight_assist_test.gd` | Bank holds with the stick centred; the limiter never permits alpha past the stall angle; coordinated yaw equals `g * tan(bank) / v`; turn-back bias is exactly zero inside the margin and grows monotonically outside it |
-| `tests/jet_controls_test.gd` | Integration: a full roll-and-pull from level flight produces a turn *and* loses speed |
+| `tests/aero_model_test.gd` | Lift coefficient rises to the stall angle then falls; induced drag follows `Cl^2`; thrust spools monotonically toward its command; load-limited pitch rate *decreases* as speed rises |
+| `tests/flight_assist_test.gd` | Bank holds near stick centre; low speed does not suppress pilot rate commands; recovery input overrides turn hold; angle, coordination, and boundary limits remain active |
+| `tests/jet_controls_test.gd` | Integration: a full roll-and-pull produces a turn and loses speed; full opposite controls recover immediately afterward |
 
 There is no Godot binary on the development machine, so these are written to be
 run by hand:

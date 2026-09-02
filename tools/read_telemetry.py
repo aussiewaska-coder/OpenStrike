@@ -55,6 +55,7 @@ def main() -> int:
                     jet = (
                         " | F22 pad %s raw L%+.2f,%+.2f R%+.2f,%+.2f "
                         "thr %3.0f%% ab %2.0f%% in r%+.2f p%+.2f y%+.2f t%+.2f "
+                        "rate r%+5.1f p%+5.1f y%+5.1f "
                         "spd %5.1f alt %5.0f vz %+5.1f bank %+5.1f alpha %+4.1f g %+.1f"
                         % (
                             sample.get("controller_name", "?"),
@@ -68,6 +69,9 @@ def main() -> int:
                             sample.get("jet_pitch_input", 0),
                             sample.get("jet_rudder_input", 0),
                             sample.get("jet_throttle_input", 0),
+                            sample.get("jet_roll_rate_degrees_s", 0),
+                            sample.get("jet_pitch_rate_degrees_s", 0),
+                            sample.get("jet_yaw_rate_degrees_s", 0),
                             sample.get("jet_airspeed_mps", 0),
                             sample.get("jet_altitude_agl_m", 0),
                             sample.get("jet_vertical_speed_mps", 0),

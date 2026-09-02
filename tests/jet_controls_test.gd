@@ -53,6 +53,7 @@ func _init() -> void:
 	_level_flight_stays_level()
 	_bank_produces_a_turn()
 	_a_hard_turn_costs_speed()
+	_controls_recover_after_a_hard_turn()
 	_the_bank_is_held()
 	_throttle_sets_speed_not_thrust()
 	_it_cannot_be_departed()
@@ -193,10 +194,40 @@ func _a_hard_turn_costs_speed() -> void:
 		_fail("a hard turn must cost speed: %.1f turning against %.1f straight" % [turning_speed, straight_speed])
 	if turning_speed >= CRUISE:
 		_fail("a sustained hard turn must bleed below where it started, got %.1f" % turning_speed)
+	if turning_speed < 125.0:
+		_fail("an eight-second hard turn dumped out of the arcade envelope, got %.1f" % turning_speed)
 	if turning.peak_load <= 3.0:
 		_fail("a full pull must actually load the airframe, peaked at %.1f G" % turning.peak_load)
 	if turning.peak_load > AERO.LOAD_LIMIT_G + 0.5:
 		_fail("the load limiter let the airframe reach %.1f G" % turning.peak_load)
+
+
+## A maximum turn must not leave the aircraft trapped behind its assists. Full
+## opposite roll and nose-down stick are recovery commands and must remain
+## immediately authoritative even after the manoeuvre has bled energy.
+func _controls_recover_after_a_hard_turn() -> void:
+	var flight := _start(CRUISE)
+	for _step_index in range(int(8.0 / STEP)):
+		_step(flight, 1.0, 1.0, 1.0)
+
+	var speed_before := flight.velocity.length()
+	var bank_before := JET.bank_angle(flight.basis)
+	var path_before := asin(clampf(flight.velocity.normalized().y, -1.0, 1.0))
+	for _step_index in range(int(1.0 / STEP)):
+		_step(flight, -1.0, -1.0, 1.0)
+
+	var bank_after := JET.bank_angle(flight.basis)
+	var path_after := asin(clampf(flight.velocity.normalized().y, -1.0, 1.0))
+	var bank_recovery := bank_before - bank_after
+	var path_recovery := path_before - path_after
+	if bank_recovery < deg_to_rad(70.0):
+		_fail("opposite stick after a hard turn removed only %.1f degrees of bank at %.1f m/s" % [
+			rad_to_deg(bank_recovery), speed_before
+		])
+	if path_recovery < deg_to_rad(6.0):
+		_fail("nose-down stick after a hard turn changed the path only %.1f degrees at %.1f m/s" % [
+			rad_to_deg(path_recovery), speed_before
+		])
 
 
 ## Release the stick mid-turn and the aircraft must keep its bank and keep
@@ -265,8 +296,6 @@ func _it_cannot_be_departed() -> void:
 	var final_speed := flight.velocity.length()
 	if final_speed > 110.0:
 		_fail("a sustained maximum pull should bleed the aircraft right down, got %.1f" % final_speed)
-	if AERO.mush_fraction(final_speed) <= 0.0:
-		_fail("the aircraft should finish in the degraded low-speed state")
 
 
 func _fail(message: String) -> void:

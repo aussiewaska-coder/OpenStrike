@@ -553,6 +553,7 @@ func _telemetry_sample() -> Dictionary:
 		"tile_failures": TileClient.failures,
 	}
 	if _flying_jet:
+		var body_rates: Vector3 = jet_anchor.body_rates()
 		sample.merge({
 			"jet_airspeed_mps": jet_anchor.airspeed(),
 			"jet_vertical_speed_mps": jet_anchor.velocity.y,
@@ -568,6 +569,9 @@ func _telemetry_sample() -> Dictionary:
 			"jet_pitch_input": jet_anchor.pitch_input,
 			"jet_rudder_input": jet_anchor.rudder_input,
 			"jet_throttle_input": jet_anchor.throttle_input,
+			"jet_roll_rate_degrees_s": rad_to_deg(body_rates.x),
+			"jet_pitch_rate_degrees_s": rad_to_deg(body_rates.y),
+			"jet_yaw_rate_degrees_s": rad_to_deg(body_rates.z),
 		}, true)
 	if cannon_weapon != null and cannon_weapon.aim != null:
 		sample.merge({

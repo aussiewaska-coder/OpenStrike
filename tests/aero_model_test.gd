@@ -13,8 +13,8 @@ const KNOT_MPS := 0.5144
 func _init() -> void:
 	_lift_curve()
 	_drag_polar()
+	_lift_is_perpendicular_to_flight()
 	_thrust()
-	_authority()
 	_turn_limits()
 	_envelope()
 	print("AERO_MODEL_TEST_PASS")
@@ -80,6 +80,19 @@ func _drag_polar() -> void:
 		_fail("a sustained 9G turn must lose speed even in afterburner")
 
 
+func _lift_is_perpendicular_to_flight() -> void:
+	var velocity := Vector3(100.0, -30.0, 10.0)
+	var direction := AERO.lift_direction(Vector3.UP, velocity)
+	_assert_approx(
+		direction.dot(velocity.normalized()),
+		0.0,
+		"lift must do no work along the flight path"
+	)
+	if direction.dot(Vector3.UP) <= 0.0:
+		_fail("lift must still act toward the wing's upper side")
+	_assert_approx(direction.length(), 1.0, "lift direction is normalized")
+
+
 func _thrust() -> void:
 	var idle: float = AERO.thrust_acceleration(0.0, 0.0)
 	var military: float = AERO.thrust_acceleration(1.0, 0.0)
@@ -101,22 +114,6 @@ func _thrust() -> void:
 	if setting <= 0.98:
 		_fail("the engine must reach its commanded setting, got %f" % setting)
 	_assert_approx(AERO.spool(0.5, 0.5, 1.6, 0.016), 0.5, "a matched command does not move the engine")
-
-
-func _authority() -> void:
-	# Control effectiveness follows dynamic pressure, which is the single term
-	# that makes low-speed flight mushy.
-	if AERO.pitch_authority(90.0) >= 0.4:
-		_fail("the envelope floor must be mushy, got %f" % AERO.pitch_authority(90.0))
-	_assert_approx(AERO.pitch_authority(AERO.CORNER_SPEED_MPS), 1.0, "corner speed has full pitch authority")
-	_assert_approx(AERO.pitch_authority(260.0), 1.0, "pitch authority saturates above corner speed")
-
-	# Roll is not load limited the way pitch is, so it keeps sharpening. This is
-	# what "fast is more responsive but turns wider" actually means.
-	if AERO.roll_authority(260.0) <= AERO.roll_authority(AERO.CORNER_SPEED_MPS):
-		_fail("roll must keep sharpening past corner speed")
-	if AERO.roll_authority(400.0) > AERO.MAX_ROLL_AUTHORITY + 0.0001:
-		_fail("roll authority must stay bounded")
 
 
 func _turn_limits() -> void:
@@ -173,11 +170,6 @@ func _envelope() -> void:
 		_fail("the mush point must sit below the cruise envelope, got %f m/s" % mush)
 	if mush <= 30.0:
 		_fail("a mush point this low is unreachable and the degraded state is dead code")
-
-	_assert_approx(AERO.mush_fraction(300.0), 0.0, "no mush in the cruise")
-	_assert_approx(AERO.mush_fraction(mush), 1.0, "total mush at the mush speed")
-	if AERO.mush_fraction(110.0) <= 0.0:
-		_fail("the degraded state must begin to be felt below 110 m/s")
 
 	# Level flight must be possible across the whole stated envelope, and must
 	# need more alpha the slower it is flown.
