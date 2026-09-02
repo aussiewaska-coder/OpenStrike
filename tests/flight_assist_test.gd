@@ -225,8 +225,10 @@ func _sideslip() -> void:
 	)
 	if ASSIST.rudder_yaw_rate(1.0, deg_to_rad(14.0), -0.2, 1.4, 0.28) >= 0.1:
 		_fail("directional stability must oppose rudder-created sideslip")
-	if ASSIST.rudder_yaw_rate(0.25, deg_to_rad(14.0), 0.0, 1.4, 0.28) < 0.14:
-		_fail("quarter trigger must produce useful rudder authority")
+	if ASSIST.rudder_input_response(0.25) < 0.6:
+		_fail("quarter trigger must be exaggerated for useful gamepad rudder authority")
+	if ASSIST.rudder_yaw_rate(0.25, deg_to_rad(28.0), 0.0, 2.4, 0.8) < 0.65:
+		_fail("quarter trigger must produce a decisive yaw command")
 	_assert_approx(
 		ASSIST.rudder_roll_rate(1.0, 0.08),
 		0.08,

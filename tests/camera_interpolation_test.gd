@@ -29,6 +29,14 @@ func _run() -> void:
 		jet.has_method("get_interpolated_focus_position"),
 		"camera focus must read the aircraft's displayed interpolated transform"
 	)
+	assert(
+		jet.has_method("get_interpolated_airframe_transform"),
+		"external view dynamics must read interpolated airframe attitude"
+	)
+	assert(
+		jet.has_method("get_interpolated_cockpit_transform"),
+		"cockpit view must read interpolated position and attitude"
+	)
 	jet.free()
 
 	Engine.physics_ticks_per_second = 10

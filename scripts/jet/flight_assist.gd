@@ -149,7 +149,7 @@ static func rudder_yaw_rate(
 	damping_gain: float,
 	maximum_rate: float
 ) -> float:
-	var shaped_input := signf(input) * sqrt(absf(input))
+	var shaped_input := rudder_input_response(input)
 	var target_beta := -shaped_input * maximum_sideslip_radians
 	return clampf(
 		(beta_radians - target_beta) * damping_gain,
@@ -161,7 +161,14 @@ static func rudder_yaw_rate(
 ## A yawed vertical tail also produces a smaller rolling moment. The coupling
 ## remains secondary to aileron authority but makes slips and rolls interact.
 static func rudder_roll_rate(input: float, coupling_rate: float) -> float:
-	return signf(input) * sqrt(absf(input)) * coupling_rate
+	return rudder_input_response(input) * coupling_rate
+
+
+## Triggers have little physical travel compared with pedals. A 0.35 power
+## curve makes the middle of that travel decisive while retaining fine control
+## around neutral and the original sign.
+static func rudder_input_response(input: float) -> float:
+	return signf(input) * pow(absf(clampf(input, -1.0, 1.0)), 0.35)
 
 
 ## Shortest body-axis roll back to a level horizon. Below flying speed the

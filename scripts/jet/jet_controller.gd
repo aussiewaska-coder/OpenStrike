@@ -46,10 +46,10 @@ signal boundary_warning(urgency: float)
 ## revolution remains controllable on a thumbstick.
 @export var maximum_roll_rate := 1.8          ## rad/s at full stick
 @export var maximum_pitch_rate := 0.95        ## rad/s at full stick, before limits
-@export var maximum_rudder_yaw_rate := 0.45   ## rad/s, trigger rudder authority
-@export var maximum_rudder_sideslip_degrees := 18.0
-@export var rudder_roll_coupling_rate := 0.08 ## rad/s at full rudder
-@export var sideslip_damping_gain := 1.8
+@export var maximum_rudder_yaw_rate := 0.8    ## rad/s, exaggerated trigger authority
+@export var maximum_rudder_sideslip_degrees := 28.0
+@export var rudder_roll_coupling_rate := 0.12 ## rad/s at full rudder
+@export var sideslip_damping_gain := 2.4
 @export var control_response := 7.0           ## how quickly commanded rates are reached
 
 @export_group("Throttle")
@@ -524,6 +524,15 @@ func get_cockpit_transform() -> Transform3D:
 	return Transform3D(orientation, frame * _cockpit_local)
 
 
+func get_interpolated_cockpit_transform() -> Transform3D:
+	if _visual == null or not _visual.is_inside_tree():
+		return get_cockpit_transform()
+	var frame := _visual.get_global_transform_interpolated()
+	var orientation := frame.basis.orthonormalized()
+	orientation = orientation.rotated(orientation.z, deg_to_rad(cockpit_pitch_degrees))
+	return Transform3D(orientation, frame * _cockpit_local)
+
+
 func get_focus_position() -> Vector3:
 	return _visual.global_position if _visual != null else global_position
 
@@ -533,6 +542,13 @@ func get_interpolated_focus_position() -> Vector3:
 	if not target.is_inside_tree():
 		return target.global_position
 	return target.get_global_transform_interpolated().origin
+
+
+func get_interpolated_airframe_transform() -> Transform3D:
+	var target: Node3D = _visual if _visual != null else self
+	if not target.is_inside_tree():
+		return target.global_transform
+	return target.get_global_transform_interpolated()
 
 
 func get_muzzle_transform() -> Transform3D:

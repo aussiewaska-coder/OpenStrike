@@ -99,7 +99,7 @@ var _camera_orbit_velocity := 0.0
 enum View {COCKPIT, CHASE, ORBIT}
 
 var _view: View = View.CHASE
-var _jet_view: int = JET_CAMERA.Mode.FOLLOW
+var _jet_view: int = JET_CAMERA.Mode.PURSUIT
 var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
 var _orbit_lock := ORBIT_LOCK.new()
@@ -223,7 +223,7 @@ func _switch_aircraft() -> void:
 			Vector3(handover.x, maxf(handover.y, ground + 600.0), handover.z),
 			heading
 		)
-		_jet_view = JET_CAMERA.Mode.FOLLOW
+		_jet_view = JET_CAMERA.Mode.PURSUIT
 	else:
 		helicopter_anchor.global_position = Vector3(
 			handover.x,
@@ -417,14 +417,37 @@ func _update_follow_camera(delta: float) -> void:
 	_apply_follow_camera(delta)
 
 
-## All Raptor cameras are horizon-stable game views. Follow and track trail the
-## actual flight path so sideslip does not whip the camera; isometric uses a
-## fixed compass angle and moves over the ground with the aircraft.
+## Raptor views are authored separately: cockpit inherits the interpolated
+## airframe, while external body and aim targets use independent damped springs.
 func _update_jet_camera(delta: float, snap: bool = false) -> void:
+	var speed: float = jet_anchor.airspeed()
+	var speed_span: float = maxf(
+		jet_anchor.maximum_display_speed - jet_anchor.minimum_display_speed,
+		1.0
+	)
+	var speed_fraction := clampf(
+		(speed - jet_anchor.minimum_display_speed) / speed_span,
+		0.0,
+		1.0
+	)
+	if _jet_view == JET_CAMERA.Mode.COCKPIT:
+		var cockpit: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
+		camera.global_position = cockpit.origin
+		camera.global_basis = Basis.looking_at(cockpit.basis.x, cockpit.basis.y) * _free_look_basis()
+		camera.fov = JET_CAMERA.field_of_view(_jet_view, _camera_zoom, speed_fraction)
+		_look_target = cockpit.origin + cockpit.basis.x * 100.0
+		return
+
 	var focus := _focus_position()
-	var direction := JET_CAMERA.travel_direction(jet_anchor.velocity, jet_anchor.global_basis.x)
+	var airframe: Transform3D = jet_anchor.get_interpolated_airframe_transform()
+	var maximum_camera_pitch := 30.0 if _jet_view == JET_CAMERA.Mode.TRACK else 40.0
+	var direction := JET_CAMERA.flight_direction(
+		jet_anchor.velocity,
+		airframe.basis.x,
+		maximum_camera_pitch
+	)
 	var distance := JET_CAMERA.trailing_distance(
-		jet_anchor.airspeed(),
+		speed,
 		jet_anchor.minimum_display_speed,
 		jet_anchor.maximum_display_speed,
 		jet_camera_distance,
@@ -448,19 +471,26 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		desired_position.y,
 		_ground_height_at(desired_position) + camera_ground_clearance
 	)
-	var target_fov := _zoom_profile.fov(_camera_zoom) + _speed_fov_offset()
+	var desired_look := JET_CAMERA.look_target(
+		_jet_view,
+		focus,
+		jet_anchor.velocity,
+		direction,
+		distance
+	)
+	var target_fov := JET_CAMERA.field_of_view(_jet_view, _camera_zoom, speed_fraction)
 	if snap:
 		camera.global_position = desired_position
-		_look_target = focus
+		_look_target = desired_look
 		camera.fov = target_fov
 	else:
-		var response := 10.0 if _jet_view == JET_CAMERA.Mode.FOLLOW else 6.5
-		var weight := 1.0 - exp(-response * delta)
-		camera.global_position = camera.global_position.lerp(desired_position, weight)
-		_look_target = _look_target.lerp(focus, weight)
+		var position_weight := 1.0 - exp(-JET_CAMERA.position_response(_jet_view) * delta)
+		var aim_weight := 1.0 - exp(-JET_CAMERA.aim_response(_jet_view) * delta)
+		camera.global_position = camera.global_position.lerp(desired_position, position_weight)
+		_look_target = _look_target.lerp(desired_look, aim_weight)
 		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-camera_mode_response * delta))
 	if camera.global_position.distance_squared_to(_look_target) > 0.0001:
-		camera.look_at(_look_target, Vector3.UP)
+		camera.look_at(_look_target, JET_CAMERA.camera_up(_jet_view, airframe.basis.y))
 
 
 ## In travel view L2/R2 sweep around a locked ground point instead of steering
@@ -742,7 +772,7 @@ func _update_attack_reticle() -> void:
 		jet_anchor.throttle_percent() if _flying_jet else 0.0,
 		jet_anchor.afterburner_fraction() if _flying_jet else 0.0
 	)
-	var cockpit_view := not _flying_jet and _view == View.COCKPIT
+	var cockpit_view := _is_cockpit_view()
 	var manual_aim := not _flying_jet and GamepadInput.is_free_look_held()
 	var viewport_size := camera.get_viewport().get_visible_rect().size
 	var manual_position := viewport_size * 0.5
@@ -794,6 +824,10 @@ func _update_cockpit_camera() -> void:
 	# than its own -Z.
 	camera.global_basis = Basis.looking_at(frame.basis.x, Vector3.UP) * _free_look_basis()
 	camera.fov = cockpit_fov + _speed_fov_offset() * 0.55
+
+
+func _is_cockpit_view() -> bool:
+	return _jet_view == JET_CAMERA.Mode.COCKPIT if _flying_jet else _view == View.COCKPIT
 
 
 func _snap_follow_camera() -> void:
@@ -1011,19 +1045,22 @@ func _cycle_jet_view(direction: int) -> void:
 	var count := JET_CAMERA.Mode.size()
 	_jet_view = posmod(_jet_view + direction, count)
 	_free_look = Vector2.ZERO
+	_apply_view_chrome()
 	_snap_follow_camera()
 	match _jet_view:
-		JET_CAMERA.Mode.FOLLOW:
-			status_label.text = "FOLLOW VIEW"
+		JET_CAMERA.Mode.COCKPIT:
+			status_label.text = "COCKPIT VIEW"
+		JET_CAMERA.Mode.PURSUIT:
+			status_label.text = "PURSUIT VIEW"
 		JET_CAMERA.Mode.TRACK:
-			status_label.text = "TRACK VIEW"
+			status_label.text = "TRACKING VIEW"
 		_:
-			status_label.text = "ISOMETRIC GROUND-LOCK VIEW"
+			status_label.text = "TACTICAL GROUND-LOCK VIEW"
 
 
 ## In the cockpit the screen is the HUD and nothing else.
 func _apply_view_chrome() -> void:
-	var external := _flying_jet or _view != View.COCKPIT
+	var external := not _is_cockpit_view()
 	mission_panel.visible = external
 	gamepad_diagnostic.get_parent().visible = external
 

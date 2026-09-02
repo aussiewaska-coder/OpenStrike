@@ -28,13 +28,37 @@ func _init() -> void:
 	var behind := focus + Vector3(0.0, 4.0, 20.0)
 	var orbited := JET_CAMERA.orbited_position(focus, behind, Basis(Vector3.UP, PI * 0.5))
 	assert(is_equal_approx(orbited.distance_to(focus), behind.distance_to(focus)), "look orbit must preserve camera distance")
-	var direction := JET_CAMERA.travel_direction(Vector3(20.0, -40.0, -100.0), Vector3.RIGHT)
-	assert(absf(direction.y) < 0.001, "follow direction must be horizon-stable")
-	var follow := JET_CAMERA.desired_position(JET_CAMERA.Mode.FOLLOW, focus, direction, 50.0, 12.0)
+	assert(JET_CAMERA.Mode.size() == 4, "the F-22 must expose cockpit plus three external views")
+	var direction := JET_CAMERA.flight_direction(Vector3(20.0, 100.0, -100.0), Vector3.RIGHT, 35.0)
+	assert(direction.y > 0.3, "pursuit direction must follow a real climb")
+	assert(direction.y <= sin(deg_to_rad(35.0)) + 0.001, "camera pitch must remain arcade-readable")
+	var follow := JET_CAMERA.desired_position(JET_CAMERA.Mode.PURSUIT, focus, direction, 50.0, 12.0)
 	var track := JET_CAMERA.desired_position(JET_CAMERA.Mode.TRACK, focus, direction, 50.0, 12.0)
 	var isometric := JET_CAMERA.desired_position(JET_CAMERA.Mode.ISOMETRIC, focus, direction, 50.0, 12.0)
 	assert(track.distance_to(focus) > follow.distance_to(focus), "tracking view must frame more of the aircraft's path")
 	assert(isometric.x > focus.x and isometric.z > focus.z, "isometric view must keep a fixed world diagonal")
+	var pursuit_look := JET_CAMERA.look_target(
+		JET_CAMERA.Mode.PURSUIT, focus, Vector3(0.0, 20.0, -180.0), direction, 50.0
+	)
+	assert(pursuit_look.z < focus.z, "pursuit composition must look ahead of the aircraft")
+	assert(JET_CAMERA.field_of_view(JET_CAMERA.Mode.COCKPIT, 1.0, 0.5) > 75.0, "cockpit needs peripheral vision")
+	assert(
+		JET_CAMERA.field_of_view(JET_CAMERA.Mode.PURSUIT, 1.0, 0.5)
+		> JET_CAMERA.field_of_view(JET_CAMERA.Mode.TRACK, 1.0, 0.5),
+		"pursuit must be wider and faster-looking than tracking"
+	)
+	var banked_up := Vector3.RIGHT
+	assert(
+		JET_CAMERA.camera_up(JET_CAMERA.Mode.COCKPIT, banked_up).is_equal_approx(banked_up),
+		"cockpit must inherit full aircraft bank"
+	)
+	var pursuit_up := JET_CAMERA.camera_up(JET_CAMERA.Mode.PURSUIT, banked_up)
+	assert(pursuit_up.y > pursuit_up.x, "external pursuit must show bank without rolling the horizon over")
+	assert(
+		JET_CAMERA.aim_response(JET_CAMERA.Mode.PURSUIT)
+		> JET_CAMERA.position_response(JET_CAMERA.Mode.PURSUIT),
+		"the aim spring must settle before the camera body"
+	)
 	assert(not JET_CAMERA.allows_free_look(JET_CAMERA.Mode.ISOMETRIC), "ground lock must not orbit with right-stick look")
 	print("JET_CAMERA_TEST_PASS")
 	quit()

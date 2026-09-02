@@ -24,10 +24,10 @@ const CRUISE := 175.0
 const MAX_ROLL_RATE := 1.8
 const MAX_PITCH_RATE := 0.95
 const CONTROL_RESPONSE := 7.0
-const SIDESLIP_GAIN := 1.8
-const RUDDER_RATE := 0.45
-const RUDDER_SIDESLIP := 18.0
-const RUDDER_ROLL_RATE := 0.08
+const SIDESLIP_GAIN := 2.4
+const RUDDER_RATE := 0.8
+const RUDDER_SIDESLIP := 28.0
+const RUDDER_ROLL_RATE := 0.12
 const ROLL_IN_SECONDS := 0.75
 
 
@@ -212,9 +212,9 @@ func _rudder_creates_a_recoverable_sideslip() -> void:
 	var path_change := absf(wrapf(path_heading - initial_path, -PI, PI))
 	var slip_with_rudder := absf(flight.beta)
 	var coupled_bank := absf(JET.bank_angle(flight.basis))
-	if nose_change < deg_to_rad(5.0):
+	if nose_change < deg_to_rad(20.0):
 		_fail("full rudder barely yawed the nose, got %.1f degrees" % rad_to_deg(nose_change))
-	if slip_with_rudder < deg_to_rad(5.0):
+	if slip_with_rudder < deg_to_rad(12.0):
 		_fail("rudder steered without producing realistic sideslip, beta %.1f" % rad_to_deg(slip_with_rudder))
 	if path_change >= nose_change * 0.6:
 		_fail("rudder flat-turned the flight path %.1f degrees for %.1f degrees of yaw" % [
