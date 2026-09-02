@@ -22,6 +22,7 @@ extends Node3D
 
 const AERO := preload("res://scripts/jet/aero_model.gd")
 const ASSIST := preload("res://scripts/jet/flight_assist.gd")
+const JET_VISUALS := preload("res://scripts/jet/jet_visuals.gd")
 const FIXED_GUN_MOUNT := preload("res://scripts/weapons/fixed_gun_mount.gd")
 
 const GRAVITY := 9.80665
@@ -77,11 +78,11 @@ signal boundary_warning(urgency: float)
 ## Where along the cockpit tub the seat sits, and how high in it the pilot's
 ## eyes are. Fractions rather than metres, so they survive the model being
 ## rescaled or replaced.
-@export var cockpit_seat_fraction := 0.45
-@export var cockpit_eye_height_fraction := 0.72
+@export var cockpit_seat_fraction := 0.60
+@export var cockpit_eye_height_fraction := 0.86
 ## The view sits a few degrees nose-down so the instrument panel is in frame
 ## below the HUD combiner, rather than only the sky ahead of it.
-@export var cockpit_pitch_degrees := -6.0
+@export var cockpit_pitch_degrees := -8.0
 
 var velocity := Vector3.ZERO
 ## 0 to 1 is idle to military power; above 1 is afterburner.
@@ -418,6 +419,7 @@ func _find_visual() -> void:
 		return
 	_scale_to_reference()
 	_stow_landing_gear()
+	JET_VISUALS.clarify_canopy(_visual)
 	_measure_cockpit()
 	_attach_fixed_gun_mount()
 

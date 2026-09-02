@@ -54,7 +54,7 @@ static func updated_external_look(
 	current: Vector2,
 	input: Vector2,
 	speed: float,
-	return_response: float,
+	_return_response: float,
 	delta: float
 ) -> Vector2:
 	if not input.is_zero_approx():
@@ -62,11 +62,38 @@ static func updated_external_look(
 			wrapf(current.x - input.x * speed * delta, -1.0, 1.0),
 			clampf(current.y - input.y * speed * delta, -1.0, 1.0)
 		)
-	return current.lerp(Vector2.ZERO, 1.0 - exp(-return_response * delta))
+	return current
 
 
 static func orbited_position(focus: Vector3, camera_position: Vector3, look_basis: Basis) -> Vector3:
 	return focus + look_basis * (camera_position - focus)
+
+
+## Pursuit is deliberately close astern, but that radius is cramped when the
+## player moves around the wings and nose. Expand it smoothly into an inspection
+## orbit; Tracking already has a much larger authored boom.
+static func external_orbit_position(
+	mode: int,
+	focus: Vector3,
+	camera_position: Vector3,
+	look_basis: Basis,
+	look: Vector2
+) -> Vector3:
+	var offset := camera_position - focus
+	if mode == Mode.PURSUIT and not offset.is_zero_approx():
+		var blend := smoothstep(0.05, 0.55, look.length())
+		var orbit_radius := maxf(offset.length() * 1.65, 32.0)
+		offset = offset.normalized() * lerpf(offset.length(), orbit_radius, blend)
+	return focus + look_basis * offset
+
+
+static func external_orbit_look_target(
+	focus: Vector3,
+	flight_look_target: Vector3,
+	look: Vector2
+) -> Vector3:
+	var blend := smoothstep(0.05, 0.55, look.length())
+	return flight_look_target.lerp(focus, blend)
 
 
 static func flight_direction(
@@ -141,12 +168,13 @@ static func look_target(
 ## Each view has its own lens. Pursuit is wide for speed and peripheral
 ## awareness; tracking and tactical progressively compress the scene.
 static func field_of_view(mode: int, zoom: float, speed_fraction: float) -> float:
+	if mode == Mode.COCKPIT:
+		# A fixed lens reads like a pilot's view. External zoom must not stretch
+		# the cockpit into an action-camera perspective.
+		return 70.0 + clampf(speed_fraction, 0.0, 1.0) * 1.5
 	var base := 68.0
 	var speed_gain := 8.0
 	match mode:
-		Mode.COCKPIT:
-			base = 82.0
-			speed_gain = 2.0
 		Mode.TRACK:
 			base = 60.0
 			speed_gain = 5.0

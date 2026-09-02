@@ -29,10 +29,22 @@ func _init() -> void:
 	)
 	assert(wrapped.x < -0.6, "external yaw must wrap through 180 degrees for continuous orbit")
 	assert(absf(wrapped.y) <= 1.0, "external orbit pitch must remain bounded")
+	var held_orbit := JET_CAMERA.updated_external_look(
+		wrapped, Vector2.ZERO, 2.0, 6.0, 1.0
+	)
+	assert(held_orbit.is_equal_approx(wrapped), "released external stick must hold the current orbit")
 	var focus := Vector3(10.0, 20.0, 30.0)
 	var behind := focus + Vector3(0.0, 4.0, 20.0)
 	var orbited := JET_CAMERA.orbited_position(focus, behind, Basis(Vector3.UP, PI * 0.5))
 	assert(is_equal_approx(orbited.distance_to(focus), behind.distance_to(focus)), "look orbit must preserve camera distance")
+	var expanded_orbit := JET_CAMERA.external_orbit_position(
+		JET_CAMERA.Mode.PURSUIT,
+		focus,
+		focus + Vector3(0.0, 3.0, 20.0),
+		Basis(Vector3.UP, PI * 0.5),
+		Vector2(0.75, 0.0)
+	)
+	assert(expanded_orbit.distance_to(focus) >= 31.5, "close pursuit must expand to a logical orbit radius")
 	assert(JET_CAMERA.Mode.size() == 4, "the F-22 must expose cockpit plus three external views")
 	var direction := JET_CAMERA.flight_direction(Vector3(20.0, 100.0, -100.0), Vector3.RIGHT, 35.0)
 	assert(direction.y > 0.3, "pursuit direction must follow a real climb")
@@ -47,7 +59,16 @@ func _init() -> void:
 		JET_CAMERA.Mode.PURSUIT, focus, Vector3(0.0, 20.0, -180.0), direction, 50.0
 	)
 	assert(pursuit_look.z < focus.z, "pursuit composition must look ahead of the aircraft")
-	assert(JET_CAMERA.field_of_view(JET_CAMERA.Mode.COCKPIT, 1.0, 0.5) > 75.0, "cockpit needs peripheral vision")
+	var orbit_look := JET_CAMERA.external_orbit_look_target(
+		focus, pursuit_look, Vector2(0.75, 0.0)
+	)
+	assert(orbit_look.distance_to(focus) < 0.1, "360 orbit must centre the aircraft instead of its flight lead")
+	var cockpit_fov := JET_CAMERA.field_of_view(JET_CAMERA.Mode.COCKPIT, 1.0, 0.5)
+	assert(cockpit_fov >= 68.0 and cockpit_fov <= 72.0, "cockpit needs a natural human-scale perspective")
+	assert(
+		JET_CAMERA.field_of_view(JET_CAMERA.Mode.COCKPIT, 0.17, 0.5) <= 72.0,
+		"external zoom controls must not distort cockpit perspective"
+	)
 	assert(
 		JET_CAMERA.field_of_view(JET_CAMERA.Mode.PURSUIT, 1.0, 0.5)
 		> JET_CAMERA.field_of_view(JET_CAMERA.Mode.TRACK, 1.0, 0.5),

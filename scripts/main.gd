@@ -470,10 +470,12 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		height
 	)
 	if JET_CAMERA.allows_free_look(_jet_view) and not _free_look.is_zero_approx():
-		desired_position = JET_CAMERA.orbited_position(
+		desired_position = JET_CAMERA.external_orbit_position(
+			_jet_view,
 			focus,
 			desired_position,
-			_free_look_basis(jet_external_orbit_yaw_degrees)
+			_free_look_basis(jet_external_orbit_yaw_degrees),
+			_free_look
 		)
 	desired_position.y = maxf(
 		desired_position.y,
@@ -486,6 +488,12 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		direction,
 		distance
 	)
+	if JET_CAMERA.allows_free_look(_jet_view) and not _free_look.is_zero_approx():
+		desired_look = JET_CAMERA.external_orbit_look_target(
+			focus,
+			desired_look,
+			_free_look
+		)
 	var target_fov := JET_CAMERA.field_of_view(_jet_view, _camera_zoom, speed_fraction)
 	if snap:
 		camera.global_position = desired_position

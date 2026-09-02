@@ -290,7 +290,8 @@ right-stick up/down moves a persistent throttle relative to its current setting;
 releasing either control holds that setting. D-pad left/right cycles cockpit,
 close pursuit, wider tracking, and tactical ground-lock views. D-pad up/down
 zooms. The right stick can continuously orbit through 360 degrees in pursuit
-and tracking views; releasing it returns the camera astern.
+and tracking views; releasing it holds the current angle. Pursuit expands from
+its close chase framing into a wider aircraft-centred inspection orbit.
 Stick axes are sampled only from the selected physical controller with one
 circular deadzone; Android virtual devices cannot contribute duplicate input.
 Roll is unrestricted through knife-edge and inverted flight, so holding lateral
@@ -299,9 +300,11 @@ knife-edge instead of fighting the manoeuvre. Rudder yaws the nose into a
 sideslip and adds a smaller same-direction roll moment; releasing it lets
 directional stability align the nose with the flight path again.
 R3 requests a wings-level recovery when the aircraft has enough aerodynamic
-authority; deliberate roll input cancels it. Cockpit inherits full airframe
-roll; external views use limited roll feedback, a bounded flight-path lead, and
-separate camera and aim damping. Streamed elevation is exaggerated 1.8x for
+authority; deliberate roll input cancels it. Cockpit uses a fixed 70-71.5 degree
+lens from a raised, forward pilot position, with a neutral low-opacity canopy,
+and inherits full airframe roll. External views use limited roll feedback, a
+bounded flight-path lead, and separate camera and aim damping. Streamed
+elevation is exaggerated 1.8x for
 arcade-readable relief while terrain sampling and collisions remain aligned.
 The HUD keeps throttle and afterburner visible. L3 fires an
 invisible internal cannon fixed along the
