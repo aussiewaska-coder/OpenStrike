@@ -53,6 +53,8 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @export var free_look_speed := 2.4
 @export var free_look_return_response := 6.0
 @export var jet_external_orbit_yaw_degrees := 180.0
+## Near-polar, so the orbit is a sphere rather than a band round the waist.
+@export var jet_external_orbit_pitch_degrees := 85.0
 
 @export_group("Jet Camera")
 ## The Raptor is 19 m long and the helicopter's 110 m chase distance leaves it a
@@ -109,6 +111,8 @@ var _arcade_camera_feedback := ARCADE_CAMERA_FEEDBACK.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
+## Head bob runs on its own clock so it does not reset when a view changes.
+var _cockpit_bob_time := 0.0
 var _external_aim := EXTERNAL_AIM_CURSOR.new()
 var _camera_aim_basis := Basis.IDENTITY
 var _hit_stop_serial := 0
@@ -372,12 +376,16 @@ func _update_free_look(delta: float) -> void:
 	_free_look = _free_look.lerp(Vector2.ZERO, 1.0 - exp(-free_look_return_response * delta))
 
 
-func _free_look_basis(yaw_degrees := -1.0) -> Basis:
+## Cockpit look is a neck and keeps the default limits. The external orbit is a
+## camera on a sphere and takes the wider ones, so the player can pass over and
+## under the aircraft rather than round a band at its waist.
+func _free_look_basis(yaw_degrees := -1.0, pitch_degrees := -1.0) -> Basis:
 	if _free_look.is_zero_approx():
 		return Basis.IDENTITY
 	var yaw_limit := free_look_yaw_degrees if yaw_degrees < 0.0 else yaw_degrees
+	var pitch_limit := free_look_pitch_degrees if pitch_degrees < 0.0 else pitch_degrees
 	return Basis(Vector3.UP, deg_to_rad(_free_look.x * yaw_limit)) \
-		* Basis(Vector3.RIGHT, deg_to_rad(_free_look.y * free_look_pitch_degrees))
+		* Basis(Vector3.RIGHT, deg_to_rad(_free_look.y * pitch_limit))
 
 
 func _external_camera_aim_basis() -> Basis:
@@ -386,6 +394,10 @@ func _external_camera_aim_basis() -> Basis:
 
 func _update_follow_camera(delta: float) -> void:
 	_update_free_look(delta)
+	# Wrapped on the bob's own repeat period: 1.4 Hz and 0.9 Hz both come back
+	# to phase at ten seconds, so this is exact and the clock cannot drift off
+	# into the range where a float stops resolving fractions of a cycle.
+	_cockpit_bob_time = fmod(_cockpit_bob_time + delta, 10.0)
 	if _flying_jet:
 		_update_jet_camera(delta)
 		return
@@ -440,9 +452,18 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 	)
 	if _jet_view == JET_CAMERA.Mode.COCKPIT:
 		var cockpit: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
+		var bob: Vector2 = JET_CAMERA.head_bob(
+			_cockpit_bob_time,
+			jet_anchor.load_factor,
+			speed_fraction
+		)
 		camera.global_position = cockpit.origin
-		camera.global_basis = Basis.looking_at(cockpit.basis.x, cockpit.basis.y) * _free_look_basis()
-		camera.fov = JET_CAMERA.field_of_view(_jet_view, _camera_zoom, speed_fraction)
+		camera.global_basis = Basis.looking_at(cockpit.basis.x, cockpit.basis.y) \
+			* _free_look_basis() \
+			* Basis.from_euler(Vector3(deg_to_rad(bob.x), 0.0, deg_to_rad(bob.y)))
+		camera.fov = JET_CAMERA.field_of_view(
+			_jet_view, _camera_zoom, speed_fraction, camera_zoom_max
+		)
 		_look_target = cockpit.origin + cockpit.basis.x * 100.0
 		return
 
@@ -474,7 +495,7 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 			_jet_view,
 			focus,
 			desired_position,
-			_free_look_basis(jet_external_orbit_yaw_degrees),
+			_free_look_basis(jet_external_orbit_yaw_degrees, jet_external_orbit_pitch_degrees),
 			_free_look
 		)
 	desired_position.y = maxf(
@@ -488,13 +509,12 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		direction,
 		distance
 	)
-	if JET_CAMERA.allows_free_look(_jet_view) and not _free_look.is_zero_approx():
-		desired_look = JET_CAMERA.external_orbit_look_target(
-			focus,
-			desired_look,
-			_free_look
-		)
-	var target_fov := JET_CAMERA.field_of_view(_jet_view, _camera_zoom, speed_fraction)
+	# The aim point keeps its velocity lead all the way round the sphere. Sliding
+	# it onto the aircraft as the player orbited was half of what made the old
+	# 360 feel warped; orbiting should move the camera, not re-frame the shot.
+	var target_fov := JET_CAMERA.field_of_view(
+		_jet_view, _camera_zoom, speed_fraction, camera_zoom_max
+	)
 	if snap:
 		camera.global_position = desired_position
 		_look_target = desired_look
@@ -945,8 +965,16 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
 		if _flying_jet:
-			var accepted: bool = jet_anchor.request_wings_level()
-			status_label.text = "WINGS LEVEL" if accepted else "WINGS LEVEL UNAVAILABLE"
+			# R3 straightens whatever is crooked, nearest first. A turned head
+			# is the more urgent of the two -- and you cannot judge a wings-level
+			# recovery while looking at your own tailplane anyway -- so the view
+			# comes back before the aircraft does.
+			if JET_CAMERA.is_look_displaced(_free_look):
+				_free_look = Vector2.ZERO
+				status_label.text = "VIEW CENTRED"
+			else:
+				var accepted: bool = jet_anchor.request_wings_level()
+				status_label.text = "WINGS LEVEL" if accepted else "WINGS LEVEL UNAVAILABLE"
 		else:
 			_cycle_view()
 	elif action == GamepadInput.ACTION_TARGET_PREVIOUS and _flying_jet:

@@ -110,24 +110,36 @@ Three further behaviours come from single terms:
 - **Overspeed turns wider** — the load limiter caps pitch rate at
   `n = v * omega / g <= g_limit`, so the same stick gives a lower pitch rate at
   higher speed.
-- **Low speed loses flight-path authority, not stick response** — pilot roll
-  and pitch-rate commands remain available while the wing's lift still falls
-  with dynamic pressure.
+- **Low speed loses control authority as well as lift** — surfaces make moments
+  proportional to dynamic pressure, so roll and pitch rates scale with
+  `(v / v_corner)^2`. Holding the commanded rates constant was what let the
+  aircraft fly tidy 60-second loops at 63 m/s with the nose pinned 19 degrees
+  off the flight path; a real aeroplane goes slack instead.
+- **Thrust vectoring is the exception** — the nozzles work on engine thrust
+  rather than airspeed, so pitch keeps a floor of authority the wing has
+  already lost. They are two-dimensional and vector in pitch alone, which is
+  why roll is the axis that genuinely dies at low speed.
 
 ### Degraded low-speed state
 
 There is no departure. Flight assist is always on, per the design decision.
 
-At low speed the degraded state is aerodynamic rather than an input modifier:
-lift can no longer hold a steep level turn, so the aircraft sinks. Roll and
-nose-down recovery commands retain their full rate authority, and deliberate
-pitch input overrides the automatic level-turn hold instead of fighting it.
-Recovery is to unload and let the aircraft accelerate.
+At low speed the degraded state is aerodynamic: lift can no longer hold a steep
+level turn, so the aircraft sinks, and the surfaces go slack with dynamic
+pressure so the stick itself loses authority. Nose-down recovery keeps more
+than the other axes, because vectoring is on the pitch axis and unloading must
+always remain available. Deliberate pitch input still overrides the automatic
+level-turn hold instead of fighting it. Recovery is to unload and accelerate.
 
-The lift coefficient curve still falls off past the stall angle, so the model
-can express a stall. The angle-of-attack limiter simply prevents the aircraft
-reaching it. Removing the limiter is the only change a later departure model
-would need.
+The lift coefficient curve still falls off past the stall angle, and past it
+the drag polar now climbs toward a flat plate rather than collapsing. Without
+that term a fully separated wing was *cheaper* than a flying one — CD 0.068
+against 0.272 at the stall — which is what let a stalled aircraft keep
+pinwheeling with no energy penalty at all.
+
+There is still no departure: the angle-of-attack limiter prevents the aircraft
+reaching the stall. Removing the limiter is the only change a later departure
+model would need, and the separated-flow drag is already there waiting for it.
 
 ### Speed envelope
 
@@ -148,12 +160,18 @@ corridor crossing takes two to four minutes and the coastline stays readable.
 - **Angle-of-attack limiter** caps commanded pitch rate so alpha never reaches
   the stall angle.
 - **Load limiter** at 9 G.
-- **Turn coordination** drives yaw toward `g * tan(bank) / v` in ordinary
-  upright turns, then fades out between 60 and 80 degrees of bank so it does
-  not fight aerobatics.
-- **Rudder** on L2/R2 creates yaw and sideslip rather than flat turning. The
-  vertical-tail response adds a smaller coupled roll moment, while directional
-  stability recentres the slip after release.
+- **Turn coordination** drives yaw toward `g * tan(bank) / v`, and fades on
+  **roll rate** rather than bank angle. What it must not fight is a roll in
+  progress; a held 85-degree bank is still a turn and still wants coordinating.
+  Fading on bank was measurably wrong — coordination was down to a quarter at
+  75 degrees and gone at 80, making the hardest turns the only uncoordinated
+  ones in the aircraft's range.
+- **Rudder** on L2/R2 creates yaw and sideslip rather than flat turning, and
+  the aircraft rolls through **dihedral effect** — roll proportional to the
+  sideslip the rudder has actually produced, not to the trigger position. That
+  indirection is the point: aileron sets the bank, rudder adds slip, and slip
+  rolls the aircraft further in, so the two together reach a steeper bank than
+  either alone. Directional stability recentres the slip after release.
 
 ## Boundaries
 
@@ -176,13 +194,27 @@ Bindings are per-vehicle. The helicopter's mapping is untouched.
 | Left stick | Pitch and roll | Flight vector |
 | Right stick | Camera look | Yaw and collective |
 | L2 / R2 | Left / right rudder | Camera orbit sweep |
-| D-pad up / down | Throttle up / down | Camera zoom in / out |
-| R1 | Unassigned | Free look, held |
+| D-pad up / down | Camera zoom in / out | Camera zoom in / out |
+| D-pad left / right | Cycle view | Cycle target |
+| R1 held | Throttle on right stick, **thrust vectoring on left** | Free look, held |
+| R3 | Centre the view, else wings level | Cycle view |
 | L3 | Fixed-forward internal cannon | Traversing chin cannon |
 | L1 | Rockets | unchanged |
 
-Throttle is a persistent position moved by D-pad up/down. Releasing the button
-holds the current setting; pushing beyond military power enters afterburner.
+R1 carries two things without collision because they read different sticks: the
+right stick becomes the throttle, and the left stick gets the nozzles. Held, it
+raises the angle-of-attack limiter from the wing's 32 degrees to the nozzles'
+55 and adds 70 percent to the commanded rates.
+
+Vectoring is a low-speed instrument, and the load limiter makes that true
+without a special case: at 175 m/s the 9 G cap binds first and R1 buys almost
+nothing (21.6 to 26.5 degrees of alpha). At 130 m/s it takes the nose from 22.9
+to 41.1 degrees and nearly doubles what the nose sweeps in four seconds — for
+36 m/s of speed against 24.5. Point and shoot, then pay for it.
+
+Throttle is a persistent position moved by the right stick with R1 held.
+Releasing holds the current setting; pushing beyond military power enters
+afterburner.
 
 Throttle commands a target thrust, not a speed. Airspeed is what thrust and
 drag settle on.
@@ -228,7 +260,7 @@ The pure modules are tested headless, in the established `SceneTree` style.
 | Test | Asserts |
 |---|---|
 | `tests/aero_model_test.gd` | Lift coefficient rises to the stall angle then falls; induced drag follows `Cl^2`; thrust spools monotonically toward its command; load-limited pitch rate *decreases* as speed rises |
-| `tests/flight_assist_test.gd` | Bank holds near stick centre; full roll survives inverted flight; upright coordination fades before knife-edge; rudder yaw, sideslip damping, coupled roll, angle and boundary limits remain active |
+| `tests/flight_assist_test.gd` | Bank holds near stick centre; full roll survives inverted flight; coordination fades on roll rate, not bank, so a held 80-degree bank stays coordinated; roll authority falls with dynamic pressure while vectoring keeps nose-down recovery; dihedral roll follows the slip and stays secondary to the stick |
 | `tests/jet_controls_test.gd` | Integration: full lateral stick completes a 360-degree roll; rudder creates and recovers sideslip; a banked pull turns and loses speed; opposite controls recover immediately afterward |
 
 There is no Godot binary on the development machine, so these are written to be

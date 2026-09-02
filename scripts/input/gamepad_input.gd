@@ -140,6 +140,14 @@ func get_jet_throttle_axis() -> float:
 	return jet_throttle_axis(get_aim_vector(), is_free_look_held())
 
 
+## The same R1 that claims the right stick for throttle also hands the nose to
+## the vectoring nozzles on the LEFT stick. The two never collide because they
+## read different sticks, which is why this is the same button rather than one
+## of the none that were left.
+func is_vectoring_held() -> bool:
+	return is_free_look_held()
+
+
 func get_jet_look_vector() -> Vector2:
 	return jet_look_vector(get_aim_vector(), is_free_look_held())
 

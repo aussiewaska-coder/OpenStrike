@@ -27,7 +27,7 @@ const CONTROL_RESPONSE := 7.0
 const SIDESLIP_GAIN := 2.4
 const RUDDER_RATE := 0.8
 const RUDDER_SIDESLIP := 28.0
-const RUDDER_ROLL_RATE := 0.12
+const DIHEDRAL_ROLL_GAIN := 0.35
 const ROLL_IN_SECONDS := 0.75
 
 
@@ -114,11 +114,11 @@ func _step(
 	var commanded_roll: float = ASSIST.commanded_roll_rate(
 		roll_stick, MAX_ROLL_RATE, speed, bank, flight.roll_rate
 	)
-	commanded_roll += ASSIST.rudder_roll_rate(rudder_stick, RUDDER_ROLL_RATE)
+	commanded_roll += ASSIST.dihedral_roll_rate(flight.beta, DIHEDRAL_ROLL_GAIN)
 	var commanded_pitch: float = ASSIST.commanded_pitch_rate(
-		pitch_stick, MAX_PITCH_RATE, speed, bank, flight.alpha
+		pitch_stick, MAX_PITCH_RATE, speed, bank, flight.alpha, flight.roll_rate, throttle
 	)
-	var commanded_yaw: float = ASSIST.level_turn_yaw_rate(bank, speed)
+	var commanded_yaw: float = ASSIST.level_turn_yaw_rate(bank, speed, flight.roll_rate)
 	commanded_yaw += ASSIST.rudder_yaw_rate(
 		rudder_stick,
 		deg_to_rad(RUDDER_SIDESLIP),

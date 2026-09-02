@@ -18,6 +18,7 @@ func _init() -> void:
 	_turn_geometry()
 	_alpha_limiter()
 	_sideslip()
+	_thrust_vectoring()
 	_boundary()
 	print("FLIGHT_ASSIST_TEST_PASS")
 	quit()
@@ -67,24 +68,45 @@ func _bank_hold() -> void:
 		0.0,
 		"a centred stick commands no roll, which is what holds the bank"
 	)
+	# Roll authority falls with dynamic pressure, because ailerons are
+	# aerodynamic and the Raptor's nozzles vector in pitch only. Full stick at
+	# 70 m/s must still roll -- the pilot is never locked out -- but it cannot
+	# roll at the cruise rate, which is what let the aircraft pinwheel through
+	# the vertical at speeds where a real one would have gone slack.
+	var slow_roll: float = ASSIST.commanded_roll_rate(1.0, 1.8, 70.0, 0.0, 0.0)
+	if slow_roll <= 0.0:
+		_fail("the pilot must keep a roll command at low speed, got %f" % slow_roll)
+	if slow_roll >= 1.8 * 0.5:
+		_fail("roll authority must fall away with dynamic pressure, got %f of 1.8" % slow_roll)
 	_assert_approx(
-		ASSIST.commanded_roll_rate(1.0, 1.8, 70.0, 0.0, 0.0),
+		ASSIST.commanded_roll_rate(1.0, 1.8, AERO.CORNER_SPEED_MPS, 0.0, 0.0),
 		1.8,
-		"low speed must not suppress the pilot's roll-rate command"
+		"full roll authority is available from corner speed upward"
 	)
-	_assert_approx(
-		ASSIST.commanded_pitch_rate(-1.0, 0.95, 79.0, deg_to_rad(66.0), deg_to_rad(18.0)),
-		-0.95,
-		"a hard-turn hold must not cancel the pilot's nose-down recovery"
+
+	# Nose-down recovery is never cancelled by the hold, and thrust vectoring
+	# keeps more of it than the wing alone would have.
+	var recovery: float = ASSIST.commanded_pitch_rate(
+		-1.0, 0.95, 79.0, deg_to_rad(66.0), deg_to_rad(18.0), 0.0, 1.0
 	)
+	if recovery >= -0.3:
+		_fail("a hard-turn hold must not cancel the pilot's nose-down recovery, got %f" % recovery)
+	var unvectored: float = ASSIST.commanded_pitch_rate(
+		-1.0, 0.95, 79.0, deg_to_rad(66.0), deg_to_rad(18.0), 0.0, 0.0
+	)
+	if recovery >= unvectored:
+		_fail("thrust vectoring must add pitch authority the wing has lost")
 
 
 ## Ordinary banked turns receive pitch/yaw coordination. That assist must fade
 ## away before knife-edge while direct roll authority remains untouched.
 func _coordination_envelope() -> void:
-	var ceiling := deg_to_rad(ASSIST.MAX_COORDINATED_BANK_DEGREES)
-	_assert_approx(ASSIST.sustainable_bank(CRUISE), ceiling, "corner speed reaches the coordination limit")
-	_assert_approx(ASSIST.sustainable_bank(260.0), ceiling, "high speed reaches the coordination limit")
+	# The envelope is now bounded by the airframe's own load limit rather than
+	# by an arbitrary bank ceiling: at and above corner speed the 9 G limiter is
+	# what binds, so the steepest coordinated bank is acos(1/9).
+	var ceiling := acos(1.0 / AERO.LOAD_LIMIT_G)
+	_assert_approx(ASSIST.sustainable_bank(CRUISE), ceiling, "corner speed reaches the load limit")
+	_assert_approx(ASSIST.sustainable_bank(260.0), ceiling, "high speed reaches the load limit")
 	var slow: float = ASSIST.sustainable_bank(90.0)
 	if slow >= ceiling:
 		_fail("the coordinated-turn envelope must tighten at low speed, got %.1f degrees" % rad_to_deg(slow))
@@ -102,16 +124,27 @@ func _coordination_envelope() -> void:
 				speed, load, available
 			])
 
+	# Coordination now keys on roll rate, not bank angle. A settled bank is a
+	# turn and gets coordinated however steep it is; a roll in progress does
+	# not, so the coordinator cannot fight an aileron roll. Keying on bank made
+	# the hardest turns the only uncoordinated ones.
 	_assert_approx(
-		ASSIST.coordination_weight(deg_to_rad(45.0)),
+		ASSIST.coordination_weight(0.0),
 		1.0,
-		"ordinary banked flight gets full turn coordination"
+		"a settled bank gets full turn coordination"
 	)
 	_assert_approx(
-		ASSIST.coordination_weight(deg_to_rad(90.0)),
+		ASSIST.coordination_weight(1.8),
 		0.0,
-		"knife-edge flight gets no level-turn assist"
+		"a full-stick roll gets no level-turn assist"
 	)
+	_assert_approx(
+		ASSIST.coordination_weight(-1.8),
+		0.0,
+		"the fade does not care which way the roll goes"
+	)
+	if ASSIST.level_turn_yaw_rate(deg_to_rad(80.0), CRUISE) <= 0.0:
+		_fail("a held 80-degree bank is a turn and must still be coordinated")
 	_assert_approx(
 		ASSIST.commanded_roll_rate(1.0, 1.8, CRUISE, deg_to_rad(135.0), 1.8),
 		1.8,
@@ -225,15 +258,33 @@ func _sideslip() -> void:
 	)
 	if ASSIST.rudder_yaw_rate(1.0, deg_to_rad(14.0), -0.2, 1.4, 0.28) >= 0.1:
 		_fail("directional stability must oppose rudder-created sideslip")
-	if ASSIST.rudder_input_response(0.25) < 0.6:
-		_fail("quarter trigger must be exaggerated for useful gamepad rudder authority")
-	if ASSIST.rudder_yaw_rate(0.25, deg_to_rad(28.0), 0.0, 2.4, 0.8) < 0.65:
-		_fail("quarter trigger must produce a decisive yaw command")
+	# The trigger curve must still reach useful authority early, but not so
+	# early that a five-percent press is worth ten degrees of sideslip. At the
+	# old 0.35 power it was, and that is what made the rudder read as a switch.
+	if ASSIST.rudder_input_response(0.25) < 0.3:
+		_fail("quarter trigger must reach useful rudder authority")
+	if ASSIST.rudder_input_response(0.05) > 0.25:
+		_fail("a five-percent press must not command a quarter of full rudder, got %f"
+			% ASSIST.rudder_input_response(0.05))
+
+	# Dihedral effect: the aircraft rolls because it is slipping. Right rudder
+	# drives beta negative, and that must produce a right (positive) roll, so
+	# stick and rudder reinforce instead of fighting.
+	if ASSIST.dihedral_roll_rate(-0.3) <= 0.0:
+		_fail("a left slip must roll the aircraft right")
 	_assert_approx(
-		ASSIST.rudder_roll_rate(1.0, 0.08),
-		0.08,
-		"rudder creates a smaller same-direction roll moment"
+		ASSIST.dihedral_roll_rate(0.3),
+		-ASSIST.dihedral_roll_rate(-0.3),
+		"dihedral roll reverses with the slip"
 	)
+	_assert_approx(ASSIST.dihedral_roll_rate(0.0), 0.0, "no slip, no dihedral roll")
+	# Secondary control: it must never overrun the stick.
+	for slip in [0.5, 1.0, 1.5]:
+		if absf(ASSIST.dihedral_roll_rate(slip)) > ASSIST.MAX_DIHEDRAL_ROLL_RATE + 0.0001:
+			_fail("dihedral roll reached %f rad/s at %f rad of slip"
+				% [ASSIST.dihedral_roll_rate(slip), slip])
+	if ASSIST.MAX_DIHEDRAL_ROLL_RATE >= 1.8 * 0.5:
+		_fail("rudder-driven roll this strong is a primary control, not a coupling")
 	if ASSIST.wings_level_roll_rate(deg_to_rad(45.0), 1.8, CRUISE) >= 0.0:
 		_fail("R3 recovery must roll a right bank back toward the horizon")
 	if ASSIST.wings_level_roll_rate(deg_to_rad(-45.0), 1.8, CRUISE) <= 0.0:
@@ -243,6 +294,56 @@ func _sideslip() -> void:
 		0.0,
 		"R3 cannot create aerodynamic roll authority below flying speed"
 	)
+
+
+## R1 hands the nose to the nozzles. The limiter does not go away -- it moves --
+## so the aircraft points far off its flight path and pays in drag, never in a
+## departure.
+func _thrust_vectoring() -> void:
+	var stall := deg_to_rad(AERO.STALL_ALPHA_DEGREES)
+	var post := deg_to_rad(AERO.POST_STALL_ALPHA_DEGREES)
+	_assert_approx(ASSIST.alpha_ceiling(false), stall, "the wing's limit applies by default")
+	_assert_approx(ASSIST.alpha_ceiling(true), post, "R1 raises the limit to the nozzles'")
+	if post <= stall:
+		_fail("the post-stall ceiling must sit above the wing's stall")
+
+	# Past the wing's stall the limiter must still refuse more nose-up, or the
+	# aircraft would simply tumble instead of holding an angle.
+	var beyond: float = ASSIST.alpha_limited_pitch_rate(1.0, post + 0.05, post)
+	if beyond > 0.0:
+		_fail("the post-stall limiter must still push the nose back down, got %f" % beyond)
+
+	# Ordinary flight is untouched: 40 degrees is refused without R1 and
+	# available with it.
+	var refused: float = ASSIST.alpha_limited_pitch_rate(1.0, deg_to_rad(40.0), stall)
+	if refused > 0.0:
+		_fail("40 degrees of alpha must be refused without vectoring, got %f" % refused)
+	var allowed: float = ASSIST.alpha_limited_pitch_rate(1.0, deg_to_rad(40.0), post)
+	if allowed <= 0.0:
+		_fail("40 degrees of alpha must be reachable with vectoring, got %f" % allowed)
+
+	# The rate boost is real but short of doubling: vectoring is about where the
+	# nose can be put, not how fast it snaps there.
+	var normal: float = ASSIST.commanded_roll_rate(1.0, 1.8, CRUISE, 0.0, 0.0, false)
+	var boosted: float = ASSIST.commanded_roll_rate(1.0, 1.8, CRUISE, 0.0, 0.0, true)
+	if boosted <= normal:
+		_fail("R1 must add roll rate")
+	if boosted > normal * 2.0:
+		_fail("vectoring must not double the roll rate, got %f against %f" % [boosted, normal])
+
+	# There must still be lift to turn with out there, or the post-stall
+	# envelope is a ballistic arc rather than a manoeuvre.
+	var post_stall_lift: float = AERO.lift_coefficient(post)
+	if post_stall_lift < 0.8:
+		_fail("a vectored aircraft needs residual vortex lift, got Cl %f" % post_stall_lift)
+	if post_stall_lift >= AERO.CL_MAX:
+		_fail("post-stall lift must still be below the peak")
+
+	# And it must be expensive. Separated drag is what stops R1 being free.
+	var clean: float = AERO.drag_acceleration(CRUISE, deg_to_rad(8.0))
+	var vectored: float = AERO.drag_acceleration(CRUISE, post)
+	if vectored < clean * 3.0:
+		_fail("post-stall drag must dominate, got %f against %f" % [vectored, clean])
 
 
 func _boundary() -> void:
