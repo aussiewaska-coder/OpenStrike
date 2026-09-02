@@ -190,7 +190,7 @@ text = "Connect or wake a Bluetooth gamepad."
 horizontal_alignment = 1
 autowrap_mode = 2
 
-[node name="CannonWeapon" type="Node3D" parent="HelicopterAnchor"]
+[node name="CannonWeapon" type="Node3D" parent="."]
 script = ExtResource("93_cannon")
 
 [node name="ProjectileManager" type="Node3D" parent="."]

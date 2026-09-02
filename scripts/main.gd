@@ -77,7 +77,7 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @onready var impact_fx: Node3D = $ImpactFX
 @onready var cannon_fx: Node3D = $CannonFX
 @onready var launcher_field: Node3D = $LauncherField
-@onready var cannon_weapon: Node3D = $HelicopterAnchor/CannonWeapon
+@onready var cannon_weapon: Node3D = $CannonWeapon
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
 @onready var jet_anchor: Node3D = $JetAnchor
 @onready var camera: Camera3D = $Camera3D
@@ -370,11 +370,9 @@ func _update_follow_camera(delta: float) -> void:
 	if _view == View.COCKPIT:
 		_update_cockpit_camera()
 		return
-	# With a target picked the triggers fly the aircraft around it, so the
-	# camera must not also claim them.
-	var orbit_input := 0.0
-	if not _aircraft_is_orbiting():
-		orbit_input = GamepadInput.get_camera_orbit_axis()
+	# The helicopter may hand the triggers to target orbit or camera sweep. The
+	# jet always owns them as throttle, so its camera receives no trigger input.
+	var orbit_input := _camera_orbit_input()
 	if _view == View.CHASE:
 		_update_orbit_lock(delta, orbit_input)
 	else:
@@ -436,14 +434,14 @@ func _release_orbit_lock() -> void:
 
 
 func _ease_travel_heading(delta: float) -> void:
-	# The source helicopter points along local +X. Ease the camera's travel
-	# heading toward that nose direction so it naturally settles behind turns.
-	var helicopter_forward := helicopter_anchor.global_basis.x
-	helicopter_forward.y = 0.0
-	if helicopter_forward.is_zero_approx():
+	# Both source models point along local +X. Ease toward the active vehicle so
+	# the parked helicopter cannot steer the F-22 chase camera.
+	var vehicle_forward := _vehicle().global_basis.x
+	vehicle_forward.y = 0.0
+	if vehicle_forward.is_zero_approx():
 		return
-	helicopter_forward = helicopter_forward.normalized()
-	var target_heading := atan2(-helicopter_forward.x, -helicopter_forward.z)
+	vehicle_forward = vehicle_forward.normalized()
+	var target_heading := atan2(-vehicle_forward.x, -vehicle_forward.z)
 	var heading_weight := 1.0 - exp(-travel_heading_response * delta)
 	_camera_orbit_radians = lerp_angle(_camera_orbit_radians, target_heading, heading_weight)
 
@@ -512,6 +510,7 @@ func _telemetry_sample() -> Dictionary:
 	var aim_input := GamepadInput.get_aim_vector()
 	var sample := {
 		"theatre": String(LocationService.selected_region.get("display_name", "none")),
+		"aircraft": "F-22" if _flying_jet else "AH-64D",
 		"view": View.keys()[_view],
 		"free_look_held": GamepadInput.is_free_look_held(),
 		"free_look_x": _free_look.x,
@@ -522,8 +521,8 @@ func _telemetry_sample() -> Dictionary:
 		"external_aim_camera_y": _external_aim.camera_offset.y,
 		"aim_input_x": aim_input.x,
 		"aim_input_y": aim_input.y,
-		"orbit_input": GamepadInput.get_camera_orbit_axis(),
-		"aircraft_yaw_degrees": helicopter_anchor.global_rotation_degrees.y,
+		"orbit_input": _camera_orbit_input(),
+		"aircraft_yaw_degrees": _vehicle().global_rotation_degrees.y,
 		"camera_yaw_degrees": camera.global_rotation_degrees.y,
 		"speed_fov_offset_degrees": _speed_fov_offset(),
 		"camera_shake_trauma": _arcade_camera_feedback.trauma,
@@ -579,6 +578,14 @@ func _aircraft_is_orbiting() -> bool:
 	return vehicle.has_method("orbit_input") and not is_zero_approx(vehicle.orbit_input())
 
 
+func _camera_orbit_input() -> float:
+	return JET_CAMERA.routed_orbit_input(
+		GamepadInput.get_camera_orbit_axis(),
+		_flying_jet,
+		_aircraft_is_orbiting()
+	)
+
+
 ## A tap picks a point on the ground to orbit. There are no collision shapes
 ## under the streamed terrain, so the ray is marched against the height field.
 func _unhandled_input(event: InputEvent) -> void:
@@ -607,7 +614,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	_has_target_point = true
 	if _vehicle().has_method("set_orbit_target"):
 		_vehicle().set_orbit_target(_target_point)
-	status_label.text = "TARGET SET %d m -- L2/R2 to orbit it" % roundi(_focus_position().distance_to(_target_point))
+	var range_m := roundi(_focus_position().distance_to(_target_point))
+	status_label.text = (
+		"TARGET MARKED %d m -- R1 to aim" % range_m
+		if _flying_jet
+		else "TARGET SET %d m -- L2/R2 to orbit it" % range_m
+	)
 
 
 func _update_target_marker() -> void:

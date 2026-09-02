@@ -26,6 +26,17 @@ static func trailing_distance(
 	return base_distance + fraction * distance_gain
 
 
+## The triggers move the fixed-wing throttle. They must never also enter the
+## helicopter's camera sweep, and a helicopter orbit command likewise owns
+## them before the camera does.
+static func routed_orbit_input(
+	raw_input: float,
+	fixed_wing_active: bool,
+	aircraft_is_orbiting: bool
+) -> float:
+	return 0.0 if fixed_wing_active or aircraft_is_orbiting else raw_input
+
+
 ## The camera's up vector, lagging the airframe's. Returns the new lagged up
 ## after delta, and this is what produces both the horizon bank and the sense
 ## that the camera is a chase plane rather than a rigid mount.

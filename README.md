@@ -255,6 +255,9 @@ A second playable aircraft over the same theatre, which is what proves the
 world carries both low-altitude rotor combat and high-speed fixed-wing flight
 without a second map. Switch with **B**, or from the settings panel.
 
+The F-22 model is by bohmerang and licensed CC BY-NC-SA 4.0; full source and
+license details are recorded in [`3dassets/ATTRIBUTION.md`](3dassets/ATTRIBUTION.md).
+
 The flight model is an assisted arcade one: a lift curve and a drag polar, with
 a fly-by-wire layer between the stick and the aerodynamics. Nothing in it turns
 the aircraft. The stick commands a roll rate, the aircraft banks, the lift
