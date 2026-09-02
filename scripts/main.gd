@@ -8,6 +8,9 @@ const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
 const EXTERNAL_FREE_LOOK := preload("res://scripts/camera/external_free_look.gd")
 const EXTERNAL_AIM_CURSOR := preload("res://scripts/camera/external_aim_cursor.gd")
 const ARCADE_CAMERA_FEEDBACK := preload("res://scripts/camera/arcade_camera_feedback.gd")
+const TRAIL_RENDERER := preload("res://scripts/effects/trail_renderer.gd")
+const ROCKET_POD := preload("res://scripts/weapons/rocket_pod.gd")
+const WEAPON_SELECTION := preload("res://scripts/weapons/weapon_selection.gd")
 const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 const AIRFRAME_VISUALS := preload("res://scripts/helicopter/airframe_visuals.gd")
 const GROUND_RAY := preload("res://scripts/terrain/ground_ray.gd")
@@ -113,6 +116,11 @@ var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
 ## Head bob runs on its own clock so it does not reset when a view changes.
 var _cockpit_bob_time := 0.0
+var _weapons := WEAPON_SELECTION.new()
+## Built in code rather than declared in the scene: neither needs authored
+## properties, and a scene entry would only be two more uids to keep in step.
+var _trail_renderer: MeshInstance3D
+var _rocket_pod: Node3D
 var _external_aim := EXTERNAL_AIM_CURSOR.new()
 var _camera_aim_basis := Basis.IDENTITY
 var _hit_stop_serial := 0
@@ -134,6 +142,7 @@ func _ready() -> void:
 	GamepadInput.connection_changed.connect(_on_gamepad_connection_changed)
 	GamepadInput.controller_attention_changed.connect(_on_controller_attention_changed)
 	GamepadInput.action_pressed.connect(_on_gamepad_action_pressed)
+	GamepadInput.action_released.connect(_on_gamepad_action_released)
 	_configure_zoom_profile()
 	_apply_view_chrome()
 	Telemetry.add_source(_telemetry_sample)
@@ -173,12 +182,71 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	gamepad_diagnostic.text = "%s\n%s" % [GamepadInput.get_diagnostic_text(), _map_diagnostic_text()]
+	_update_rockets(delta)
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
 		_camera_aim_basis = camera.global_basis
 		_apply_arcade_camera_shake(delta)
 		_update_attack_reticle()
 		_update_target_marker()
+
+
+## Rockets are driven from here rather than from their own _physics_process, so
+## the pod cannot fire while the game is paused and the trail is fed from the
+## same frame the rocket moved in.
+func _update_rockets(delta: float) -> void:
+	if _rocket_pod == null or _trail_renderer == null:
+		return
+	if _flying_jet:
+		if _rocket_pod.hardpoints.is_empty() and jet_anchor.has_method("get_hardpoints"):
+			_rocket_pod.hardpoints = jet_anchor.get_hardpoints()
+		_rocket_pod.carrier = jet_anchor
+		_rocket_pod.update(delta, GamepadInput.is_rockets_firing())
+	else:
+		# Releasing the trigger on the helicopter must not leave a salvo running.
+		_rocket_pod.update(delta, false)
+	# Live rockets lay smoke wherever they are now. Shells do not: at 625 RPM
+	# they would swamp the segment cap, and there is nothing to see behind a
+	# 30 mm round anyway.
+	for round_data in projectile_manager.active_rounds:
+		if round_data.weapon_source == "rocket":
+			_trail_renderer.push_point(round_data.sequence, round_data.position)
+
+
+func _on_rocket_fired(round_data: RefCounted, _hardpoint_index: int) -> void:
+	# Keyed on the sequence number, which is unique for the life of the round and
+	# is what the manager hands back on impact and expiry.
+	_trail_renderer.begin_trail(round_data.sequence)
+
+
+func _on_magazine_changed(remaining: int, capacity: int) -> void:
+	if _weapons.current != WEAPON_SELECTION.Weapon.ROCKETS:
+		return
+	status_label.text = (
+		"RELOADING" if remaining == 0 else "ROCKETS %d/%d" % [remaining, capacity]
+	)
+
+
+func _on_weapon_changed(weapon: int) -> void:
+	status_label.text = "WEAPON: %s" % _weapons.name_of(weapon)
+
+
+## A rocket that runs out of fuel and range leaves its smoke behind to fade.
+func _on_projectile_expired(round_data: RefCounted) -> void:
+	if _trail_renderer != null and round_data.weapon_source == "rocket":
+		_trail_renderer.end_trail(round_data.sequence)
+
+
+## X carries two jobs, told apart by how long it was held. The decision waits for
+## the release, because until the button comes up there is no way to know which
+## one the player meant.
+func _on_gamepad_action_released(action: StringName, held_seconds: float) -> void:
+	if action != GamepadInput.ACTION_WEAPON_CYCLE:
+		return
+	if GamepadInput.is_hold(held_seconds):
+		_toggle_settings()
+	else:
+		_weapons.cycle()
 
 
 ## The one place that knows which aircraft is being flown. Everything that is
@@ -985,8 +1053,9 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		_switch_aircraft()
 	elif action == GamepadInput.ACTION_FLIGHT_MODE:
 		_toggle_flight_mode()
-	elif action == GamepadInput.ACTION_SETTINGS:
-		_toggle_settings()
+	# Settings is no longer a press: it is the hold half of X, handled in
+	# _on_gamepad_action_released. The on-screen SETTINGS button still calls
+	# _toggle_settings directly.
 	elif action == GamepadInput.ACTION_THEATRE_CYCLE:
 		LocationService.cycle_region()
 
@@ -1172,6 +1241,19 @@ func _wire_cannon_systems() -> void:
 	cannon_fx.gun_mount = cannon_weapon.gun_mount
 	cannon_fx.weapon = cannon_weapon
 
+	_trail_renderer = TRAIL_RENDERER.new()
+	_trail_renderer.name = "TrailRenderer"
+	add_child(_trail_renderer)
+	_rocket_pod = ROCKET_POD.new()
+	_rocket_pod.name = "RocketPod"
+	add_child(_rocket_pod)
+	_rocket_pod.projectile_manager = projectile_manager
+	_rocket_pod.selection = _weapons
+	_rocket_pod.rocket_fired.connect(_on_rocket_fired)
+	_rocket_pod.magazine_changed.connect(_on_magazine_changed)
+	_weapons.changed.connect(_on_weapon_changed)
+	projectile_manager.projectile_expired.connect(_on_projectile_expired)
+
 	# Collision mirrors the streamed render data: chunks bring their footprints
 	# in when they go detailed and take them away when they fall behind.
 	if not streamed_terrain.chunk_buildings_ready.is_connected(_on_chunk_buildings_ready):
@@ -1247,6 +1329,8 @@ func _play_destructive_hit_stop() -> void:
 
 
 func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> void:
+	if _trail_renderer != null and round_data.weapon_source == "rocket":
+		_trail_renderer.end_trail(round_data.sequence)
 	if impact_fx != null:
 		impact_fx.spawn_impact(hit_result, round_data)
 	var destructive: bool = hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY

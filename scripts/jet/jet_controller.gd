@@ -110,6 +110,7 @@ var vectoring := false
 var _terrain: Node
 var _visual: Node3D
 var _gun_mount: Node3D
+var _hardpoints: Array[Node3D] = []
 var _thrust_setting := 0.62
 var _roll_rate := 0.0
 var _pitch_rate := 0.0
@@ -441,6 +442,7 @@ func _find_visual() -> void:
 	JET_VISUALS.clarify_canopy(_visual)
 	_measure_cockpit()
 	_attach_fixed_gun_mount()
+	_attach_hardpoints()
 
 
 ## The GLB is ten times real scale. Measure the wingspan and scale to the real
@@ -475,6 +477,35 @@ func _attach_fixed_gun_mount() -> void:
 	_gun_mount.name = "FixedInternalGunMuzzle"
 	add_child(_gun_mount)
 	_gun_mount.position = _visual.transform * local_muzzle
+
+
+## Two wing hardpoints, placed from the measured airframe rather than from magic
+## numbers, so swapping the GLB cannot leave rockets launching out of the
+## fuselage. Same reasoning as the gun muzzle above.
+func _attach_hardpoints() -> void:
+	if _visual == null or not _hardpoints.is_empty():
+		return
+	var bounds := _measure_bounds()
+	if bounds.size.is_zero_approx():
+		return
+	var span := bounds.size.z
+	var centre := bounds.get_center()
+	for side in [-1.0, 1.0]:
+		var mount := Node3D.new()
+		mount.name = "Hardpoint%s" % ("Left" if side < 0.0 else "Right")
+		add_child(mount)
+		# Under the wing rather than through it, and outboard far enough that the
+		# two trails read as two rather than as one thick one.
+		mount.position = _visual.transform * Vector3(
+			centre.x,
+			centre.y - bounds.size.y * 0.15,
+			side * span * 0.28
+		)
+		_hardpoints.append(mount)
+
+
+func get_hardpoints() -> Array[Node3D]:
+	return _hardpoints
 
 
 func get_gun_mount() -> Node3D:
