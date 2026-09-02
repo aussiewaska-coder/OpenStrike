@@ -19,9 +19,9 @@ const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_lay
 
 ## Chunks per side. Ground resolution is set by how much ground one texture has
 ## to cover, not by the texture size alone: at 12 the corridor's chunks were
-## 3 km wide and 2048 px bought only 1.46 m/px. At 34 they are 1.47 km, so the
-## same request buys twice the detail, and the near tier four times.
-@export var chunk_count := 34
+## 3 km wide and 2048 px bought only 1.46 m/px. Twenty 2.5 km chunks keep the
+## 50 km theatre within a 400-mesh mobile budget while retaining 1.22 m/px.
+@export var chunk_count := 20
 @export var chunk_resolution := 33         ## vertices per chunk edge
 @export var elevation_zoom := 12           ## Terrarium zoom; 12 is ~34 m/px, SRTM's native scale
 @export var heightfield_resolution := 513
@@ -59,7 +59,8 @@ var _update_accumulator := 0.0
 var _pending_detail := {}
 var _pending_buildings := {}
 var _buildings_dir := ""
-var _building_chunk_offset := Vector2i.ZERO
+var _building_world_size_m := 0.0
+var _building_chunk_count := 0
 
 
 func _ready() -> void:
@@ -88,8 +89,8 @@ func load_region(region: Dictionary) -> bool:
 	_bounds = MapTiles.region_bounds(center_latitude, center_longitude, world_size)
 	elevation_zoom = int(region.get("elevation_zoom", elevation_zoom))
 	_buildings_dir = String(region.get("buildings_dir", ""))
-	var building_chunk_offset := int(region.get("building_chunk_offset", 0))
-	_building_chunk_offset = Vector2i(building_chunk_offset, building_chunk_offset)
+	_building_world_size_m = float(region.get("building_world_size_m", world_size))
+	_building_chunk_count = int(region.get("building_chunk_count", chunk_count))
 
 	status_changed.emit("Streaming elevation for %s..." % region.get("display_name", region_id))
 	TileClient.load_progress.connect(_on_tile_progress)
@@ -488,14 +489,13 @@ func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	var key := int(chunk["index"])
 	if _pending_buildings.has(key):
 		return
-	var path := _building_chunk_path(int(chunk["cx"]), int(chunk["cz"]))
-	if path.is_empty():
-		return
-	if not FileAccess.file_exists(path):
+	var bounds := _terrain_chunk_bounds(int(chunk["cx"]), int(chunk["cz"]))
+	var paths := _building_chunk_paths(bounds)
+	if paths.is_empty():
 		return
 	_pending_buildings[key] = true
 	var result := {"mesh": null, "records": []}
-	var task := WorkerThreadPool.add_task(_build_buildings.bind(path, result), true)
+	var task := WorkerThreadPool.add_task(_build_buildings.bind(paths, bounds, result), true)
 	while not WorkerThreadPool.is_task_completed(task):
 		await get_tree().process_frame
 	WorkerThreadPool.wait_for_task_completion(task)
@@ -512,25 +512,44 @@ func _ensure_chunk_buildings(chunk: Dictionary) -> void:
 	chunk_buildings_ready.emit(key, result.get("records", []), sample_mesh_height)
 
 
-## Smaller packaged building grids can sit inside a larger terrain grid. This
-## keeps their world coordinates and chunk density unchanged while the theatre
-## gains an outer flight ring.
-func _building_chunk_path(cx: int, cz: int) -> String:
-	return BUILDING_CHUNK_LAYOUT.path_for(
-		_buildings_dir, Vector2i(cx, cz), _building_chunk_offset
-	)
+## A coarse terrain chunk can overlap several files from the original denser
+## building grid. The records keep world coordinates, so they can be regrouped
+## at load without regenerating the packaged OSM extract.
+func _building_chunk_paths(bounds: Rect2) -> Array[String]:
+	var paths: Array[String] = []
+	for source in BUILDING_CHUNK_LAYOUT.source_chunks_for_bounds(
+		bounds,
+		_building_world_size_m,
+		_building_chunk_count
+	):
+		var path := BUILDING_CHUNK_LAYOUT.path_for(_buildings_dir, source, Vector2i.ZERO)
+		if FileAccess.file_exists(path):
+			paths.append(path)
+	return paths
+
+
+func _terrain_chunk_bounds(cx: int, cz: int) -> Rect2:
+	var world_size := float(_metadata.get("world_size_m", 0.0))
+	var size := world_size / float(maxi(chunk_count, 1))
+	var half := world_size * 0.5
+	return Rect2(Vector2(-half + cx * size, -half + cz * size), Vector2.ONE * size)
 
 
 ## Runs on a worker thread.
-func _build_buildings(path: String, result: Dictionary) -> void:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return
-	var parsed: Variant = JSON.parse_string(file.get_as_text())
-	if typeof(parsed) != TYPE_DICTIONARY:
-		push_warning("Chunk building data is invalid: %s" % path)
-		return
-	var records: Array = (parsed as Dictionary).get("buildings", [])
+func _build_buildings(paths: Array[String], bounds: Rect2, result: Dictionary) -> void:
+	var records: Array = []
+	for path in paths:
+		var file := FileAccess.open(path, FileAccess.READ)
+		if file == null:
+			continue
+		var parsed: Variant = JSON.parse_string(file.get_as_text())
+		if typeof(parsed) != TYPE_DICTIONARY:
+			push_warning("Chunk building data is invalid: %s" % path)
+			continue
+		for record in (parsed as Dictionary).get("buildings", []):
+			var point := Vector2(float(record.get("x", 0.0)), float(record.get("z", 0.0)))
+			if bounds.has_point(point):
+				records.append(record)
 	result["records"] = records
 	result["mesh"] = BuildingMesh.build(records, sample_mesh_height)
 
@@ -558,3 +577,5 @@ func _clear_terrain() -> void:
 	_metadata = {}
 	_bounds = {}
 	_overview_texture = null
+	_building_world_size_m = 0.0
+	_building_chunk_count = 0

@@ -232,6 +232,8 @@ func _switch_aircraft() -> void:
 		)
 		helicopter_anchor.rotation.y = heading
 		helicopter_anchor.velocity = Vector3.ZERO
+		helicopter_anchor.get_global_transform_interpolated()
+		helicopter_anchor.reset_physics_interpolation()
 		if helicopter_anchor.has_method("reset_altitude_smoothing"):
 			helicopter_anchor.reset_altitude_smoothing()
 
@@ -314,6 +316,8 @@ func _load_streamed_region(region: Dictionary) -> void:
 	helicopter_anchor.set_terrain(streamed_terrain)
 	helicopter_anchor.position = streamed_terrain.get_spawn_position(120.0)
 	helicopter_anchor.rotation_degrees.y = streamed_terrain.get_spawn_yaw_degrees(-35.0)
+	helicopter_anchor.get_global_transform_interpolated()
+	helicopter_anchor.reset_physics_interpolation()
 	if helicopter_anchor.has_method("reset_altitude_smoothing"):
 		helicopter_anchor.reset_altitude_smoothing()
 	# The jet is parked level over the same spawn, high enough to have somewhere
@@ -522,6 +526,8 @@ func _ground_height_at(point: Vector3) -> float:
 
 func _focus_position() -> Vector3:
 	var vehicle := _vehicle()
+	if vehicle.has_method("get_interpolated_focus_position"):
+		return vehicle.get_interpolated_focus_position()
 	if vehicle.has_method("get_focus_position"):
 		return vehicle.get_focus_position()
 	return vehicle.global_position

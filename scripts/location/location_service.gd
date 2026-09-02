@@ -79,6 +79,9 @@ func _start_updates() -> void:
 func _select_region(latitude: float, longitude: float, force_nearest: bool) -> void:
 	var nearest: Dictionary = {}
 	var nearest_distance: float = INF
+	var selected: Dictionary = {}
+	var selected_distance := INF
+	var selected_priority := -2147483648
 	for candidate in _regions:
 		var distance: float = _distance_km(
 			latitude,
@@ -89,18 +92,28 @@ func _select_region(latitude: float, longitude: float, force_nearest: bool) -> v
 		if distance < nearest_distance:
 			nearest_distance = distance
 			nearest = candidate.duplicate(true)
+		var activation_radius := float(candidate.get("activation_radius_km", 50.0))
+		if distance > activation_radius:
+			continue
+		var priority := int(candidate.get("location_priority", 0))
+		if priority > selected_priority or (priority == selected_priority and distance < selected_distance):
+			selected = candidate.duplicate(true)
+			selected_distance = distance
+			selected_priority = priority
 	if nearest.is_empty():
 		_emit_status("unavailable", "No prepared terrain regions are installed.")
 		region_selected.emit({})
 		return
-	var activation_radius: float = float(nearest.get("activation_radius_km", 50.0))
-	if not force_nearest and nearest_distance > activation_radius:
+	if selected.is_empty() and not force_nearest:
 		selected_region = {}
 		_emit_status("outside", "No offline theatre is prepared near this location yet.")
 		region_selected.emit({})
 		return
-	nearest["distance_km"] = nearest_distance
-	selected_region = nearest
+	if selected.is_empty():
+		selected = nearest
+		selected_distance = nearest_distance
+	selected["distance_km"] = selected_distance
+	selected_region = selected
 	region_selected.emit(selected_region)
 
 

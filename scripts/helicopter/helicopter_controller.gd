@@ -466,6 +466,13 @@ func get_focus_position() -> Vector3:
 	return _visual.global_position if _visual != null else global_position
 
 
+func get_interpolated_focus_position() -> Vector3:
+	var target: Node3D = _visual if _visual != null else self
+	if not target.is_inside_tree():
+		return target.global_position
+	return target.get_global_transform_interpolated().origin
+
+
 ## The gun fires along the airframe's nose, which is its local +X.
 func get_muzzle_transform() -> Transform3D:
 	# Local +X is the firing direction throughout. Once the chin turret exists

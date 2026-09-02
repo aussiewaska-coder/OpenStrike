@@ -37,3 +37,7 @@ textures/vram_compression/import_etc2_astc=true
 [editor_plugins]
 
 enabled=PackedStringArray("res://addons/OpenStrikeLocation/plugin.cfg")
+
+[physics]
+
+common/physics_interpolation=true

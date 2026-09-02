@@ -46,21 +46,22 @@ and every height query reads from it.
 
 Imagery is compressed to ETC2 on arrival -- 12 MB per 2048 px chunk becomes
 2 MB for about 70 ms of CPU -- which is what makes the detail ladder affordable:
-the six chunks nearest the aircraft carry 4096 px (0.37 m/px), the rest of the
-resident twenty-four carry 2048 px (0.73 m/px), and everything else shows the
+the nearest chunks carry 4096 px (0.61 m/px), the rest of the resident set
+carries 2048 px (1.22 m/px), and everything else shows the
 region overview. Ground resolution is set by how much ground one texture has to
-cover rather than by the texture size alone, which is why the corridor is split
-into 34 chunks a side: each remains about 1.47 km wide. Texture memory lands
-near 82 MB against 256 MB uncompressed.
+cover rather than by the texture size alone. The corridor uses 20 chunks a side:
+400 base meshes instead of the previous 1,156, keeping wide F-22 views inside
+the mobile draw-call and triangle budget. Texture memory remains bounded by the
+resident detail set.
 
 The overview and any NSW imagery are stitched from a grid of smaller requests
 rather than asked for in one piece. Both servers cap the request, not the ground
 it covers: NSW SIX refuses more than 1024 px, and Queensland answers 4100 px for
-a 1.47 km chunk but returns HTTP 500 for the whole 50 km corridor.
+a 2.5 km chunk but returns HTTP 500 for the whole 50 km corridor.
 
 Imagery is the opposite problem. Covering 50 km at the imagery's true 10 cm
 resolution would need a 500,000 pixel texture, so the region is split into a
-34 x 34 grid of roughly 1.47 km chunks. Every chunk starts on a single
+20 x 20 grid of 2.5 km chunks. Every chunk starts on a single
 region-wide overview image; the sixteen chunks nearest the aircraft are then
 re-textured at full detail and released again as it flies on. Chunk meshes all
 carry region-wide UVs, and a detailed chunk just remaps its slice back over
@@ -278,6 +279,10 @@ The envelope is deliberately compressed to roughly 90-260 m/s. At true Raptor
 speed the 50 km corridor is a short dash and the terrain cannot stream
 ahead of the aircraft. The drag constants are compressed to match, so they are
 game-feel numbers rather than F-22 numbers; what is preserved is the shape.
+
+The Gold Coast/Tweed corridor has location priority over the smaller nested
+Surfers, Burleigh and Tweed theatres, so normal launch selects the 50 km map.
+The smaller entries remain available explicitly from settings.
 
 The jet uses conventional left-stick pitch and roll (pull back for nose up),
 the right stick for camera look, and L2/R2 for left/right rudder. Hold R1 and

@@ -24,10 +24,10 @@ const CRUISE := 175.0
 const MAX_ROLL_RATE := 1.8
 const MAX_PITCH_RATE := 0.95
 const CONTROL_RESPONSE := 7.0
-const SIDESLIP_GAIN := 1.4
-const RUDDER_RATE := 0.28
-const RUDDER_SIDESLIP := 14.0
-const RUDDER_ROLL_RATE := 0.06
+const SIDESLIP_GAIN := 1.8
+const RUDDER_RATE := 0.45
+const RUDDER_SIDESLIP := 18.0
+const RUDDER_ROLL_RATE := 0.08
 const ROLL_IN_SECONDS := 0.75
 
 

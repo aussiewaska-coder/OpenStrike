@@ -64,6 +64,7 @@ script = ExtResource("3_jet")
 
 [node name="Camera3D" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55, 520, 68)
+physics_interpolation_mode = 2
 current = true
 fov = 42.0
 far = 12000.0

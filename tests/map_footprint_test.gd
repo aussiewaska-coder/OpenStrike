@@ -28,27 +28,47 @@ func _init() -> void:
 		"terrain and imagery density must not fall when the footprint grows"
 	)
 	assert(float(corridor.get("world_size_m", 0.0)) == 50000.0, "corridor must span 50 km")
-	assert(int(corridor.get("chunk_count", 0)) == 34, "50 km corridor must use 34 chunks per side")
+	assert(
+		int(corridor.get("chunk_count", 0)) ** 2 <= 400,
+		"50 km terrain must stay within the mobile mesh/draw-call budget"
+	)
 	assert(
 		int(corridor.get("heightfield_resolution", 0)) == 1025,
 		"50 km corridor must retain terrain sampling density"
 	)
-	assert(
-		float(corridor["world_size_m"]) / float(corridor["chunk_count"]) <= 1500.0,
-		"50 km expansion must preserve the streamed detail density"
-	)
-	var corridor_offset_value := int(corridor.get("building_chunk_offset", 0))
-	var corridor_offset := Vector2i(corridor_offset_value, corridor_offset_value)
-	var corridor_buildings := String(corridor["buildings_dir"])
-	assert(
-		BUILDING_CHUNK_LAYOUT.path_for(corridor_buildings, Vector2i(17, 17), corridor_offset) \
-			.ends_with("/12_12.json"),
-		"the expanded outer ring must keep the existing city grid centred"
+	assert(int(corridor.get("building_chunk_count", 0)) == 24)
+	assert(float(corridor.get("building_world_size_m", 0.0)) == 36000.0)
+	var centre_sources := BUILDING_CHUNK_LAYOUT.source_chunks_for_bounds(
+		Rect2(Vector2.ZERO, Vector2(2500.0, 2500.0)),
+		float(corridor["building_world_size_m"]),
+		int(corridor["building_chunk_count"])
 	)
 	assert(
-		BUILDING_CHUNK_LAYOUT.path_for(corridor_buildings, Vector2i(4, 17), corridor_offset).is_empty(),
-		"the new outer flight ring must not alias an existing building chunk"
+		centre_sources == [Vector2i(12, 12), Vector2i(13, 12), Vector2i(12, 13), Vector2i(13, 13)],
+		"coarse terrain chunks must load every overlapping source building file"
 	)
+	assert(
+		BUILDING_CHUNK_LAYOUT.source_chunks_for_bounds(
+			Rect2(Vector2(-25000.0, 0.0), Vector2(2500.0, 2500.0)),
+			float(corridor["building_world_size_m"]),
+			int(corridor["building_chunk_count"])
+		).is_empty(),
+		"the outer flight ring must not alias an existing building file"
+	)
+	var covered_sources := {}
+	for z in range(20):
+		for x in range(20):
+			var terrain_bounds := Rect2(
+				Vector2(-25000.0 + x * 2500.0, -25000.0 + z * 2500.0),
+				Vector2(2500.0, 2500.0)
+			)
+			for source in BUILDING_CHUNK_LAYOUT.source_chunks_for_bounds(
+				terrain_bounds,
+				float(corridor["building_world_size_m"]),
+				int(corridor["building_chunk_count"])
+			):
+				covered_sources[source] = true
+	assert(covered_sources.size() == 24 * 24, "terrain remapping must cover the complete source grid")
 
 	var offset := int(surfers.get("building_chunk_offset", 0))
 	var building_offset := Vector2i(offset, offset)
