@@ -19,6 +19,8 @@ func _run() -> void:
 	_assert_axis(&"aim_right", JoyAxis.JOY_AXIS_RIGHT_X, 1.0)
 	_assert_axis(&"camera_orbit_left", JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	_assert_axis(&"camera_orbit_right", JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
+	_assert_axis(&"rudder_left", JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
+	_assert_axis(&"rudder_right", JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	# The panel's buttons are unreachable with a controller, so their actions
 	# have to exist on the pad.
 	_assert_button(&"flight_mode_toggle", JoyButton.JOY_BUTTON_Y)
@@ -32,6 +34,8 @@ func _run() -> void:
 	_assert_button(&"target_next", JoyButton.JOY_BUTTON_DPAD_RIGHT)
 	_assert_button(&"camera_zoom_in", JoyButton.JOY_BUTTON_DPAD_UP)
 	_assert_button(&"camera_zoom_out", JoyButton.JOY_BUTTON_DPAD_DOWN)
+	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_DPAD_UP)
+	_assert_button(&"throttle_down", JoyButton.JOY_BUTTON_DPAD_DOWN)
 	assert(service.apply_response_curve(Vector2(0.1, 0.0)) == Vector2.ZERO)
 	assert(service.apply_response_curve(Vector2.RIGHT).is_equal_approx(Vector2.RIGHT))
 	assert(

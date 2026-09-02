@@ -50,10 +50,30 @@ def main() -> int:
                 if args.raw:
                     print(json.dumps(sample))
                     continue
+                jet = ""
+                if sample.get("aircraft") == "F-22":
+                    jet = (
+                        " | F22 thr %3.0f%% ab %2.0f%% in r%+.2f p%+.2f y%+.2f t%+.2f "
+                        "spd %5.1f alt %5.0f vz %+5.1f bank %+5.1f alpha %+4.1f g %+.1f"
+                        % (
+                            sample.get("jet_throttle_percent", 0),
+                            sample.get("jet_afterburner", 0) * 100,
+                            sample.get("jet_roll_input", 0),
+                            sample.get("jet_pitch_input", 0),
+                            sample.get("jet_rudder_input", 0),
+                            sample.get("jet_throttle_input", 0),
+                            sample.get("jet_airspeed_mps", 0),
+                            sample.get("jet_altitude_agl_m", 0),
+                            sample.get("jet_vertical_speed_mps", 0),
+                            sample.get("jet_bank_degrees", 0),
+                            sample.get("jet_alpha_degrees", 0),
+                            sample.get("jet_load_factor", 0),
+                        )
+                    )
                 print(
                     "fps %5.1f  proc %6.2fms  phys %5.2fms  draws %5d  "
                     "vram %6.1fMB tex %6.1fMB  |  %s %s  chunk %dm  detail %d/%d(+%d)  "
-                    "under %s %dpx  tiles c%d n%d f%d"
+                    "under %s %dpx  tiles c%d n%d f%d%s"
                     % (
                         sample.get("fps", 0), sample.get("process_ms", 0),
                         sample.get("physics_ms", 0), sample.get("draw_calls", 0),
@@ -64,6 +84,7 @@ def main() -> int:
                         "DETAIL" if sample.get("under_detailed") else "overview",
                         sample.get("under_px", 0), sample.get("cache_hits", 0),
                         sample.get("net_fetches", 0), sample.get("tile_failures", 0),
+                        jet,
                     )
                 )
     return 0

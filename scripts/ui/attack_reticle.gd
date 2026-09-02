@@ -27,6 +27,9 @@ var _hit_marker_alpha := 0.0
 var _hit_marker_destroyed := false
 var _manual_aim_active := false
 var _manual_aim_position := Vector2.ZERO
+var _jet_throttle_visible := false
+var _jet_throttle_percent := 0.0
+var _jet_afterburner := 0.0
 
 
 func _ready() -> void:
@@ -93,6 +96,13 @@ func hide_instruments() -> void:
 	queue_redraw()
 
 
+func set_jet_throttle(visible: bool, throttle_percent: float, afterburner: float) -> void:
+	_jet_throttle_visible = visible
+	_jet_throttle_percent = clampf(throttle_percent, 0.0, 100.0)
+	_jet_afterburner = clampf(afterburner, 0.0, 1.0)
+	queue_redraw()
+
+
 ## The picked ground point the aircraft can orbit. Drawn independently of the
 ## gunsight, which is faded by zoom -- the target is just as useful in a wide
 ## chase view as in the attack close-up.
@@ -121,6 +131,8 @@ func clear() -> void:
 func _draw() -> void:
 	var viewport_centre := size * 0.5
 	var sight_centre := _manual_aim_position if _manual_aim_active else viewport_centre
+	if _jet_throttle_visible:
+		_draw_jet_throttle()
 	if _has_target:
 		var target_colour := Color(1.0, 0.72, 0.25)
 		var arm := 11.0
@@ -169,3 +181,25 @@ func _draw() -> void:
 	for reading in _instruments:
 		draw_string(font, line, reading, HORIZONTAL_ALIGNMENT_LEFT, -1.0, roundi(readout_size), colour)
 		line.y += readout_size + 6.0
+
+
+func _draw_jet_throttle() -> void:
+	var font := ThemeDB.fallback_font
+	var colour := Color(1.0, 0.67, 0.22) if _jet_afterburner > 0.001 else sight_colour
+	var bar_size := Vector2(108.0, 7.0)
+	var origin := Vector2(size.x - bar_size.x - 28.0, size.y - 34.0)
+	var fill := Rect2(origin, Vector2(bar_size.x * _jet_throttle_percent / 100.0, bar_size.y))
+	draw_rect(Rect2(origin, bar_size), Color(colour, 0.28), false, 2.0)
+	draw_rect(fill, colour)
+	var label := "THR  %3d%%" % roundi(_jet_throttle_percent)
+	if _jet_afterburner > 0.001:
+		label += "  AB %2d%%" % roundi(_jet_afterburner * 100.0)
+	draw_string(
+		font,
+		origin + Vector2(0.0, -8.0),
+		label,
+		HORIZONTAL_ALIGNMENT_RIGHT,
+		bar_size.x,
+		roundi(readout_size),
+		colour
+	)

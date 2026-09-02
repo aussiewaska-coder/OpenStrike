@@ -26,7 +26,7 @@ static func trailing_distance(
 	return base_distance + fraction * distance_gain
 
 
-## The triggers move the fixed-wing throttle. They must never also enter the
+## Fixed-wing triggers are rudder pedals. They must never also enter the
 ## helicopter's camera sweep, and a helicopter orbit command likewise owns
 ## them before the camera does.
 static func routed_orbit_input(
@@ -35,6 +35,27 @@ static func routed_orbit_input(
 	aircraft_is_orbiting: bool
 ) -> float:
 	return 0.0 if fixed_wing_active or aircraft_is_orbiting else raw_input
+
+
+## Right-stick look is always available in the jet. Releasing the spring stick
+## eases the view back behind the aircraft.
+static func updated_look(
+	current: Vector2,
+	input: Vector2,
+	speed: float,
+	return_response: float,
+	delta: float
+) -> Vector2:
+	if not input.is_zero_approx():
+		return Vector2(
+			clampf(current.x - input.x * speed * delta, -1.0, 1.0),
+			clampf(current.y - input.y * speed * delta, -1.0, 1.0)
+		)
+	return current.lerp(Vector2.ZERO, 1.0 - exp(-return_response * delta))
+
+
+static func orbited_position(focus: Vector3, camera_position: Vector3, look_basis: Basis) -> Vector3:
+	return focus + look_basis * (camera_position - focus)
 
 
 ## The camera's up vector, lagging the airframe's. Returns the new lagged up

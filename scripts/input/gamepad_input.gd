@@ -34,12 +34,12 @@ const ACTION_SWITCH_AIRCRAFT := &"switch_aircraft"
 const ACTION_FREE_LOOK := &"free_look"
 const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
-## The analog triggers again, read as a throttle rather than a camera sweep.
-## Throttle needs a proportional axis and an afterburner detent, which the
-## shoulder buttons cannot give; the orbit sweep those triggers carry has no
-## fixed-wing meaning, so the jet reads the same hardware differently.
+## Fixed-wing controls share hardware with helicopter camera/zoom actions. The
+## active aircraft decides which meaning is allowed through.
 const ACTION_THROTTLE_DOWN := &"throttle_down"
 const ACTION_THROTTLE_UP := &"throttle_up"
+const ACTION_RUDDER_LEFT := &"rudder_left"
+const ACTION_RUDDER_RIGHT := &"rudder_right"
 
 const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_CAMERA_TRAVEL_TOGGLE,
@@ -145,6 +145,15 @@ func get_throttle_axis() -> float:
 	return clampf(open_strength - close_strength, -1.0, 1.0)
 
 
+## Positive yaws right. L2 is left rudder and R2 is right rudder.
+func get_rudder_axis() -> float:
+	if not is_controller_ready():
+		return 0.0
+	var left_strength := Input.get_action_strength(ACTION_RUDDER_LEFT)
+	var right_strength := Input.get_action_strength(ACTION_RUDDER_RIGHT)
+	return clampf(right_strength - left_strength, -1.0, 1.0)
+
+
 func requires_controller_attention() -> bool:
 	return not is_controller_ready() and (OS.get_name() == "Android" or _had_controller)
 
@@ -240,8 +249,8 @@ func _register_input_actions() -> void:
 	_add_axis_action(ACTION_AIM_BACK, JoyAxis.JOY_AXIS_RIGHT_Y, 1.0)
 	_add_axis_action(ACTION_CAMERA_ORBIT_LEFT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
-	_add_axis_action(ACTION_THROTTLE_UP, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
-	_add_axis_action(ACTION_THROTTLE_DOWN, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
+	_add_axis_action(ACTION_RUDDER_LEFT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
+	_add_axis_action(ACTION_RUDDER_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	_add_button_action(ACTION_FLIGHT_MODE, JoyButton.JOY_BUTTON_Y)
 	_add_button_action(ACTION_SETTINGS, JoyButton.JOY_BUTTON_X)
 	_add_button_action(ACTION_SWITCH_AIRCRAFT, JoyButton.JOY_BUTTON_B)
@@ -259,6 +268,8 @@ func _register_input_actions() -> void:
 	_add_button_action(ACTION_TARGET_NEXT, JoyButton.JOY_BUTTON_DPAD_RIGHT)
 	_add_button_action(ACTION_ZOOM_IN, JoyButton.JOY_BUTTON_DPAD_UP)
 	_add_button_action(ACTION_ZOOM_OUT, JoyButton.JOY_BUTTON_DPAD_DOWN)
+	_add_button_action(ACTION_THROTTLE_UP, JoyButton.JOY_BUTTON_DPAD_UP)
+	_add_button_action(ACTION_THROTTLE_DOWN, JoyButton.JOY_BUTTON_DPAD_DOWN)
 
 
 func _add_axis_action(action: StringName, axis: JoyAxis, axis_value: float) -> void:

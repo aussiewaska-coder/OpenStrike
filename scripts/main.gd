@@ -215,6 +215,8 @@ func _switch_aircraft() -> void:
 		heading = atan2(nose.x, -nose.z)
 
 	_flying_jet = not _flying_jet
+	_free_look = Vector2.ZERO
+	_external_aim = EXTERNAL_AIM_CURSOR.new()
 	_set_vehicle_active(leaving, false)
 	var arriving := _vehicle()
 	_set_vehicle_active(arriving, true)
@@ -249,7 +251,7 @@ func _switch_aircraft() -> void:
 	_refresh_aircraft_button()
 	_refresh_flight_mode_button()
 	settings_panel.set_flight_mode_text(flight_mode_button.text)
-	status_label.text = "F-22 RAPTOR -- L2/R2 throttle, R2 past the detent for afterburner" if _flying_jet else "AH-64D APACHE"
+	status_label.text = "F-22 RAPTOR -- DPAD UP/DOWN THROTTLE, L2/R2 RUDDER" if _flying_jet else "AH-64D APACHE"
 
 
 func _bind_cannon_to(vehicle: Node3D) -> void:
@@ -338,6 +340,16 @@ func _on_streamed_status_changed(message: String) -> void:
 ## Cockpit aim turns the view. External aim updates the target cursor and its
 ## delayed camera catch-up as separate pieces of state.
 func _update_free_look(delta: float) -> void:
+	if _flying_jet:
+		_external_aim.update(Vector2.ZERO, false, delta)
+		_free_look = JET_CAMERA.updated_look(
+			_free_look,
+			GamepadInput.get_aim_vector(),
+			free_look_speed,
+			free_look_return_response,
+			delta
+		)
+		return
 	var held := GamepadInput.is_free_look_held()
 	var look := GamepadInput.get_aim_vector() if held else Vector2.ZERO
 	if _view != View.COCKPIT:
@@ -371,7 +383,7 @@ func _update_follow_camera(delta: float) -> void:
 		_update_cockpit_camera()
 		return
 	# The helicopter may hand the triggers to target orbit or camera sweep. The
-	# jet always owns them as throttle, so its camera receives no trigger input.
+	# jet always owns them as rudder, so its camera receives no trigger input.
 	var orbit_input := _camera_orbit_input()
 	if _view == View.CHASE:
 		_update_orbit_lock(delta, orbit_input)
@@ -532,6 +544,23 @@ func _telemetry_sample() -> Dictionary:
 		"net_fetches": TileClient.network_fetches,
 		"tile_failures": TileClient.failures,
 	}
+	if _flying_jet:
+		sample.merge({
+			"jet_airspeed_mps": jet_anchor.airspeed(),
+			"jet_vertical_speed_mps": jet_anchor.velocity.y,
+			"jet_altitude_agl_m": jet_anchor.altitude_above_ground(),
+			"jet_bank_degrees": rad_to_deg(jet_anchor.bank),
+			"jet_pitch_degrees": rad_to_deg(asin(clampf(jet_anchor.global_basis.x.y, -1.0, 1.0))),
+			"jet_alpha_degrees": rad_to_deg(jet_anchor.alpha),
+			"jet_beta_degrees": rad_to_deg(jet_anchor.beta),
+			"jet_load_factor": jet_anchor.load_factor,
+			"jet_throttle_percent": jet_anchor.throttle_percent(),
+			"jet_afterburner": jet_anchor.afterburner_fraction(),
+			"jet_roll_input": jet_anchor.roll_input,
+			"jet_pitch_input": jet_anchor.pitch_input,
+			"jet_rudder_input": jet_anchor.rudder_input,
+			"jet_throttle_input": jet_anchor.throttle_input,
+		}, true)
 	if cannon_weapon != null and cannon_weapon.aim != null:
 		sample.merge({
 			"gun_yaw_degrees": cannon_weapon.aim.yaw_degrees,
@@ -642,7 +671,12 @@ func _update_attack_reticle() -> void:
 	# The cockpit has no panel, so the sight and the instruments are always up.
 	# Held R1 is also always a weapon view: the movable sight marks the manual
 	# ray while the pipper shows where the traversing barrel will land.
-	var manual_aim := GamepadInput.is_free_look_held()
+	attack_reticle.set_jet_throttle(
+		_flying_jet,
+		jet_anchor.throttle_percent() if _flying_jet else 0.0,
+		jet_anchor.afterburner_fraction() if _flying_jet else 0.0
+	)
+	var manual_aim := not _flying_jet and GamepadInput.is_free_look_held()
 	var viewport_size := camera.get_viewport().get_visible_rect().size
 	var manual_position := viewport_size * 0.5
 	if manual_aim and _view != View.COCKPIT:
@@ -721,12 +755,14 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		var distance := _camera_current_distance * _zoom_profile.distance_multiplier(_camera_zoom)
 		var height := _camera_current_height * _zoom_profile.height_multiplier(_camera_zoom)
 		desired_position = focus - _camera_travel_direction * distance + Vector3.UP * height
+		if _flying_jet and not _free_look.is_zero_approx():
+			desired_position = JET_CAMERA.orbited_position(focus, desired_position, _free_look_basis())
 	# The attack zoom flies the camera low enough to bury it in rising ground.
 	desired_position.y = maxf(
 		desired_position.y,
 		_ground_height_at(desired_position) + camera_ground_clearance
 	)
-	if not _external_aim.camera_offset.is_zero_approx():
+	if not _flying_jet and not _external_aim.camera_offset.is_zero_approx():
 		# External R1 is manual aim: rotate the view ray, not the camera boom.
 		# Recompute from the authored target every frame so a held angle is stable.
 		desired_look = EXTERNAL_FREE_LOOK.look_target(
@@ -803,8 +839,12 @@ func _apply_arcade_camera_shake(delta: float) -> void:
 
 func _on_gamepad_action_pressed(action: StringName) -> void:
 	if action == GamepadInput.ACTION_ZOOM_IN:
+		if _flying_jet:
+			return
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, true, camera_zoom_max)
 	elif action == GamepadInput.ACTION_ZOOM_OUT:
+		if _flying_jet:
+			return
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
 		_cycle_view()
@@ -903,7 +943,7 @@ func _cycle_view() -> void:
 			status_label.text = "CHASE VIEW: astern, following the nose"
 		View.CHASE:
 			_view = View.ORBIT
-			status_label.text = "ORBIT VIEW: L2/R2 sweep a locked ground point"
+			status_label.text = "ORBIT VIEW: RIGHT STICK LOOK" if _flying_jet else "ORBIT VIEW: L2/R2 SWEEP A LOCKED GROUND POINT"
 		_:
 			_view = View.COCKPIT
 			status_label.text = "COCKPIT VIEW"
@@ -938,7 +978,7 @@ func _on_jet_crashed(_point: Vector3) -> void:
 
 
 func _on_jet_respawned() -> void:
-	status_label.text = "AIRBORNE -- L2/R2 throttle, R2 past the detent for afterburner"
+	status_label.text = "AIRBORNE -- DPAD UP/DOWN THROTTLE, L2/R2 RUDDER"
 	_snap_follow_camera()
 
 
@@ -1012,7 +1052,7 @@ func _orbit_target_point() -> Variant:
 ## While R1 is held the gun chases the manual sight ray. Returns null otherwise,
 ## allowing the selected orbit target or forward aim to resume.
 func _free_look_aim_point() -> Variant:
-	if camera == null or not GamepadInput.is_free_look_held():
+	if _flying_jet or camera == null or not GamepadInput.is_free_look_held():
 		return null
 	var origin := camera.global_position
 	# Camera shake is presentation only. Aim through the stable basis captured

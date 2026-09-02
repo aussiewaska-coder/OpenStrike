@@ -142,7 +142,7 @@ corridor crossing takes two to four minutes and the coastline stays readable.
   the stall angle.
 - **Load limiter** at 9 G.
 - **Turn coordination** drives yaw toward `g * tan(bank) / v` and washes out
-  sideslip. The right stick keeps free look and adds only fine yaw trim.
+  sideslip. L2/R2 add direct left/right rudder authority.
 
 ## Boundaries
 
@@ -163,16 +163,15 @@ Bindings are per-vehicle. The helicopter's mapping is untouched.
 | Input | Jet | Helicopter |
 |---|---|---|
 | Left stick | Pitch and roll | Flight vector |
-| Right stick | Free look while R1 held; fine yaw trim otherwise | Yaw and collective |
-| L2 / R2 | Throttle down / up; R2 past the detent is afterburner | Camera orbit sweep |
-| R1 | Free look, held | unchanged |
-| L3 | Cannon | unchanged |
+| Right stick | Camera look | Yaw and collective |
+| L2 / R2 | Left / right rudder | Camera orbit sweep |
+| D-pad up / down | Throttle up / down | Camera zoom in / out |
+| R1 | Unassigned | Free look, held |
+| L3 | Fixed-forward internal cannon | Traversing chin cannon |
 | L1 | Rockets | unchanged |
 
-Throttle takes the analog triggers rather than L1/R1 because proportional
-throttle and an afterburner detent need an analog axis, and because the orbit
-sweep those triggers currently carry has no fixed-wing meaning. `L1` and `R1`
-keep the meanings the player already learned on the helicopter.
+Throttle is a persistent position moved by D-pad up/down. Releasing the button
+holds the current setting; pushing beyond military power enters afterburner.
 
 Throttle commands a target thrust, not a speed. Airspeed is what thrust and
 drag settle on.
@@ -207,10 +206,10 @@ carry it as a third entry without further structural work.
 
 ## HUD
 
-`attack_reticle.set_instruments` gains a fixed-wing variant showing speed in
-knots, altitude, heading, throttle percentage with afterburner state, current
-load factor and angle of attack. Collective has no meaning for the jet and is
-dropped from that variant.
+The fixed-wing HUD keeps throttle percentage and afterburner state visible in
+both cockpit and external views. Detailed airspeed, altitude, vertical speed,
+attitude, load, aerodynamic angles, and raw control inputs are available through
+the loopback telemetry stream for flight-model diagnosis.
 
 ## Testing
 

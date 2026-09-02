@@ -23,7 +23,7 @@ extends Node3D
 const AERO := preload("res://scripts/jet/aero_model.gd")
 const ASSIST := preload("res://scripts/jet/flight_assist.gd")
 const FEEL := preload("res://scripts/jet/airframe_feel.gd")
-const GUN_MOUNT := preload("res://scripts/weapons/gun_mount.gd")
+const FIXED_GUN_MOUNT := preload("res://scripts/weapons/fixed_gun_mount.gd")
 
 const GRAVITY := 9.80665
 
@@ -48,12 +48,12 @@ signal boundary_warning(urgency: float)
 ## second to cross rather than a third of one, or the stick is uncontrollable.
 @export var maximum_roll_rate := 1.8          ## rad/s at full stick, before authority
 @export var maximum_pitch_rate := 0.95        ## rad/s at full stick, before limits
-@export var yaw_trim_rate := 0.22             ## rad/s, the right stick's fine yaw
+@export var yaw_trim_rate := 0.22             ## rad/s, trigger rudder authority
 @export var sideslip_damping_gain := 0.8
 @export var control_response := 7.0           ## how quickly commanded rates are reached
 
 @export_group("Throttle")
-## Throttle is a position the triggers move, not a spring: releasing them holds
+## Throttle is a position the D-pad moves, not a spring: releasing it holds
 ## the setting, the way a real throttle quadrant does.
 @export var throttle_rate := 0.55
 @export var starting_throttle := 0.62
@@ -96,6 +96,10 @@ var alpha := 0.0
 var beta := 0.0
 var load_factor := 1.0
 var bank := 0.0
+var roll_input := 0.0
+var pitch_input := 0.0
+var rudder_input := 0.0
+var throttle_input := 0.0
 
 var _terrain: Node
 var _visual: Node3D
@@ -149,6 +153,10 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	beta = 0.0
 	load_factor = 1.0
 	bank = 0.0
+	roll_input = 0.0
+	pitch_input = 0.0
+	rudder_input = 0.0
+	throttle_input = 0.0
 	_crashed = false
 	_respawn_timer = 0.0
 	_oscillation_amount = 0.0
@@ -175,15 +183,16 @@ func _physics_process(delta: float) -> void:
 ## willing to fly.
 func _read_controls(delta: float) -> void:
 	var stick := Vector2.ZERO
-	var trim := Vector2.ZERO
+	var rudder_axis := 0.0
 	var throttle_axis := 0.0
 	if GamepadInput.is_controller_ready():
 		stick = GamepadInput.get_flight_vector()
-		trim = GamepadInput.get_aim_vector()
+		rudder_axis = GamepadInput.get_rudder_axis()
 		throttle_axis = GamepadInput.get_throttle_axis()
-		# The right stick belongs to the camera while free look is held.
-		if GamepadInput.is_free_look_held():
-			trim = Vector2.ZERO
+	roll_input = stick.x
+	pitch_input = -stick.y
+	rudder_input = rudder_axis
+	throttle_input = throttle_axis
 
 	throttle = clampf(throttle + throttle_axis * throttle_rate * delta, 0.0, maximum_throttle)
 	_thrust_setting = AERO.spool(_thrust_setting, throttle, spool_response, delta)
@@ -192,7 +201,7 @@ func _read_controls(delta: float) -> void:
 	bank = bank_angle(basis)
 
 	var commanded_roll := ASSIST.commanded_roll_rate(
-		stick.x,
+		roll_input,
 		maximum_roll_rate,
 		speed,
 		bank,
@@ -200,14 +209,14 @@ func _read_controls(delta: float) -> void:
 	)
 	commanded_roll += _boundary_roll_command()
 	var commanded_pitch := ASSIST.commanded_pitch_rate(
-		-stick.y,
+		pitch_input,
 		maximum_pitch_rate,
 		speed,
 		bank,
 		alpha
 	)
 	var commanded_yaw := ASSIST.level_turn_yaw_rate(bank, speed)
-	commanded_yaw += trim.x * yaw_trim_rate
+	commanded_yaw += rudder_input * yaw_trim_rate
 	commanded_yaw += ASSIST.sideslip_damping(beta, sideslip_damping_gain)
 
 	# Control surfaces move quickly but not instantly, which is what stops the
@@ -386,7 +395,7 @@ func _find_visual() -> void:
 	_scale_to_reference()
 	_stow_landing_gear()
 	_measure_cockpit()
-	_attach_gun_mount()
+	_attach_fixed_gun_mount()
 
 
 ## The GLB is ten times real scale. Measure the wingspan and scale to the real
@@ -408,12 +417,19 @@ func _stow_landing_gear() -> void:
 			(child as Node3D).visible = false
 
 
-func _attach_gun_mount() -> void:
+func _attach_fixed_gun_mount() -> void:
 	if _visual == null or _gun_mount != null:
 		return
-	_gun_mount = GUN_MOUNT.new()
-	_gun_mount.name = "GunMount"
-	_visual.add_child(_gun_mount)
+	var bounds := _measure_bounds()
+	var local_muzzle := Vector3(
+		bounds.end.x,
+		bounds.get_center().y,
+		bounds.get_center().z
+	) if not bounds.size.is_zero_approx() else Vector3(9.5, 0.0, 0.0)
+	_gun_mount = FIXED_GUN_MOUNT.new()
+	_gun_mount.name = "FixedInternalGunMuzzle"
+	add_child(_gun_mount)
+	_gun_mount.position = _visual.transform * local_muzzle
 
 
 func get_gun_mount() -> Node3D:
