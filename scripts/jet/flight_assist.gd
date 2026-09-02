@@ -149,7 +149,7 @@ static func bank_limited_roll_rate(
 ## these speeds simply reads as broken. Clamped, for the reason recorded on
 ## MAX_SIDESLIP_RATE.
 static func sideslip_damping(beta_radians: float, gain: float) -> float:
-	return clampf(-beta_radians * gain, -MAX_SIDESLIP_RATE, MAX_SIDESLIP_RATE)
+	return clampf(beta_radians * gain, -MAX_SIDESLIP_RATE, MAX_SIDESLIP_RATE)
 
 
 ## How far outside the safe area the aircraft is, 0 inside and rising to 1 well

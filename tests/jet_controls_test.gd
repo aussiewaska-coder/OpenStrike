@@ -156,6 +156,8 @@ func _bank_produces_a_turn() -> void:
 	# The model did exactly that until the sideslip term was clamped.
 	if turning.turned <= 0.0:
 		_fail("a right bank must turn right, got %.1f degrees" % rad_to_deg(turning.turned))
+	if absf(turning.beta) > deg_to_rad(5.0):
+		_fail("a coordinated turn must not fly sideways, got %.1f degrees sideslip" % rad_to_deg(turning.beta))
 
 	var bank: float = JET.bank_angle(turning.basis)
 	if bank <= deg_to_rad(45.0):

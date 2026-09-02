@@ -200,8 +200,10 @@ func _sideslip() -> void:
 	# Sideslip is washed out, not left to the pilot: an uncoordinated jet at
 	# these speeds reads as broken rather than as skilled flying.
 	_assert_approx(ASSIST.sideslip_damping(0.0, 1.4), 0.0, "no correction when coordinated")
-	if ASSIST.sideslip_damping(0.2, 1.4) >= 0.0:
-		_fail("sideslip must be corrected against its own sign")
+	# Positive beta means the velocity is to the aircraft's right, so the nose
+	# must yaw right (positive) to meet it. The opposite sign increases the slip.
+	if ASSIST.sideslip_damping(0.2, 1.4) <= 0.0:
+		_fail("positive sideslip must yaw the nose right toward the velocity")
 	_assert_approx(
 		ASSIST.sideslip_damping(-0.2, 0.8),
 		-ASSIST.sideslip_damping(0.2, 0.8),
