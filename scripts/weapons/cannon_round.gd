@@ -15,6 +15,9 @@ var distance := 0.0
 var is_tracer := false
 var damage_profile: Resource = null
 var weapon_source := ""
+## The flight model this round advances through. Null means the manager's
+## shared ballistics, which is what every 30 mm shell wants.
+var flight: RefCounted = null
 
 
 func initialise(
@@ -37,3 +40,6 @@ func initialise(
 	is_tracer = tracer
 	damage_profile = profile
 	weapon_source = source
+	# Cleared explicitly: rounds are pooled, and a recycled shell that kept the
+	# previous occupant's rocket motor would fly like one.
+	flight = null
