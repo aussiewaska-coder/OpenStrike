@@ -142,14 +142,18 @@ func _adopt_world_bounds(node: Node) -> void:
 func launch(at_position: Vector3, heading_radians: float) -> void:
 	var nose := Vector3(sin(heading_radians), 0.0, -cos(heading_radians))
 	global_position = at_position
+	var speed := (minimum_display_speed + maximum_display_speed) * 0.5
+	var altitude := at_position.y - _sample_ground()
+	var trim := AERO.trim_alpha(speed, AERO.altitude_falloff(altitude, service_ceiling_m))
 	basis = _basis_from_nose(nose, Vector3.UP)
-	velocity = nose * ((minimum_display_speed + maximum_display_speed) * 0.5)
+	basis = basis.rotated(basis.z, trim)
+	velocity = nose * speed
 	throttle = starting_throttle
 	_thrust_setting = starting_throttle
 	_roll_rate = 0.0
 	_pitch_rate = 0.0
 	_yaw_rate = 0.0
-	alpha = 0.0
+	alpha = trim
 	beta = 0.0
 	load_factor = 1.0
 	bank = 0.0
@@ -185,12 +189,13 @@ func _read_controls(delta: float) -> void:
 	var stick := Vector2.ZERO
 	var rudder_axis := 0.0
 	var throttle_axis := 0.0
-	if GamepadInput.is_controller_ready():
-		stick = GamepadInput.get_flight_vector()
-		rudder_axis = GamepadInput.get_rudder_axis()
-		throttle_axis = GamepadInput.get_throttle_axis()
+	var gamepad := get_node_or_null("/root/GamepadInput")
+	if gamepad != null and gamepad.is_controller_ready():
+		stick = gamepad.get_flight_vector()
+		rudder_axis = gamepad.get_rudder_axis()
+		throttle_axis = gamepad.get_throttle_axis()
 	roll_input = stick.x
-	pitch_input = -stick.y
+	pitch_input = pitch_input_from_stick(stick.y)
 	rudder_input = rudder_axis
 	throttle_input = throttle_axis
 
@@ -227,6 +232,12 @@ func _read_controls(delta: float) -> void:
 	_yaw_rate = lerpf(_yaw_rate, commanded_yaw, weight)
 
 	basis = rotate_body(basis, _roll_rate, _pitch_rate, _yaw_rate, delta)
+
+
+## Godot's stick vector is negative when pushed forward and positive when
+## pulled back. Positive aircraft pitch raises the nose.
+static func pitch_input_from_stick(stick_y: float) -> float:
+	return stick_y
 
 
 ## Roll about the nose, pitch about the right wing, yaw about the aircraft's own

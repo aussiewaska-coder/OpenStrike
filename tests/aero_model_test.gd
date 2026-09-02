@@ -187,6 +187,13 @@ func _envelope() -> void:
 		_fail("slower flight must need more alpha")
 	if slow >= deg_to_rad(AERO.STALL_ALPHA_DEGREES):
 		_fail("the envelope floor must not itself be a stall")
+	var altitude_falloff := AERO.altitude_falloff(900.0, 6000.0)
+	var launch_trim := AERO.trim_alpha(175.0, altitude_falloff)
+	_assert_approx(
+		AERO.lift_acceleration(175.0, launch_trim) * altitude_falloff,
+		AERO.GRAVITY,
+		"launch trim balances gravity at spawn altitude"
+	)
 
 	# Angle of attack is read off the body velocity; pitching the nose up
 	# without changing the flight path must show as positive alpha.
@@ -209,8 +216,7 @@ func _envelope() -> void:
 
 ## The angle of attack that holds level flight at a given speed.
 func _trim_alpha(speed: float) -> float:
-	var needed: float = AERO.GRAVITY / (AERO.AERO_AUTHORITY * speed * speed)
-	return needed / AERO.CL_SLOPE
+	return AERO.trim_alpha(speed)
 
 
 func _assert_approx(actual: float, expected: float, label: String) -> void:

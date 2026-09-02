@@ -47,6 +47,8 @@ class Flight:
 
 
 func _init() -> void:
+	assert(JET.pitch_input_from_stick(-1.0) < 0.0, "pushing the left stick up must lower the nose")
+	assert(JET.pitch_input_from_stick(1.0) > 0.0, "pulling the left stick down must raise the nose")
 	_level_flight_stays_level()
 	_bank_produces_a_turn()
 	_a_hard_turn_costs_speed()
@@ -59,7 +61,7 @@ func _init() -> void:
 
 ## The angle of attack that holds level flight at a given speed.
 func _trim_alpha(speed: float) -> float:
-	return (AERO.GRAVITY / (AERO.AERO_AUTHORITY * speed * speed)) / AERO.CL_SLOPE
+	return AERO.trim_alpha(speed)
 
 
 ## Level, wings level, and trimmed. Starting with the velocity exactly along the

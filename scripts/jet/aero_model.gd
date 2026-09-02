@@ -102,6 +102,14 @@ static func lift_acceleration(speed_mps: float, alpha_radians: float) -> float:
 	return AERO_AUTHORITY * speed_mps * speed_mps * lift_c
 
 
+## Small positive angle of attack needed to balance gravity in level flight.
+## Launch uses this same equilibrium as the flight tests, so the live aircraft
+## does not begin with zero lift while the tests begin already trimmed.
+static func trim_alpha(speed_mps: float, falloff: float = 1.0) -> float:
+	var lift_scale := AERO_AUTHORITY * speed_mps * speed_mps * CL_SLOPE * maxf(falloff, 0.001)
+	return clampf(GRAVITY / maxf(lift_scale, 0.001), 0.0, deg_to_rad(STALL_ALPHA_DEGREES))
+
+
 ## Drag acceleration back along the velocity, in m/s^2.
 static func drag_acceleration(speed_mps: float, alpha_radians: float) -> float:
 	var lift_c := lift_coefficient(alpha_radians)

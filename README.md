@@ -277,8 +277,9 @@ speed the 36 km corridor is a sixty-second dash and the terrain cannot stream
 ahead of the aircraft. The drag constants are compressed to match, so they are
 game-feel numbers rather than F-22 numbers; what is preserved is the shape.
 
-The jet uses the left stick for pitch and roll, the right stick for camera look,
-L2/R2 for left/right rudder, and D-pad up/down to move a persistent throttle.
+The jet uses conventional left-stick pitch and roll (pull back for nose up),
+the right stick for camera look, L2/R2 for left/right rudder, and D-pad up/down
+to move a persistent throttle.
 The HUD keeps that throttle visible in cockpit and external views and reports
 afterburner separately. L3 fires an invisible internal cannon fixed along the
 aircraft nose; it has no external gun model and cannot traverse.
