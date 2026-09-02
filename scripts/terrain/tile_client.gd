@@ -5,8 +5,8 @@ extends Node
 ## needs the network only the first time it is flown.
 ##
 ## Requests are serialised through a single HTTPRequest. That keeps the cache
-## and the await chain trivial to reason about; the whole 36 km corridor is
-## only ~24 elevation tiles, so there is nothing here worth parallelising.
+## and the await chain trivial to reason about; the whole 50 km corridor is
+## only ~42 elevation tiles, so there is nothing here worth parallelising.
 
 signal load_progress(done: int, total: int, message: String)
 
@@ -390,7 +390,7 @@ func _prepare_image(image: Image) -> void:
 ##
 ## Two limits make this necessary. NSW SIX refuses anything over 1024 px, and
 ## Queensland's ImageServer answers 4100 px happily for a 3 km chunk but returns
-## HTTP 500 for the whole 36 km corridor -- the cap is on the request, not on the
+## HTTP 500 for the whole 50 km corridor -- the cap is on the request, not on the
 ## ground it covers, so asking for several smaller boxes gets past both.
 func fetch_aerial_grid(
 	bounds: Dictionary, per_tile_px: int, per_side: int, server: String = "qld"

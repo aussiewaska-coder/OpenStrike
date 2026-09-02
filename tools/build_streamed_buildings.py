@@ -2,9 +2,10 @@
 """Split an OSM building extract into per-chunk files for a streamed theatre.
 
 The packaged theatres keep every building in one file, which is fine for 4 km
-and 2,373 buildings. The 36 km corridor has 24,755, and building them all into
-one mesh at load would stall the game, so they are written per terrain chunk
-and built only when that chunk is near enough to carry detail.
+and 2,373 buildings. The original 36 km corridor building extract has 24,755;
+it remains centred inside the expanded 50 km outer flight ring. Building them
+all into one mesh at load would stall the game, so they are written per source
+chunk and built only when that chunk is near enough to carry detail.
 
 Unlike tools/build_map_features.py this emits only the fields the renderer
 reads -- x, z, height, osm_id, footprint. That drops the numpy PCA (width,

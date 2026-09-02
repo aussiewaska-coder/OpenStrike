@@ -24,9 +24,10 @@ const CRUISE := 175.0
 const MAX_ROLL_RATE := 1.8
 const MAX_PITCH_RATE := 0.95
 const CONTROL_RESPONSE := 7.0
-const SIDESLIP_GAIN := 0.8
-const RUDDER_RATE := 0.22
-const RUDDER_ROLL_RATE := 0.08
+const SIDESLIP_GAIN := 1.4
+const RUDDER_RATE := 0.28
+const RUDDER_SIDESLIP := 14.0
+const RUDDER_ROLL_RATE := 0.06
 const ROLL_IN_SECONDS := 0.75
 
 
@@ -119,7 +120,11 @@ func _step(
 	)
 	var commanded_yaw: float = ASSIST.level_turn_yaw_rate(bank, speed)
 	commanded_yaw += ASSIST.rudder_yaw_rate(
-		rudder_stick, RUDDER_RATE, flight.beta, SIDESLIP_GAIN
+		rudder_stick,
+		deg_to_rad(RUDDER_SIDESLIP),
+		flight.beta,
+		SIDESLIP_GAIN,
+		RUDDER_RATE
 	)
 
 	var weight := 1.0 - exp(-CONTROL_RESPONSE * STEP)

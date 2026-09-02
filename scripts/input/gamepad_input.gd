@@ -6,6 +6,7 @@ signal action_pressed(action: StringName)
 
 const DEAD_ZONE := 0.18
 const RESPONSE_EXPONENT := 1.0
+const TRIGGER_DEAD_ZONE := 0.04
 
 const ACTION_FLIGHT_LEFT := &"flight_left"
 const ACTION_FLIGHT_RIGHT := &"flight_right"
@@ -29,15 +30,11 @@ const ACTION_FLIGHT_MODE := &"flight_mode_toggle"
 const ACTION_SETTINGS := &"settings_panel"
 ## B is the only face button the existing scheme leaves free.
 const ACTION_SWITCH_AIRCRAFT := &"switch_aircraft"
-## Held, not pressed: the right stick looks around while R1 is down and the view
-## returns when it is let go.
+## On the helicopter R1 retains manual aim. On the F-22 it modifies the right
+## stick into a persistent throttle control.
 const ACTION_FREE_LOOK := &"free_look"
 const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
-## Fixed-wing controls share hardware with helicopter camera/zoom actions. The
-## active aircraft decides which meaning is allowed through.
-const ACTION_THROTTLE_DOWN := &"throttle_down"
-const ACTION_THROTTLE_UP := &"throttle_up"
 const ACTION_RUDDER_LEFT := &"rudder_left"
 const ACTION_RUDDER_RIGHT := &"rudder_right"
 
@@ -58,6 +55,8 @@ var active_device_name := ""
 var active_device_guid := ""
 var _had_controller := false
 var _paused_for_controller := false
+var _left_trigger_rest := 0.0
+var _right_trigger_rest := 0.0
 
 
 func _ready() -> void:
@@ -109,6 +108,17 @@ func get_raw_aim_vector() -> Vector2:
 	)
 
 
+## Raw trigger values are exposed in telemetry because Android controller
+## drivers legitimately report either 0 or -1 at rest.
+func get_raw_trigger_vector() -> Vector2:
+	if not is_controller_ready():
+		return Vector2.ZERO
+	return Vector2(
+		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_TRIGGER_LEFT),
+		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_TRIGGER_RIGHT)
+	)
+
+
 func get_flight_yaw_collective_vector() -> Vector2:
 	return route_aim_input_to_flight(get_aim_vector(), is_free_look_held())
 
@@ -118,7 +128,28 @@ static func route_aim_input_to_flight(aim_input: Vector2, free_look_held: bool) 
 
 
 func is_free_look_held() -> bool:
-	return is_controller_ready() and Input.is_action_pressed(ACTION_FREE_LOOK)
+	return is_controller_ready() and Input.is_joy_button_pressed(
+		active_device,
+		JoyButton.JOY_BUTTON_RIGHT_SHOULDER
+	)
+
+
+## R1 turns right-stick vertical motion into a rate that moves the persistent
+## throttle from its current position. Stick up opens it; stick down closes it.
+func get_jet_throttle_axis() -> float:
+	return jet_throttle_axis(get_aim_vector(), is_free_look_held())
+
+
+func get_jet_look_vector() -> Vector2:
+	return jet_look_vector(get_aim_vector(), is_free_look_held())
+
+
+static func jet_throttle_axis(aim_input: Vector2, modifier_held: bool) -> float:
+	return clampf(-aim_input.y, -1.0, 1.0) if modifier_held else 0.0
+
+
+static func jet_look_vector(aim_input: Vector2, modifier_held: bool) -> Vector2:
+	return Vector2.ZERO if modifier_held else aim_input
 
 
 func is_cannon_firing() -> bool:
@@ -141,23 +172,28 @@ func get_camera_orbit_axis() -> float:
 	return clampf(right_strength - left_strength, -1.0, 1.0)
 
 
-## Positive opens the throttle, negative closes it. This is a rate, not a
-## position: the triggers move a throttle that then stays where it is put.
-func get_throttle_axis() -> float:
-	if not is_controller_ready():
-		return 0.0
-	var open_strength := Input.get_action_strength(ACTION_THROTTLE_UP)
-	var close_strength := Input.get_action_strength(ACTION_THROTTLE_DOWN)
-	return clampf(open_strength - close_strength, -1.0, 1.0)
-
-
 ## Positive yaws right. L2 is left rudder and R2 is right rudder.
 func get_rudder_axis() -> float:
 	if not is_controller_ready():
 		return 0.0
-	var left_strength := Input.get_action_strength(ACTION_RUDDER_LEFT)
-	var right_strength := Input.get_action_strength(ACTION_RUDDER_RIGHT)
+	var raw := get_raw_trigger_vector()
+	var left_strength := normalized_trigger(raw.x, _left_trigger_rest)
+	var right_strength := normalized_trigger(raw.y, _right_trigger_rest)
 	return clampf(right_strength - left_strength, -1.0, 1.0)
+
+
+## Supports both Android's 0..1 trigger range and drivers that expose triggers
+## as centred axes with -1 at rest. The resting value is sampled per device.
+static func normalized_trigger(raw_value: float, rest_value: float) -> float:
+	var strength := 0.0
+	if rest_value < -0.5:
+		strength = (raw_value - rest_value) / maxf(1.0 - rest_value, 0.001)
+	else:
+		strength = raw_value - rest_value
+	strength = clampf(strength, 0.0, 1.0)
+	if strength <= TRIGGER_DEAD_ZONE:
+		return 0.0
+	return (strength - TRIGGER_DEAD_ZONE) / (1.0 - TRIGGER_DEAD_ZONE)
 
 
 func requires_controller_attention() -> bool:
@@ -171,7 +207,8 @@ func get_diagnostic_text() -> String:
 	var aim := get_aim_vector()
 	var raw_flight := get_raw_flight_vector()
 	var raw_aim := get_raw_aim_vector()
-	return "GAMEPAD: %s\nLEFT  RAW %+.2f %+.2f  OUT %+.2f %+.2f\nRIGHT RAW %+.2f %+.2f  OUT %+.2f %+.2f\nL2/R2 RUDDER %+.2f" % [
+	var raw_triggers := get_raw_trigger_vector()
+	return "GAMEPAD: %s\nLEFT  RAW %+.2f %+.2f  OUT %+.2f %+.2f\nRIGHT RAW %+.2f %+.2f  OUT %+.2f %+.2f\nL2/R2 RAW %+.2f %+.2f  RUDDER %+.2f" % [
 		active_device_name,
 		raw_flight.x,
 		raw_flight.y,
@@ -181,6 +218,8 @@ func get_diagnostic_text() -> String:
 		raw_aim.y,
 		aim.x,
 		aim.y,
+		raw_triggers.x,
+		raw_triggers.y,
 		get_rudder_axis(),
 	]
 
@@ -243,6 +282,8 @@ func _set_active_controller(device: int) -> void:
 	active_device = device
 	active_device_name = Input.get_joy_name(device)
 	active_device_guid = Input.get_joy_guid(device)
+	_left_trigger_rest = Input.get_joy_axis(device, JoyAxis.JOY_AXIS_TRIGGER_LEFT)
+	_right_trigger_rest = Input.get_joy_axis(device, JoyAxis.JOY_AXIS_TRIGGER_RIGHT)
 	_had_controller = true
 	if _paused_for_controller:
 		get_tree().paused = false
@@ -300,8 +341,6 @@ func _register_input_actions() -> void:
 	_add_button_action(ACTION_TARGET_NEXT, JoyButton.JOY_BUTTON_DPAD_RIGHT)
 	_add_button_action(ACTION_ZOOM_IN, JoyButton.JOY_BUTTON_DPAD_UP)
 	_add_button_action(ACTION_ZOOM_OUT, JoyButton.JOY_BUTTON_DPAD_DOWN)
-	_add_button_action(ACTION_THROTTLE_UP, JoyButton.JOY_BUTTON_DPAD_UP)
-	_add_button_action(ACTION_THROTTLE_DOWN, JoyButton.JOY_BUTTON_DPAD_DOWN)
 
 
 func _add_axis_action(action: StringName, axis: JoyAxis, axis_value: float) -> void:

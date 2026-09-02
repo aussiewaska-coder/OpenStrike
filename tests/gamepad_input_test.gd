@@ -34,8 +34,6 @@ func _run() -> void:
 	_assert_button(&"target_next", JoyButton.JOY_BUTTON_DPAD_RIGHT)
 	_assert_button(&"camera_zoom_in", JoyButton.JOY_BUTTON_DPAD_UP)
 	_assert_button(&"camera_zoom_out", JoyButton.JOY_BUTTON_DPAD_DOWN)
-	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_DPAD_UP)
-	_assert_button(&"throttle_down", JoyButton.JOY_BUTTON_DPAD_DOWN)
 	assert(
 		service.apply_response_curve(Vector2(0.1, 0.0)).is_equal_approx(Vector2(0.1, 0.0)),
 		"post-deadzone response must not apply a second deadzone"
@@ -57,6 +55,27 @@ func _run() -> void:
 		service.route_aim_input_to_flight(Vector2(0.75, -0.5), false).is_equal_approx(Vector2(0.75, -0.5)),
 		"right-stick flight controls must resume when free look is released"
 	)
+	assert(
+		is_equal_approx(service.jet_throttle_axis(Vector2(0.25, -0.75), true), 0.75),
+		"R1 plus right-stick up must open the persistent jet throttle"
+	)
+	assert(
+		is_equal_approx(service.jet_throttle_axis(Vector2(0.25, 0.6), true), -0.6),
+		"R1 plus right-stick down must close the persistent jet throttle"
+	)
+	assert(service.jet_throttle_axis(Vector2.UP, false) == 0.0)
+	assert(
+		service.jet_look_vector(Vector2(0.5, -0.75), true) == Vector2.ZERO,
+		"the camera must not move while R1 routes the stick to throttle"
+	)
+	assert(
+		service.jet_look_vector(Vector2(0.5, -0.75), false).is_equal_approx(Vector2(0.5, -0.75)),
+		"right-stick look resumes when R1 is released"
+	)
+	assert(service.normalized_trigger(0.0, 0.0) == 0.0)
+	assert(service.normalized_trigger(-1.0, -1.0) == 0.0)
+	assert(service.normalized_trigger(1.0, 0.0) == 1.0)
+	assert(service.normalized_trigger(1.0, -1.0) == 1.0)
 	print("GAMEPAD_INPUT_TEST_PASS")
 	quit()
 

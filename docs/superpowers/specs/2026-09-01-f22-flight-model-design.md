@@ -132,7 +132,7 @@ would need.
 ### Speed envelope
 
 Roughly 90 to 260 m/s, or about 175 to 500 knots on the HUD. Deliberately
-compressed against the real aircraft: at true F-22 speeds the 36 km corridor is
+compressed against the real aircraft: at true F-22 speeds the 50 km corridor is
 a sixty-second dash, low-level flight is unflyable on a phone stick, and the
 terrain streaming cannot stay ahead of the aircraft. At this envelope a
 corridor crossing takes two to four minutes and the coastline stays readable.

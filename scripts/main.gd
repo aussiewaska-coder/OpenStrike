@@ -61,11 +61,6 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 ## The camera falls back as the aircraft accelerates. Field of view is left to
 ## the shared speed-driven offset, which now reads whichever aircraft is flying.
 @export var jet_distance_gain := 26.0
-## How much of the airframe's bank the camera takes, and how far behind. The lag
-## is the trick: a snap roll throws the horizon and the camera catches up after.
-@export var jet_camera_bank := 0.72
-@export var jet_bank_response := 3.4
-@export var jet_cockpit_fov := 84.0
 
 @export_group("Cockpit View")
 ## Pilot station relative to the airframe: forward along the nose and up.
@@ -104,6 +99,7 @@ var _camera_orbit_velocity := 0.0
 enum View {COCKPIT, CHASE, ORBIT}
 
 var _view: View = View.CHASE
+var _jet_view: int = JET_CAMERA.Mode.FOLLOW
 var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
 var _orbit_lock := ORBIT_LOCK.new()
@@ -227,8 +223,7 @@ func _switch_aircraft() -> void:
 			Vector3(handover.x, maxf(handover.y, ground + 600.0), handover.z),
 			heading
 		)
-		# An aircraft this size is worth looking at, so arrive in the chase view.
-		_view = View.CHASE
+		_jet_view = JET_CAMERA.Mode.FOLLOW
 	else:
 		helicopter_anchor.global_position = Vector3(
 			handover.x,
@@ -251,7 +246,7 @@ func _switch_aircraft() -> void:
 	_refresh_aircraft_button()
 	_refresh_flight_mode_button()
 	settings_panel.set_flight_mode_text(flight_mode_button.text)
-	status_label.text = "F-22 RAPTOR -- DPAD UP/DOWN THROTTLE, L2/R2 RUDDER" if _flying_jet else "AH-64D APACHE"
+	status_label.text = "F-22 -- R1 + RIGHT STICK THROTTLE, L2/R2 RUDDER, R3 LEVEL" if _flying_jet else "AH-64D APACHE"
 
 
 func _bind_cannon_to(vehicle: Node3D) -> void:
@@ -344,7 +339,7 @@ func _update_free_look(delta: float) -> void:
 		_external_aim.update(Vector2.ZERO, false, delta)
 		_free_look = JET_CAMERA.updated_look(
 			_free_look,
-			GamepadInput.get_aim_vector(),
+			GamepadInput.get_jet_look_vector(),
 			free_look_speed,
 			free_look_return_response,
 			delta
@@ -379,6 +374,9 @@ func _external_camera_aim_basis() -> Basis:
 
 func _update_follow_camera(delta: float) -> void:
 	_update_free_look(delta)
+	if _flying_jet:
+		_update_jet_camera(delta)
+		return
 	if _view == View.COCKPIT:
 		_update_cockpit_camera()
 		return
@@ -413,6 +411,52 @@ func _update_follow_camera(delta: float) -> void:
 	_camera_current_height = lerpf(_camera_current_height, target_height, mode_weight)
 	_camera_current_distance = lerpf(_camera_current_distance, target_distance, mode_weight)
 	_apply_follow_camera(delta)
+
+
+## All Raptor cameras are horizon-stable game views. Follow and track trail the
+## actual flight path so sideslip does not whip the camera; isometric uses a
+## fixed compass angle and moves over the ground with the aircraft.
+func _update_jet_camera(delta: float, snap: bool = false) -> void:
+	var focus := _focus_position()
+	var direction := JET_CAMERA.travel_direction(jet_anchor.velocity, jet_anchor.global_basis.x)
+	var distance := JET_CAMERA.trailing_distance(
+		jet_anchor.airspeed(),
+		jet_anchor.minimum_display_speed,
+		jet_anchor.maximum_display_speed,
+		jet_camera_distance,
+		jet_distance_gain
+	) * _zoom_profile.distance_multiplier(_camera_zoom)
+	var height := jet_camera_height * _zoom_profile.height_multiplier(_camera_zoom)
+	var desired_position := JET_CAMERA.desired_position(
+		_jet_view,
+		focus,
+		direction,
+		distance,
+		height
+	)
+	if JET_CAMERA.allows_free_look(_jet_view) and not _free_look.is_zero_approx():
+		desired_position = JET_CAMERA.orbited_position(
+			focus,
+			desired_position,
+			_free_look_basis()
+		)
+	desired_position.y = maxf(
+		desired_position.y,
+		_ground_height_at(desired_position) + camera_ground_clearance
+	)
+	var target_fov := _zoom_profile.fov(_camera_zoom) + _speed_fov_offset()
+	if snap:
+		camera.global_position = desired_position
+		_look_target = focus
+		camera.fov = target_fov
+	else:
+		var response := 10.0 if _jet_view == JET_CAMERA.Mode.FOLLOW else 6.5
+		var weight := 1.0 - exp(-response * delta)
+		camera.global_position = camera.global_position.lerp(desired_position, weight)
+		_look_target = _look_target.lerp(focus, weight)
+		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-camera_mode_response * delta))
+	if camera.global_position.distance_squared_to(_look_target) > 0.0001:
+		camera.look_at(_look_target, Vector3.UP)
 
 
 ## In travel view L2/R2 sweep around a locked ground point instead of steering
@@ -522,10 +566,11 @@ func _telemetry_sample() -> Dictionary:
 	var aim_input := GamepadInput.get_aim_vector()
 	var raw_flight_input := GamepadInput.get_raw_flight_vector()
 	var raw_aim_input := GamepadInput.get_raw_aim_vector()
+	var raw_triggers := GamepadInput.get_raw_trigger_vector()
 	var sample := {
 		"theatre": String(LocationService.selected_region.get("display_name", "none")),
 		"aircraft": "F-22" if _flying_jet else "AH-64D",
-		"view": View.keys()[_view],
+		"view": JET_CAMERA.Mode.keys()[_jet_view] if _flying_jet else View.keys()[_view],
 		"free_look_held": GamepadInput.is_free_look_held(),
 		"free_look_x": _free_look.x,
 		"free_look_y": _free_look.y,
@@ -539,6 +584,8 @@ func _telemetry_sample() -> Dictionary:
 		"raw_left_y": raw_flight_input.y,
 		"raw_right_x": raw_aim_input.x,
 		"raw_right_y": raw_aim_input.y,
+		"raw_l2": raw_triggers.x,
+		"raw_r2": raw_triggers.y,
 		"controller_name": GamepadInput.active_device_name,
 		"controller_guid": GamepadInput.active_device_guid,
 		"orbit_input": _camera_orbit_input(),
@@ -569,6 +616,7 @@ func _telemetry_sample() -> Dictionary:
 			"jet_pitch_input": jet_anchor.pitch_input,
 			"jet_rudder_input": jet_anchor.rudder_input,
 			"jet_throttle_input": jet_anchor.throttle_input,
+			"jet_wings_level_requested": jet_anchor.wings_level_requested(),
 			"jet_roll_rate_degrees_s": rad_to_deg(body_rates.x),
 			"jet_pitch_rate_degrees_s": rad_to_deg(body_rates.y),
 			"jet_yaw_rate_degrees_s": rad_to_deg(body_rates.z),
@@ -657,7 +705,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_vehicle().set_orbit_target(_target_point)
 	var range_m := roundi(_focus_position().distance_to(_target_point))
 	status_label.text = (
-		"TARGET MARKED %d m -- R1 to aim" % range_m
+		"TARGET MARKED %d m" % range_m
 		if _flying_jet
 		else "TARGET SET %d m -- L2/R2 to orbit it" % range_m
 	)
@@ -688,14 +736,15 @@ func _update_attack_reticle() -> void:
 		jet_anchor.throttle_percent() if _flying_jet else 0.0,
 		jet_anchor.afterburner_fraction() if _flying_jet else 0.0
 	)
+	var cockpit_view := not _flying_jet and _view == View.COCKPIT
 	var manual_aim := not _flying_jet and GamepadInput.is_free_look_held()
 	var viewport_size := camera.get_viewport().get_visible_rect().size
 	var manual_position := viewport_size * 0.5
 	if manual_aim and _view != View.COCKPIT:
 		manual_position = _external_aim.screen_position(viewport_size)
 	attack_reticle.set_manual_aim(manual_aim, manual_position)
-	var alpha := 1.0 if _view == View.COCKPIT or manual_aim else 1.0 - _zoom_profile.blend(_camera_zoom)
-	if _view == View.COCKPIT:
+	var alpha := 1.0 if cockpit_view or manual_aim else 1.0 - _zoom_profile.blend(_camera_zoom)
+	if cockpit_view:
 		_update_instruments()
 	else:
 		attack_reticle.hide_instruments()
@@ -735,13 +784,6 @@ func _update_cockpit_camera() -> void:
 	var vehicle := _vehicle()
 	var frame: Transform3D = vehicle.get_cockpit_transform() if vehicle.has_method("get_cockpit_transform") else vehicle.global_transform
 	camera.global_position = frame.origin
-	if _flying_jet:
-		# The jet's horizon banks with the aircraft. Levelling it here, the way
-		# the helicopter does, would throw away the one thing the cockpit view
-		# exists to show.
-		camera.global_basis = Basis.looking_at(frame.basis.x, frame.basis.y) * _free_look_basis()
-		camera.fov = jet_cockpit_fov
-		return
 	# The airframe faces local +X, so the camera looks down that axis rather
 	# than its own -Z.
 	camera.global_basis = Basis.looking_at(frame.basis.x, Vector3.UP) * _free_look_basis()
@@ -750,6 +792,9 @@ func _update_cockpit_camera() -> void:
 
 func _snap_follow_camera() -> void:
 	_release_orbit_lock()
+	if _flying_jet:
+		_update_jet_camera(0.0, true)
+		return
 	_camera_current_height = camera_height
 	_camera_current_distance = camera_trailing_distance
 	_camera_travel_direction = Vector3(0.0, 0.0, -1.0).rotated(Vector3.UP, _camera_orbit_radians)
@@ -801,23 +846,11 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		camera.look_at(_look_target, _camera_horizon(delta, snap))
 
 
-## The camera's up vector. Level for the helicopter; for the jet it takes most
-## of the airframe's bank, a beat late. One lag constant gives both the horizon
-## roll and the sense that the camera is a chase plane rather than a rigid mount.
-func _camera_horizon(delta: float, snap: bool) -> Vector3:
-	if not _flying_jet:
-		_camera_up = Vector3.UP
-		return Vector3.UP
-	var wanted := JET_CAMERA.bank_blend(jet_anchor.global_basis.y, jet_camera_bank)
-	if snap or delta <= 0.0:
-		_camera_up = wanted
-	else:
-		_camera_up = JET_CAMERA.lagged_up(_camera_up, wanted, jet_bank_response, delta)
-	# Straight up the nose the up vector degenerates and look_at fails.
-	var along := (_look_target - camera.global_position).normalized()
-	if absf(_camera_up.dot(along)) > 0.999:
-		return Vector3.UP
-	return _camera_up
+## Helicopter follow cameras retain a level horizon. F-22 views use their own
+## dedicated, horizon-stable update path above.
+func _camera_horizon(_delta: float, _snap: bool) -> Vector3:
+	_camera_up = Vector3.UP
+	return Vector3.UP
 
 
 ## Whichever aircraft is being flown, so the speed-driven field of view works
@@ -851,15 +884,19 @@ func _apply_arcade_camera_shake(delta: float) -> void:
 
 func _on_gamepad_action_pressed(action: StringName) -> void:
 	if action == GamepadInput.ACTION_ZOOM_IN:
-		if _flying_jet:
-			return
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, true, camera_zoom_max)
 	elif action == GamepadInput.ACTION_ZOOM_OUT:
-		if _flying_jet:
-			return
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
-		_cycle_view()
+		if _flying_jet:
+			var accepted: bool = jet_anchor.request_wings_level()
+			status_label.text = "WINGS LEVEL" if accepted else "WINGS LEVEL UNAVAILABLE"
+		else:
+			_cycle_view()
+	elif action == GamepadInput.ACTION_TARGET_PREVIOUS and _flying_jet:
+		_cycle_jet_view(-1)
+	elif action == GamepadInput.ACTION_TARGET_NEXT and _flying_jet:
+		_cycle_jet_view(1)
 	elif action == GamepadInput.ACTION_SWITCH_AIRCRAFT:
 		_switch_aircraft()
 	elif action == GamepadInput.ACTION_FLIGHT_MODE:
@@ -964,9 +1001,23 @@ func _cycle_view() -> void:
 		_snap_follow_camera()
 
 
+func _cycle_jet_view(direction: int) -> void:
+	var count := JET_CAMERA.Mode.size()
+	_jet_view = posmod(_jet_view + direction, count)
+	_free_look = Vector2.ZERO
+	_snap_follow_camera()
+	match _jet_view:
+		JET_CAMERA.Mode.FOLLOW:
+			status_label.text = "FOLLOW VIEW"
+		JET_CAMERA.Mode.TRACK:
+			status_label.text = "TRACK VIEW"
+		_:
+			status_label.text = "ISOMETRIC GROUND-LOCK VIEW"
+
+
 ## In the cockpit the screen is the HUD and nothing else.
 func _apply_view_chrome() -> void:
-	var external := _view != View.COCKPIT
+	var external := _flying_jet or _view != View.COCKPIT
 	mission_panel.visible = external
 	gamepad_diagnostic.get_parent().visible = external
 
@@ -990,7 +1041,7 @@ func _on_jet_crashed(_point: Vector3) -> void:
 
 
 func _on_jet_respawned() -> void:
-	status_label.text = "AIRBORNE -- DPAD UP/DOWN THROTTLE, L2/R2 RUDDER"
+	status_label.text = "AIRBORNE -- R1 + RIGHT STICK THROTTLE, L2/R2 RUDDER"
 	_snap_follow_camera()
 
 

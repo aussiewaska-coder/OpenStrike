@@ -46,14 +46,15 @@ signal boundary_warning(urgency: float)
 ## revolution remains controllable on a thumbstick.
 @export var maximum_roll_rate := 1.8          ## rad/s at full stick
 @export var maximum_pitch_rate := 0.95        ## rad/s at full stick, before limits
-@export var maximum_rudder_yaw_rate := 0.22   ## rad/s, trigger rudder authority
-@export var rudder_roll_coupling_rate := 0.08 ## rad/s at full rudder
-@export var sideslip_damping_gain := 0.8
+@export var maximum_rudder_yaw_rate := 0.28   ## rad/s, trigger rudder authority
+@export var maximum_rudder_sideslip_degrees := 14.0
+@export var rudder_roll_coupling_rate := 0.06 ## rad/s at full rudder
+@export var sideslip_damping_gain := 1.4
 @export var control_response := 7.0           ## how quickly commanded rates are reached
 
 @export_group("Throttle")
-## Throttle is a position the D-pad moves, not a spring: releasing it holds
-## the setting, the way a real throttle quadrant does.
+## Throttle is a position R1 + right-stick vertical moves, not a spring:
+## releasing either control holds the setting, like a throttle quadrant.
 @export var throttle_rate := 0.55
 @export var starting_throttle := 0.62
 ## Past 1.0 is afterburner. The travel above military power is the detent.
@@ -106,6 +107,7 @@ var _crashed := false
 var _respawn_timer := 0.0
 var _cockpit_local := Vector3(9.5, 1.05, 0.0)
 var _boundary_urgency := 0.0
+var _wings_level_requested := false
 
 
 func _ready() -> void:
@@ -152,6 +154,7 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	throttle_input = 0.0
 	_crashed = false
 	_respawn_timer = 0.0
+	_wings_level_requested = false
 
 
 func is_crashed() -> bool:
@@ -181,7 +184,7 @@ func _read_controls(delta: float) -> void:
 	if gamepad != null and gamepad.is_controller_ready():
 		stick = gamepad.get_flight_vector()
 		rudder_axis = gamepad.get_rudder_axis()
-		throttle_axis = gamepad.get_throttle_axis()
+		throttle_axis = gamepad.get_jet_throttle_axis()
 	roll_input = stick.x
 	pitch_input = pitch_input_from_stick(stick.y)
 	rudder_input = rudder_axis
@@ -202,6 +205,17 @@ func _read_controls(delta: float) -> void:
 	)
 	commanded_roll += ASSIST.rudder_roll_rate(rudder_input, rudder_roll_coupling_rate)
 	commanded_roll += _boundary_roll_command()
+	if _wings_level_requested:
+		if absf(roll_input) > 0.2:
+			_wings_level_requested = false
+		elif absf(bank) <= deg_to_rad(1.5):
+			_wings_level_requested = false
+		else:
+			var recovery := ASSIST.wings_level_roll_rate(bank, maximum_roll_rate, speed)
+			if is_zero_approx(recovery):
+				_wings_level_requested = false
+			else:
+				commanded_roll = recovery
 	var commanded_pitch := ASSIST.commanded_pitch_rate(
 		pitch_input,
 		maximum_pitch_rate,
@@ -212,9 +226,10 @@ func _read_controls(delta: float) -> void:
 	var commanded_yaw := ASSIST.level_turn_yaw_rate(bank, speed)
 	commanded_yaw += ASSIST.rudder_yaw_rate(
 		rudder_input,
-		maximum_rudder_yaw_rate,
+		deg_to_rad(maximum_rudder_sideslip_degrees),
 		beta,
-		sideslip_damping_gain
+		sideslip_damping_gain,
+		maximum_rudder_yaw_rate
 	)
 
 	# Control surfaces move quickly but not instantly, which is what stops the
@@ -379,6 +394,19 @@ func afterburner_fraction() -> float:
 
 func body_rates() -> Vector3:
 	return Vector3(_roll_rate, _pitch_rate, _yaw_rate)
+
+
+## Any deliberate roll-stick input cancels this one-shot recovery command.
+func request_wings_level() -> bool:
+	if _crashed or AERO.aerodynamic_load_limit(airspeed()) <= 1.05:
+		_wings_level_requested = false
+		return false
+	_wings_level_requested = absf(bank_angle(basis)) > deg_to_rad(1.5)
+	return _wings_level_requested
+
+
+func wings_level_requested() -> bool:
+	return _wings_level_requested
 
 
 func _find_visual() -> void:

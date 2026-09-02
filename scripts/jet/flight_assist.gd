@@ -46,6 +46,10 @@ const MAX_SIDESLIP_RATE := 0.20
 ## command. It must never cancel a recovery input after an energy-bleeding turn.
 const PITCH_HOLD_OVERRIDE_STICK := 0.35
 
+## R3 recovery is a command, not a permanent self-levelling mode. It only has
+## authority once the wing has enough dynamic pressure to sustain more than 1 G.
+const WINGS_LEVEL_GAIN := 2.4
+
 ## The turn-back only exists to stop the player leaving the theatre. It is not a
 ## wall: a hard clamp at 260 m/s stops the aircraft dead and reads as a bug.
 const TURN_BACK_RAMP_M := 900.0
@@ -140,17 +144,36 @@ static func sideslip_damping(beta_radians: float, gain: float) -> float:
 ## rotating the aircraft like a flat-steering vehicle.
 static func rudder_yaw_rate(
 	input: float,
-	maximum_rate: float,
+	maximum_sideslip_radians: float,
 	beta_radians: float,
-	damping_gain: float
+	damping_gain: float,
+	maximum_rate: float
 ) -> float:
-	return input * maximum_rate + sideslip_damping(beta_radians, damping_gain)
+	var target_beta := -input * maximum_sideslip_radians
+	return clampf(
+		(beta_radians - target_beta) * damping_gain,
+		-maximum_rate,
+		maximum_rate
+	)
 
 
 ## A yawed vertical tail also produces a smaller rolling moment. The coupling
 ## remains secondary to aileron authority but makes slips and rolls interact.
 static func rudder_roll_rate(input: float, coupling_rate: float) -> float:
 	return input * coupling_rate
+
+
+## Shortest body-axis roll back to a level horizon. Below flying speed the
+## surfaces cannot honour the command, so the pilot must recover airspeed first.
+static func wings_level_roll_rate(
+	bank_radians: float,
+	maximum_rate: float,
+	speed_mps: float
+) -> float:
+	if AERO.aerodynamic_load_limit(speed_mps) <= 1.05:
+		return 0.0
+	var bank := wrapf(bank_radians, -PI, PI)
+	return clampf(-bank * WINGS_LEVEL_GAIN, -maximum_rate, maximum_rate)
 
 
 ## How far outside the safe area the aircraft is, 0 inside and rising to 1 well

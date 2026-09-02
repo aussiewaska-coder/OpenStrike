@@ -17,7 +17,7 @@ extends RefCounted
 ## tune per axis instead of four, and it is why these return m/s^2 directly.
 ##
 ## The speed envelope is deliberately compressed -- roughly 90 to 260 m/s
-## against the real aircraft's 600 -- because at true speed the 36 km theatre is
+## against the real aircraft's 600 -- because at true speed the 50 km theatre is
 ## a sixty-second dash and the terrain cannot stream ahead of the aircraft. The
 ## drag constants are compressed to match, so they are game-feel numbers rather
 ## than F-22 numbers. What is preserved is the shape: which limit binds where,

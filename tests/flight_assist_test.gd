@@ -219,16 +219,25 @@ func _sideslip() -> void:
 		_fail("a wash-out this strong is a control input, not a correction")
 
 	_assert_approx(
-		ASSIST.rudder_yaw_rate(1.0, 0.22, 0.0, 0.8),
-		0.22,
+		ASSIST.rudder_yaw_rate(1.0, deg_to_rad(14.0), 0.0, 1.4, 0.28),
+		0.28,
 		"rudder creates a yawing moment in still air"
 	)
-	if ASSIST.rudder_yaw_rate(1.0, 0.22, -0.2, 0.8) >= 0.22:
+	if ASSIST.rudder_yaw_rate(1.0, deg_to_rad(14.0), -0.2, 1.4, 0.28) >= 0.1:
 		_fail("directional stability must oppose rudder-created sideslip")
 	_assert_approx(
 		ASSIST.rudder_roll_rate(1.0, 0.08),
 		0.08,
 		"rudder creates a smaller same-direction roll moment"
+	)
+	if ASSIST.wings_level_roll_rate(deg_to_rad(45.0), 1.8, CRUISE) >= 0.0:
+		_fail("R3 recovery must roll a right bank back toward the horizon")
+	if ASSIST.wings_level_roll_rate(deg_to_rad(-45.0), 1.8, CRUISE) <= 0.0:
+		_fail("R3 recovery must roll a left bank back toward the horizon")
+	_assert_approx(
+		ASSIST.wings_level_roll_rate(deg_to_rad(45.0), 1.8, 20.0),
+		0.0,
+		"R3 cannot create aerodynamic roll authority below flying speed"
 	)
 
 

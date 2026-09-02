@@ -2,9 +2,9 @@ extends Node3D
 ## Terrain for a theatre far too large to hold as a single texture.
 ##
 ## The elevation grid for the whole region is small enough to keep resident
-## (~24 Terrarium tiles for 36 km), so it is fetched once and every height
-## query reads from it. Imagery is the opposite problem: 36 km of 10 cm aerial
-## would be a 360,000 px image, so the region is split into a grid of chunks
+## (~42 Terrarium tiles for 50 km), so it is fetched once and every height
+## query reads from it. Imagery is the opposite problem: 50 km of 10 cm aerial
+## would be a 500,000 px image, so the region is split into a grid of chunks
 ## and only the chunks near the aircraft carry a detailed texture. Everything
 ## else shows a single region-wide overview until it is flown near.
 
@@ -19,9 +19,9 @@ const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_lay
 
 ## Chunks per side. Ground resolution is set by how much ground one texture has
 ## to cover, not by the texture size alone: at 12 the corridor's chunks were
-## 3 km wide and 2048 px bought only 1.46 m/px. At 24 they are 1.5 km, so the
+## 3 km wide and 2048 px bought only 1.46 m/px. At 34 they are 1.47 km, so the
 ## same request buys twice the detail, and the near tier four times.
-@export var chunk_count := 24
+@export var chunk_count := 34
 @export var chunk_resolution := 33         ## vertices per chunk edge
 @export var elevation_zoom := 12           ## Terrarium zoom; 12 is ~34 m/px, SRTM's native scale
 @export var heightfield_resolution := 513
@@ -29,7 +29,7 @@ const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_lay
 ## so a built-up theatre needs a couple; open country needs none.
 @export var elevation_smoothing := 0
 ## The overview is stitched rather than asked for in one piece: Queensland's
-## ImageServer answers 4100 px for a chunk but 500s for a 36 km extent.
+## ImageServer answers 4100 px for a chunk but 500s for a 50 km extent.
 @export var overview_texture_px := 2048
 @export var overview_grid_per_side := 2
 @export var detail_texture_px := 2048
@@ -76,11 +76,12 @@ func set_focus(node: Node3D) -> void:
 func load_region(region: Dictionary) -> bool:
 	_clear_terrain()
 	var region_id := String(region.get("id", "region"))
-	var world_size := float(region.get("world_size_m", 36000.0))
+	var world_size := float(region.get("world_size_m", 50000.0))
 	# A theatre may set its own grid: ground resolution depends on how much
 	# ground one chunk texture covers, so a small area wants more, finer chunks
-	# than the 36 km corridor does.
+	# than the 50 km corridor does.
 	chunk_count = int(region.get("chunk_count", chunk_count))
+	heightfield_resolution = int(region.get("heightfield_resolution", heightfield_resolution))
 	elevation_smoothing = int(region.get("elevation_smoothing", elevation_smoothing))
 	var center_latitude := float(region.get("center_latitude", 0.0))
 	var center_longitude := float(region.get("center_longitude", 0.0))
@@ -130,7 +131,7 @@ func load_region(region: Dictionary) -> bool:
 ## centre. Theatres differ by an order of magnitude, so nothing downstream may
 ## assume a size.
 func world_half_extent() -> float:
-	return float(_metadata.get("world_size_m", 36000.0)) * 0.5
+	return float(_metadata.get("world_size_m", 50000.0)) * 0.5
 
 
 func sample_height_world(world_x: float, world_z: float) -> float:
@@ -150,7 +151,7 @@ func sample_height_world(world_x: float, world_z: float) -> float:
 func sample_mesh_height(world_x: float, world_z: float) -> float:
 	if _chunks.is_empty():
 		return sample_height_world(world_x, world_z)
-	var world_size := float(_metadata.get("world_size_m", 36000.0))
+	var world_size := float(_metadata.get("world_size_m", 50000.0))
 	var chunk_size := world_size / float(chunk_count)
 	var spacing := chunk_size / float(chunk_resolution - 1)
 	var half := world_size * 0.5
@@ -184,7 +185,7 @@ func get_spawn_yaw_degrees(default_yaw: float = -35.0) -> float:
 
 
 func _spawn_world_xz() -> Vector2:
-	var world_size := float(_metadata.get("world_size_m", 36000.0))
+	var world_size := float(_metadata.get("world_size_m", 50000.0))
 	if _metadata.has("spawn_uv"):
 		var uv: Vector2 = _metadata["spawn_uv"]
 		return Vector2((uv.x - 0.5) * world_size, (uv.y - 0.5) * world_size)

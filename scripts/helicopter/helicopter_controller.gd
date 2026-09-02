@@ -481,7 +481,7 @@ func set_terrain(node: Node) -> void:
 
 
 ## The flyable box is the theatre's, not a constant: the packaged theatre is
-## 4 km across and the streamed corridor 36 km, and a fixed limit fenced the
+## 12 km across and the streamed corridor 50 km, and a fixed limit fenced the
 ## aircraft into the smaller one no matter which was loaded.
 func _adopt_world_bounds(node: Node) -> void:
 	if node != null and node.has_method("world_half_extent"):

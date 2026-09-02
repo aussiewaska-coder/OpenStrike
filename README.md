@@ -11,7 +11,7 @@ imagery from public map services and cache them to disk.
 - Nearest prepared-region selection without saving raw coordinates.
 - Editor fallback to the Surfers Paradise, Gold Coast demo theatre.
 - A packaged 4 km x 4 km heightmap derived from NASA SRTM elevation data.
-- A streamed 36 km Gold Coast / Tweed corridor reaching 25 km inland and south
+- A streamed 50 km Gold Coast / Tweed corridor reaching the coast, hinterland and south
   to Tweed Heads, at roughly 10 cm aerial imagery near the aircraft.
 - Offline OpenStreetMap building positions and Gold Coast shoreline geometry
   (packaged theatres only).
@@ -31,7 +31,7 @@ them.
 
 | | Surfers Paradise | Gold Coast / Tweed corridor |
 | --- | --- | --- |
-| Size | 4 km | 36 km |
+| Size | 12 km | 50 km |
 | Source | packaged in the APK | streamed and cached |
 | Elevation | SRTM crop, ~16 m/px | Terrarium z12, ~34 m/px |
 | Imagery | one 4096 px aerial | ~1.5 m/px near the aircraft |
@@ -40,7 +40,7 @@ them.
 
 ## Streamed theatres
 
-The elevation grid for a whole region is small — the 36 km corridor is 30
+The elevation grid for a whole region is small — the 50 km corridor is 42
 Terrarium tiles, under a megabyte — so it is fetched once and kept resident,
 and every height query reads from it.
 
@@ -50,16 +50,17 @@ the six chunks nearest the aircraft carry 4096 px (0.37 m/px), the rest of the
 resident twenty-four carry 2048 px (0.73 m/px), and everything else shows the
 region overview. Ground resolution is set by how much ground one texture has to
 cover rather than by the texture size alone, which is why the corridor is split
-into 24 chunks a side rather than 12: the same request buys twice the detail. Texture memory lands near 82 MB against 256 MB uncompressed.
+into 34 chunks a side: each remains about 1.47 km wide. Texture memory lands
+near 82 MB against 256 MB uncompressed.
 
 The overview and any NSW imagery are stitched from a grid of smaller requests
 rather than asked for in one piece. Both servers cap the request, not the ground
 it covers: NSW SIX refuses more than 1024 px, and Queensland answers 4100 px for
-a 3 km chunk but returns HTTP 500 for the whole 36 km corridor.
+a 1.47 km chunk but returns HTTP 500 for the whole 50 km corridor.
 
-Imagery is the opposite problem. Covering 36 km at the imagery's true 10 cm
-resolution would need a 360,000 pixel texture, so the region is split into a
-grid of chunks (12 x 12 by default, 3 km each). Every chunk starts on a single
+Imagery is the opposite problem. Covering 50 km at the imagery's true 10 cm
+resolution would need a 500,000 pixel texture, so the region is split into a
+34 x 34 grid of roughly 1.47 km chunks. Every chunk starts on a single
 region-wide overview image; the sixteen chunks nearest the aircraft are then
 re-textured at full detail and released again as it flies on. Chunk meshes all
 carry region-wide UVs, and a detailed chunk just remaps its slice back over
@@ -274,13 +275,15 @@ steep level turn. Corner speed is where the wing and airframe limits cross, at
 155 m/s.
 
 The envelope is deliberately compressed to roughly 90-260 m/s. At true Raptor
-speed the 36 km corridor is a sixty-second dash and the terrain cannot stream
+speed the 50 km corridor is a short dash and the terrain cannot stream
 ahead of the aircraft. The drag constants are compressed to match, so they are
 game-feel numbers rather than F-22 numbers; what is preserved is the shape.
 
 The jet uses conventional left-stick pitch and roll (pull back for nose up),
-the right stick for camera look, L2/R2 for left/right rudder, and D-pad up/down
-to move a persistent throttle.
+the right stick for camera look, and L2/R2 for left/right rudder. Hold R1 and
+right-stick up/down moves a persistent throttle relative to its current setting;
+releasing either control holds that setting. D-pad left/right cycles close
+follow, wider tracking, and isometric ground-lock views. D-pad up/down zooms.
 Stick axes are sampled only from the selected physical controller with one
 circular deadzone; Android virtual devices cannot contribute duplicate input.
 Roll is unrestricted through knife-edge and inverted flight, so holding lateral
@@ -288,8 +291,10 @@ stick completes a 360-degree roll. Upright turn coordination fades out before
 knife-edge instead of fighting the manoeuvre. Rudder yaws the nose into a
 sideslip and adds a smaller same-direction roll moment; releasing it lets
 directional stability align the nose with the flight path again.
-The HUD keeps that throttle visible in cockpit and external views and reports
-afterburner separately. L3 fires an invisible internal cannon fixed along the
+R3 requests a wings-level recovery when the aircraft has enough aerodynamic
+authority; deliberate roll input cancels it. Every F-22 camera keeps a stable
+horizon, and the HUD keeps throttle and afterburner visible. L3 fires an
+invisible internal cannon fixed along the
 aircraft nose; it has no external gun model and cannot traverse.
 
 There is no departure. The angle-of-attack limiter eases off nose-up commands
