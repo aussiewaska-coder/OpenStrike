@@ -36,7 +36,18 @@ func _run() -> void:
 	_assert_button(&"camera_zoom_out", JoyButton.JOY_BUTTON_DPAD_DOWN)
 	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_DPAD_UP)
 	_assert_button(&"throttle_down", JoyButton.JOY_BUTTON_DPAD_DOWN)
-	assert(service.apply_response_curve(Vector2(0.1, 0.0)) == Vector2.ZERO)
+	assert(
+		service.apply_response_curve(Vector2(0.1, 0.0)).is_equal_approx(Vector2(0.1, 0.0)),
+		"post-deadzone response must not apply a second deadzone"
+	)
+	assert(service.apply_circular_deadzone(Vector2(0.1, 0.0)) == Vector2.ZERO)
+	var half_stick: Vector2 = service.apply_circular_deadzone(Vector2(0.5, 0.0))
+	assert(half_stick.x > 0.38 and half_stick.x < 0.40, "half stick must survive the single deadzone")
+	assert(
+		service.controller_preference_score("DualSense Wireless Controller") \
+		> service.controller_preference_score("Virtual Gamepad"),
+		"physical PlayStation controller must win over Android virtual devices"
+	)
 	assert(service.apply_response_curve(Vector2.RIGHT).is_equal_approx(Vector2.RIGHT))
 	assert(
 		service.route_aim_input_to_flight(Vector2(0.75, -0.5), true) == Vector2.ZERO,

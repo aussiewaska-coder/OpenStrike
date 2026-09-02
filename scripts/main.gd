@@ -520,6 +520,8 @@ func _update_instruments() -> void:
 ## engine's own counters, so a shell on the device sees both at once.
 func _telemetry_sample() -> Dictionary:
 	var aim_input := GamepadInput.get_aim_vector()
+	var raw_flight_input := GamepadInput.get_raw_flight_vector()
+	var raw_aim_input := GamepadInput.get_raw_aim_vector()
 	var sample := {
 		"theatre": String(LocationService.selected_region.get("display_name", "none")),
 		"aircraft": "F-22" if _flying_jet else "AH-64D",
@@ -533,6 +535,12 @@ func _telemetry_sample() -> Dictionary:
 		"external_aim_camera_y": _external_aim.camera_offset.y,
 		"aim_input_x": aim_input.x,
 		"aim_input_y": aim_input.y,
+		"raw_left_x": raw_flight_input.x,
+		"raw_left_y": raw_flight_input.y,
+		"raw_right_x": raw_aim_input.x,
+		"raw_right_y": raw_aim_input.y,
+		"controller_name": GamepadInput.active_device_name,
+		"controller_guid": GamepadInput.active_device_guid,
 		"orbit_input": _camera_orbit_input(),
 		"aircraft_yaw_degrees": _vehicle().global_rotation_degrees.y,
 		"camera_yaw_degrees": camera.global_rotation_degrees.y,

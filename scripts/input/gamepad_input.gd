@@ -5,7 +5,7 @@ signal controller_attention_changed(required: bool, title: String, detail: Strin
 signal action_pressed(action: StringName)
 
 const DEAD_ZONE := 0.18
-const RESPONSE_EXPONENT := 1.15
+const RESPONSE_EXPONENT := 1.0
 
 const ACTION_FLIGHT_LEFT := &"flight_left"
 const ACTION_FLIGHT_RIGHT := &"flight_right"
@@ -82,25 +82,31 @@ func is_controller_ready() -> bool:
 func get_flight_vector() -> Vector2:
 	if not is_controller_ready():
 		return Vector2.ZERO
-	return apply_response_curve(Input.get_vector(
-		ACTION_FLIGHT_LEFT,
-		ACTION_FLIGHT_RIGHT,
-		ACTION_FLIGHT_FORWARD,
-		ACTION_FLIGHT_BACK,
-		DEAD_ZONE
-	))
+	return apply_response_curve(apply_circular_deadzone(get_raw_flight_vector()))
 
 
 func get_aim_vector() -> Vector2:
 	if not is_controller_ready():
 		return Vector2.ZERO
-	return apply_response_curve(Input.get_vector(
-		ACTION_AIM_LEFT,
-		ACTION_AIM_RIGHT,
-		ACTION_AIM_FORWARD,
-		ACTION_AIM_BACK,
-		DEAD_ZONE
-	))
+	return apply_response_curve(apply_circular_deadzone(get_raw_aim_vector()))
+
+
+func get_raw_flight_vector() -> Vector2:
+	if not is_controller_ready():
+		return Vector2.ZERO
+	return Vector2(
+		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_LEFT_X),
+		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_LEFT_Y)
+	)
+
+
+func get_raw_aim_vector() -> Vector2:
+	if not is_controller_ready():
+		return Vector2.ZERO
+	return Vector2(
+		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_RIGHT_X),
+		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_RIGHT_Y)
+	)
 
 
 func get_flight_yaw_collective_vector() -> Vector2:
@@ -163,27 +169,45 @@ func get_diagnostic_text() -> String:
 		return "GAMEPAD: NOT CONNECTED"
 	var flight := get_flight_vector()
 	var aim := get_aim_vector()
-	var orbit := get_camera_orbit_axis()
-	return "GAMEPAD: %s\nSTRAFE/DRIVE %+.2f %+.2f\nYAW/LIFT     %+.2f %+.2f\nL2/R2 CAMERA %+.2f\nL1 %s   R1 %s   L3 %s" % [
+	var raw_flight := get_raw_flight_vector()
+	var raw_aim := get_raw_aim_vector()
+	return "GAMEPAD: %s\nLEFT  RAW %+.2f %+.2f  OUT %+.2f %+.2f\nRIGHT RAW %+.2f %+.2f  OUT %+.2f %+.2f\nL2/R2 RUDDER %+.2f" % [
 		active_device_name,
+		raw_flight.x,
+		raw_flight.y,
 		flight.x,
 		flight.y,
+		raw_aim.x,
+		raw_aim.y,
 		aim.x,
 		aim.y,
-		orbit,
-		"ON" if is_rockets_firing() else "--",
-		"ON" if is_cannon_firing() else "--",
-		"ON" if is_context_held() else "--",
+		get_rudder_axis(),
 	]
 
 
 func apply_response_curve(value: Vector2) -> Vector2:
+	var magnitude := clampf(value.length(), 0.0, 1.0)
+	if is_zero_approx(magnitude):
+		return Vector2.ZERO
+	return value.normalized() * pow(magnitude, RESPONSE_EXPONENT)
+
+
+static func apply_circular_deadzone(value: Vector2) -> Vector2:
 	var magnitude := value.length()
 	if magnitude <= DEAD_ZONE:
 		return Vector2.ZERO
 	var remapped := (magnitude - DEAD_ZONE) / (1.0 - DEAD_ZONE)
-	remapped = pow(clampf(remapped, 0.0, 1.0), RESPONSE_EXPONENT)
-	return value.normalized() * remapped
+	return value.normalized() * clampf(remapped, 0.0, 1.0)
+
+
+static func controller_preference_score(device_name: String) -> int:
+	var lowered := device_name.to_lower()
+	if lowered.contains("virtual"):
+		return -100
+	if lowered.contains("dualsense") or lowered.contains("dualshock") \
+		or lowered.contains("wireless controller") or lowered.contains("sony"):
+		return 100
+	return 0
 
 
 func _select_initial_controller() -> void:
@@ -191,12 +215,20 @@ func _select_initial_controller() -> void:
 	if connected.is_empty():
 		_clear_controller(false)
 		return
-	_set_active_controller(int(connected[0]))
+	var preferred := int(connected[0])
+	var preferred_score := controller_preference_score(Input.get_joy_name(preferred))
+	for candidate_value in connected:
+		var candidate := int(candidate_value)
+		var score := controller_preference_score(Input.get_joy_name(candidate))
+		if score > preferred_score:
+			preferred = candidate
+			preferred_score = score
+	_set_active_controller(preferred)
 
 
 func _on_joy_connection_changed(device: int, connected: bool) -> void:
 	if connected:
-		_set_active_controller(device)
+		_select_initial_controller()
 		return
 	if device != active_device:
 		return

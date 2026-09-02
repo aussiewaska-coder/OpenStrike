@@ -53,9 +53,15 @@ def main() -> int:
                 jet = ""
                 if sample.get("aircraft") == "F-22":
                     jet = (
-                        " | F22 thr %3.0f%% ab %2.0f%% in r%+.2f p%+.2f y%+.2f t%+.2f "
+                        " | F22 pad %s raw L%+.2f,%+.2f R%+.2f,%+.2f "
+                        "thr %3.0f%% ab %2.0f%% in r%+.2f p%+.2f y%+.2f t%+.2f "
                         "spd %5.1f alt %5.0f vz %+5.1f bank %+5.1f alpha %+4.1f g %+.1f"
                         % (
+                            sample.get("controller_name", "?"),
+                            sample.get("raw_left_x", 0),
+                            sample.get("raw_left_y", 0),
+                            sample.get("raw_right_x", 0),
+                            sample.get("raw_right_y", 0),
                             sample.get("jet_throttle_percent", 0),
                             sample.get("jet_afterburner", 0) * 100,
                             sample.get("jet_roll_input", 0),

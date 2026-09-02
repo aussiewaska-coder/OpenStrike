@@ -280,6 +280,8 @@ game-feel numbers rather than F-22 numbers; what is preserved is the shape.
 The jet uses conventional left-stick pitch and roll (pull back for nose up),
 the right stick for camera look, L2/R2 for left/right rudder, and D-pad up/down
 to move a persistent throttle.
+Stick axes are sampled only from the selected physical controller with one
+circular deadzone; Android virtual devices cannot contribute duplicate input.
 The HUD keeps that throttle visible in cockpit and external views and reports
 afterburner separately. L3 fires an invisible internal cannon fixed along the
 aircraft nose; it has no external gun model and cannot traverse.

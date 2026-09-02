@@ -10,8 +10,8 @@ combat and high-speed fixed-wing flight without a second map.
 
 ## Scope
 
-In scope: the flight model, control mapping, camera behaviour, airframe feel
-and HUD instruments.
+In scope: the flight model, control mapping, camera behaviour and HUD
+instruments.
 
 Out of scope, deliberately: vapour effects, contrails, afterburner plume,
 control-surface animation, gear and flap animation, and weapon work. Tuning a
@@ -57,7 +57,6 @@ and because it keeps the entire flight model provable without running the game:
 |---|---|---|
 | `scripts/jet/aero_model.gd` | pure statics | Lift coefficient against angle of attack, drag polar, thrust spool, control authority against dynamic pressure, load-limited pitch rate |
 | `scripts/jet/flight_assist.gd` | pure statics | Bank hold, angle-of-attack limiter, turn coordination, boundary turn-back |
-| `scripts/jet/airframe_feel.gd` | pure statics | Buffet, high-speed vibration, post-manoeuvre oscillation |
 | `scripts/jet/jet_controller.gd` | `Node3D` | Owns state, integrates forces, drives the visual |
 
 `aero_model.gd` is to `jet_controller.gd` what `rotor_model.gd` is to
@@ -115,9 +114,9 @@ Three further behaviours come from single terms:
 There is no departure. Flight assist is always on, per the design decision.
 
 Below roughly 110 m/s the aircraft enters a degraded state that is emergent
-rather than scripted: control authority falls with `v^2`, buffet ramps up, and
-lift can no longer hold the aircraft's weight, so the nose mushes and the
-aircraft sinks. Recovery is to unload and let it accelerate.
+rather than scripted: control authority falls with `v^2`, and lift can no
+longer hold the aircraft's weight, so the nose mushes and the aircraft sinks.
+Recovery is to unload and let it accelerate.
 
 The lift coefficient curve still falls off past the stall angle, so the model
 can express a stall. The angle-of-attack limiter simply prevents the aircraft
@@ -184,10 +183,9 @@ gated on the active vehicle.
 - The camera's up vector lags the airframe's up. One lag constant produces both
   the horizon banking and the roll lag.
 - Field of view widens with speed; trailing distance grows slightly with it.
-- `airframe_feel.gd` drives buffet near high angle of attack, airframe
-  vibration with dynamic pressure, and a decaying pitch oscillation after hard
-  manoeuvres — applied to the visual node exactly as `airframe_motion.gd` is
-  today.
+- The visual follows the physical anchor exactly. Synthetic high-frequency
+  buffet, vibration and post-manoeuvre wallow were removed because they made
+  both the external aircraft and cockpit camera visibly jitter.
 
 ## Vehicle selection
 

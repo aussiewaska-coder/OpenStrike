@@ -49,6 +49,7 @@ class Flight:
 func _init() -> void:
 	assert(JET.pitch_input_from_stick(-1.0) < 0.0, "pushing the left stick up must lower the nose")
 	assert(JET.pitch_input_from_stick(1.0) > 0.0, "pulling the left stick down must raise the nose")
+	_pitch_responds()
 	_level_flight_stays_level()
 	_bank_produces_a_turn()
 	_a_hard_turn_costs_speed()
@@ -57,6 +58,19 @@ func _init() -> void:
 	_it_cannot_be_departed()
 	print("JET_CONTROLS_TEST_PASS")
 	quit()
+
+
+func _pitch_responds() -> void:
+	var pull := _fly(1.0, 0.0, 1.0, 1.0)
+	var push := _fly(1.0, 0.0, -1.0, 1.0)
+	var pull_nose := rad_to_deg(asin(clampf(pull.basis.x.y, -1.0, 1.0)))
+	var push_nose := rad_to_deg(asin(clampf(push.basis.x.y, -1.0, 1.0)))
+	var pull_path := rad_to_deg(asin(clampf(pull.velocity.normalized().y, -1.0, 1.0)))
+	var push_path := rad_to_deg(asin(clampf(push.velocity.normalized().y, -1.0, 1.0)))
+	if pull_nose < 20.0 or pull_path < 8.0:
+		_fail("a one-second pull must produce a clear climb, nose %.1f path %.1f" % [pull_nose, pull_path])
+	if push_nose > -18.0 or push_path > -8.0:
+		_fail("a one-second push must produce a clear descent, nose %.1f path %.1f" % [push_nose, push_path])
 
 
 ## The angle of attack that holds level flight at a given speed.

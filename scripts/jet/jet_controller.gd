@@ -14,15 +14,14 @@ extends Node3D
 ## The structural difference from helicopter_controller.gd: that one keeps only
 ## rotation.y on the anchor and puts pitch and roll on the visual as decoration.
 ## This one cannot. Bank has to be real, because it is what produces the turn,
-## so the anchor carries a full three-axis basis and the visual carries nothing
-## but buffet.
+## so the anchor carries a full three-axis basis and the visual follows it
+## without a second decorative attitude.
 ##
 ## Aerodynamic coefficients live in aero_model.gd with the reasoning for their
 ## numbers.
 
 const AERO := preload("res://scripts/jet/aero_model.gd")
 const ASSIST := preload("res://scripts/jet/flight_assist.gd")
-const FEEL := preload("res://scripts/jet/airframe_feel.gd")
 const FIXED_GUN_MOUNT := preload("res://scripts/weapons/fixed_gun_mount.gd")
 
 const GRAVITY := 9.80665
@@ -83,12 +82,6 @@ signal boundary_warning(urgency: float)
 ## below the HUD combiner, rather than only the sky ahead of it.
 @export var cockpit_pitch_degrees := -6.0
 
-@export_group("Airframe Feel")
-@export var buffet_degrees := 1.4
-@export var vibration_degrees := 0.22
-@export var oscillation_degrees := 2.6
-@export var buffet_shake_metres := 0.35
-
 var velocity := Vector3.ZERO
 ## 0 to 1 is idle to military power; above 1 is afterburner.
 var throttle := 0.62
@@ -109,10 +102,6 @@ var _roll_rate := 0.0
 var _pitch_rate := 0.0
 var _yaw_rate := 0.0
 var _world_limit := 1950.0
-var _feel_time := 0.0
-var _oscillation_time := 99.0
-var _oscillation_amount := 0.0
-var _peak_load := 1.0
 var _crashed := false
 var _respawn_timer := 0.0
 var _cockpit_local := Vector3(9.5, 1.05, 0.0)
@@ -163,7 +152,6 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	throttle_input = 0.0
 	_crashed = false
 	_respawn_timer = 0.0
-	_oscillation_amount = 0.0
 
 
 func is_crashed() -> bool:
@@ -305,21 +293,6 @@ func _integrate(delta: float) -> void:
 	global_position += velocity * delta
 
 	load_factor = AERO.lift_acceleration(speed, alpha) * falloff / GRAVITY
-	_track_manoeuvre(delta)
-
-
-## The wallow after a hard pull. Amplitude is set at the moment the aircraft
-## unloads, so it only appears once the manoeuvre is over.
-func _track_manoeuvre(delta: float) -> void:
-	_oscillation_time += delta
-	if absf(load_factor) > _peak_load:
-		_peak_load = absf(load_factor)
-	elif _peak_load > 3.0 and absf(load_factor) < 2.0:
-		_oscillation_amount = FEEL.oscillation_amplitude(_peak_load, oscillation_degrees)
-		_oscillation_time = 0.0
-		_peak_load = 1.0
-	elif absf(load_factor) < 2.0:
-		_peak_load = maxf(absf(load_factor), 1.0)
 
 
 ## Roll the assist adds to bring the aircraft back over the theatre. Zero
@@ -521,26 +494,10 @@ func get_muzzle_transform() -> Transform3D:
 	return _visual.global_transform if _visual != null else global_transform
 
 
-## Buffet and vibration only. The airframe's real attitude is on the anchor, so
-## unlike the helicopter there is no lean to fake here.
-func _update_visual(delta: float) -> void:
+## The airframe follows the physical anchor exactly. High-frequency synthetic
+## buffet and vibration made both the external model and cockpit camera jitter.
+func _update_visual(_delta: float) -> void:
 	if _visual == null:
 		return
-	_feel_time += delta
-	var speed := velocity.length()
-	var buffet := FEEL.buffet(alpha, speed)
-	var vibration := FEEL.vibration(speed, maximum_display_speed)
-	var shake := FEEL.shake_degrees(
-		_feel_time,
-		buffet,
-		buffet_degrees,
-		vibration,
-		vibration_degrees
-	)
-	var wallow := FEEL.oscillation(_oscillation_time, _oscillation_amount)
-	_visual.position = FEEL.phases(_feel_time, FEEL.BUFFET_FREQUENCY) * buffet_shake_metres * buffet
-	_visual.rotation = Vector3(
-		deg_to_rad(shake.y),
-		deg_to_rad(shake.z),
-		deg_to_rad(shake.x + wallow)
-	)
+	_visual.position = Vector3.ZERO
+	_visual.rotation = Vector3.ZERO
