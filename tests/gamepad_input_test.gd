@@ -24,7 +24,10 @@ func _run() -> void:
 	# The panel's buttons are unreachable with a controller, so their actions
 	# have to exist on the pad.
 	_assert_button(&"flight_mode_toggle", JoyButton.JOY_BUTTON_Y)
-	_assert_button(&"settings_panel", JoyButton.JOY_BUTTON_X)
+	# X taps to cycle weapons and holds for settings, so the settings action is
+	# no longer bound to a button -- main.gd raises it from the hold, and the
+	# on-screen SETTINGS button still emits it.
+	_assert_button(&"weapon_cycle", JoyButton.JOY_BUTTON_X)
 	_assert_button(&"free_look", JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	_assert_button(&"weapon_cannon", JoyButton.JOY_BUTTON_LEFT_STICK)
 	_assert_button(&"weapon_rockets", JoyButton.JOY_BUTTON_LEFT_SHOULDER)
@@ -76,6 +79,28 @@ func _run() -> void:
 	assert(service.normalized_trigger(-1.0, -1.0) == 0.0)
 	assert(service.normalized_trigger(1.0, 0.0) == 1.0)
 	assert(service.normalized_trigger(1.0, -1.0) == 1.0)
+
+	# X carries two jobs separated by time: a tap cycles weapons, a hold opens
+	# settings. The discrimination is a pure function of how long the button was
+	# down, so it is testable without a controller attached.
+	assert(
+		service.is_hold(service.SETTINGS_HOLD_SECONDS + 0.05),
+		"a press past the threshold must count as a hold"
+	)
+	assert(
+		not service.is_hold(service.SETTINGS_HOLD_SECONDS - 0.05),
+		"a press short of the threshold must count as a tap"
+	)
+	assert(not service.is_hold(0.0), "an instant release must be a tap")
+	assert(
+		service.SETTINGS_HOLD_SECONDS <= 0.6,
+		"the hold threshold must stay short enough to cycle weapons quickly"
+	)
+	assert(
+		service.SETTINGS_HOLD_SECONDS >= 0.3,
+		"a threshold this short would open settings on an ordinary tap"
+	)
+
 	print("GAMEPAD_INPUT_TEST_PASS")
 	quit()
 
