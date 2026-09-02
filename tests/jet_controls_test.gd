@@ -25,6 +25,9 @@ const MAX_ROLL_RATE := 1.8
 const MAX_PITCH_RATE := 0.95
 const CONTROL_RESPONSE := 7.0
 const SIDESLIP_GAIN := 0.8
+const RUDDER_RATE := 0.22
+const RUDDER_ROLL_RATE := 0.08
+const ROLL_IN_SECONDS := 0.75
 
 
 ## The state of one aircraft, flown forward.
@@ -51,6 +54,8 @@ func _init() -> void:
 	assert(JET.pitch_input_from_stick(1.0) > 0.0, "pulling the left stick down must raise the nose")
 	_pitch_responds()
 	_level_flight_stays_level()
+	_full_roll_is_available()
+	_rudder_creates_a_recoverable_sideslip()
 	_bank_produces_a_turn()
 	_a_hard_turn_costs_speed()
 	_controls_recover_after_a_hard_turn()
@@ -95,18 +100,27 @@ func _start(speed: float) -> Flight:
 
 
 ## One physics step, mirroring jet_controller._read_controls and ._integrate.
-func _step(flight: Flight, roll_stick: float, pitch_stick: float, throttle: float) -> void:
+func _step(
+	flight: Flight,
+	roll_stick: float,
+	pitch_stick: float,
+	throttle: float,
+	rudder_stick := 0.0
+) -> void:
 	var speed := flight.velocity.length()
 	var bank: float = JET.bank_angle(flight.basis)
 
 	var commanded_roll: float = ASSIST.commanded_roll_rate(
 		roll_stick, MAX_ROLL_RATE, speed, bank, flight.roll_rate
 	)
+	commanded_roll += ASSIST.rudder_roll_rate(rudder_stick, RUDDER_ROLL_RATE)
 	var commanded_pitch: float = ASSIST.commanded_pitch_rate(
 		pitch_stick, MAX_PITCH_RATE, speed, bank, flight.alpha
 	)
 	var commanded_yaw: float = ASSIST.level_turn_yaw_rate(bank, speed)
-	commanded_yaw += ASSIST.sideslip_damping(flight.beta, SIDESLIP_GAIN)
+	commanded_yaw += ASSIST.rudder_yaw_rate(
+		rudder_stick, RUDDER_RATE, flight.beta, SIDESLIP_GAIN
+	)
 
 	var weight := 1.0 - exp(-CONTROL_RESPONSE * STEP)
 	flight.roll_rate = lerpf(flight.roll_rate, commanded_roll, weight)
@@ -143,6 +157,14 @@ func _fly(seconds: float, roll_stick: float, pitch_stick: float, throttle: float
 	return flight
 
 
+func _fly_banked_turn(seconds: float, pitch_stick: float, throttle: float) -> Flight:
+	var flight := _start(CRUISE)
+	var roll_in_steps := int(ROLL_IN_SECONDS / STEP)
+	for step_index in range(int(seconds / STEP)):
+		_step(flight, 1.0 if step_index < roll_in_steps else 0.0, pitch_stick, throttle)
+	return flight
+
+
 ## Trimmed and hands off, the aircraft must hold its height and its wings. If it
 ## does not, every other assertion here is measuring a falling aircraft.
 func _level_flight_stays_level() -> void:
@@ -155,11 +177,58 @@ func _level_flight_stays_level() -> void:
 		_fail("hands off, the aircraft turned %.2f degrees" % rad_to_deg(flight.turned))
 
 
+func _full_roll_is_available() -> void:
+	var flight := _start(CRUISE)
+	var reached_inverted := false
+	var completed_roll := false
+	for _step_index in range(int(5.0 / STEP)):
+		_step(flight, 1.0, 0.0, 1.0)
+		var up_dot := flight.basis.y.dot(Vector3.UP)
+		if up_dot < -0.8:
+			reached_inverted = true
+		elif reached_inverted and up_dot > 0.8:
+			completed_roll = true
+			break
+	if not reached_inverted:
+		_fail("full lateral stick never rolled the aircraft inverted")
+	if not completed_roll:
+		_fail("full lateral stick could not complete a 360-degree roll")
+
+
+func _rudder_creates_a_recoverable_sideslip() -> void:
+	var flight := _start(CRUISE)
+	var initial_nose := JET.heading_of(flight.basis)
+	var initial_path := atan2(flight.velocity.x, -flight.velocity.z)
+	for _step_index in range(int(1.5 / STEP)):
+		_step(flight, 0.0, 0.0, 1.0, 1.0)
+
+	var nose_change := absf(wrapf(JET.heading_of(flight.basis) - initial_nose, -PI, PI))
+	var path_heading := atan2(flight.velocity.x, -flight.velocity.z)
+	var path_change := absf(wrapf(path_heading - initial_path, -PI, PI))
+	var slip_with_rudder := absf(flight.beta)
+	var coupled_bank := absf(JET.bank_angle(flight.basis))
+	if nose_change < deg_to_rad(5.0):
+		_fail("full rudder barely yawed the nose, got %.1f degrees" % rad_to_deg(nose_change))
+	if slip_with_rudder < deg_to_rad(5.0):
+		_fail("rudder steered without producing realistic sideslip, beta %.1f" % rad_to_deg(slip_with_rudder))
+	if path_change >= nose_change * 0.6:
+		_fail("rudder flat-turned the flight path %.1f degrees for %.1f degrees of yaw" % [
+			rad_to_deg(path_change), rad_to_deg(nose_change)
+		])
+	if coupled_bank < deg_to_rad(2.0):
+		_fail("rudder produced no lateral roll coupling, bank %.1f" % rad_to_deg(coupled_bank))
+
+	for _step_index in range(int(3.0 / STEP)):
+		_step(flight, 0.0, 0.0, 1.0)
+	if absf(flight.beta) >= slip_with_rudder * 0.4:
+		_fail("released rudder did not let directional stability remove the sideslip")
+
+
 ## The heart of it. Roll the aircraft and pull, and the heading must come round
 ## -- with no code anywhere that turns the aircraft.
 func _bank_produces_a_turn() -> void:
 	var straight := _fly(6.0, 0.0, 0.0, 1.0)
-	var turning := _fly(6.0, 1.0, 0.6, 1.0)
+	var turning := _fly_banked_turn(6.0, 0.6, 1.0)
 
 	if absf(straight.turned) > deg_to_rad(2.0):
 		_fail("flying straight turned %.1f degrees" % rad_to_deg(straight.turned))
@@ -177,16 +246,11 @@ func _bank_produces_a_turn() -> void:
 	var bank: float = JET.bank_angle(turning.basis)
 	if bank <= deg_to_rad(45.0):
 		_fail("a full right stick must establish a steep right bank, got %.1f" % rad_to_deg(bank))
-	# And it must never roll past the ceiling into inverted flight.
-	if turning.peak_bank > deg_to_rad(90.0):
-		_fail("the bank ceiling let the aircraft reach %.1f degrees" % rad_to_deg(turning.peak_bank))
-
-
 ## Induced drag is what makes energy a resource. A hard turn must cost speed
 ## even at full throttle, or there is nothing to manage.
 func _a_hard_turn_costs_speed() -> void:
 	var straight := _fly(8.0, 0.0, 0.0, 1.0)
-	var turning := _fly(8.0, 1.0, 1.0, 1.0)
+	var turning := _fly_banked_turn(8.0, 1.0, 1.0)
 	var straight_speed := straight.velocity.length()
 	var turning_speed := turning.velocity.length()
 
@@ -206,9 +270,7 @@ func _a_hard_turn_costs_speed() -> void:
 ## opposite roll and nose-down stick are recovery commands and must remain
 ## immediately authoritative even after the manoeuvre has bled energy.
 func _controls_recover_after_a_hard_turn() -> void:
-	var flight := _start(CRUISE)
-	for _step_index in range(int(8.0 / STEP)):
-		_step(flight, 1.0, 1.0, 1.0)
+	var flight := _fly_banked_turn(8.0, 1.0, 1.0)
 
 	var speed_before := flight.velocity.length()
 	var bank_before := JET.bank_angle(flight.basis)
@@ -224,33 +286,35 @@ func _controls_recover_after_a_hard_turn() -> void:
 		_fail("opposite stick after a hard turn removed only %.1f degrees of bank at %.1f m/s" % [
 			rad_to_deg(bank_recovery), speed_before
 		])
-	if path_recovery < deg_to_rad(6.0):
+	if path_recovery < deg_to_rad(3.5):
 		_fail("nose-down stick after a hard turn changed the path only %.1f degrees at %.1f m/s" % [
 			rad_to_deg(path_recovery), speed_before
 		])
+	if flight.pitch_rate > -0.5:
+		_fail("nose-down recovery achieved only %.1f degrees/s of pitch rate" % rad_to_deg(flight.pitch_rate))
 
 
 ## Release the stick mid-turn and the aircraft must keep its bank and keep
 ## turning. Rolling upright here is what would make it a spaceship.
 func _the_bank_is_held() -> void:
 	var flight := _start(CRUISE)
-	var roll_in := int(2.0 / STEP)
+	var roll_in := int(ROLL_IN_SECONDS / STEP)
 	var established := 0.0
-	for step_index in range(int(9.0 / STEP)):
+	for step_index in range(int(8.0 / STEP)):
 		if step_index == roll_in:
 			established = JET.bank_angle(flight.basis)
-		# Roll in for two seconds, then hands off for seven.
+		# Roll into a bank, then release lateral stick and hold it.
 		_step(flight, 1.0 if step_index < roll_in else 0.0, 0.0, 1.0)
 
 	var final_bank: float = JET.bank_angle(flight.basis)
 	if established <= deg_to_rad(30.0):
-		_fail("two seconds of full stick should establish a bank, got %.1f" % rad_to_deg(established))
+		_fail("roll-in should establish a bank, got %.1f" % rad_to_deg(established))
 	if final_bank <= deg_to_rad(25.0):
 		_fail("the aircraft rolled itself upright: %.1f degrees left of %.1f" % [
 			rad_to_deg(final_bank), rad_to_deg(established)
 		])
 	# It must still be turning seven seconds after the stick was released.
-	if absf(flight.turned) < deg_to_rad(45.0):
+	if absf(flight.turned) < deg_to_rad(15.0):
 		_fail("a held bank must keep the aircraft turning, got %.1f" % rad_to_deg(flight.turned))
 	if flight.turned <= 0.0:
 		_fail("a held right bank must keep turning right")

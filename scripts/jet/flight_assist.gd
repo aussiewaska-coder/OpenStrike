@@ -31,15 +31,10 @@ const ALPHA_LIMIT_BAND := 0.65
 ## active push the aircraft reached 90 degrees of alpha and departed.
 const ALPHA_RECOVERY_GAIN := 20.0
 
-## The steepest bank the assist will command. Rolling is rate commanded, so
-## without a ceiling a full stick rolls straight past inverted in well under a
-## second and the level-turn hold then loops the aircraft over the top.
-const MAX_COMMAND_BANK_DEGREES := 80.0
-const BANK_LIMIT_BAND_DEGREES := 18.0
-const BANK_RECOVERY_GAIN := 4.0
-## Roll rate is high enough that a limiter reacting to present bank alone always
-## overshoots. Easing on where the bank will shortly be fixes that.
-const BANK_LEAD_S := 0.2
+## Automatic turn coordination belongs to upright banked flight. It fades away
+## before knife-edge so it cannot fight an axial or barrel roll.
+const MAX_COORDINATED_BANK_DEGREES := 80.0
+const COORDINATION_FADE_START_DEGREES := 60.0
 
 ## Sideslip correction is a wash-out, never a primary control. Unclamped, a gain
 ## on an angle in radians reaches 1.5 rad/s during a hard roll -- twenty times
@@ -66,11 +61,18 @@ const MAX_TURN_BACK_BANK_DEGREES := 55.0
 ## hold demanded over 7 G, the wing could not deliver it, and the aircraft
 ## looped instead of turning.
 static func sustainable_bank(speed_mps: float) -> float:
-	var ceiling := deg_to_rad(MAX_COMMAND_BANK_DEGREES)
+	var ceiling := deg_to_rad(MAX_COORDINATED_BANK_DEGREES)
 	var available: float = minf(AERO.LOAD_LIMIT_G, AERO.aerodynamic_load_limit(speed_mps))
 	if available <= 1.05:
 		return 0.0
 	return minf(acos(1.0 / available), ceiling)
+
+
+static func coordination_weight(bank_radians: float) -> float:
+	var magnitude := absf(wrapf(bank_radians, -PI, PI))
+	var start := deg_to_rad(COORDINATION_FADE_START_DEGREES)
+	var finish := deg_to_rad(MAX_COORDINATED_BANK_DEGREES)
+	return 1.0 - clampf((magnitude - start) / maxf(finish - start, 0.001), 0.0, 1.0)
 
 
 ## Body pitch rate that holds a level turn at the current bank. Wings level it
@@ -87,7 +89,8 @@ static func level_turn_pitch_rate(bank_radians: float, speed_mps: float) -> floa
 	var limit := sustainable_bank(speed_mps)
 	var bank := clampf(bank_radians, -limit, limit)
 	var cosine := maxf(cos(bank), 0.01)
-	return (GRAVITY / speed_mps) * (sin(bank) * sin(bank)) / cosine
+	return (GRAVITY / speed_mps) * (sin(bank) * sin(bank)) / cosine \
+		* coordination_weight(bank_radians)
 
 
 ## Body yaw rate that keeps the turn coordinated, so the aircraft turns with the
@@ -97,7 +100,7 @@ static func level_turn_yaw_rate(bank_radians: float, speed_mps: float) -> float:
 		return 0.0
 	var limit := sustainable_bank(speed_mps)
 	var bank := clampf(bank_radians, -limit, limit)
-	return (GRAVITY / speed_mps) * sin(bank)
+	return (GRAVITY / speed_mps) * sin(bank) * coordination_weight(bank_radians)
 
 
 ## Rate the aircraft's heading actually sweeps at a given bank.
@@ -125,35 +128,29 @@ static func alpha_limited_pitch_rate(commanded: float, alpha_radians: float) -> 
 	return commanded * clampf(margin / band, 0.0, 1.0)
 
 
-## Roll into the bank ceiling is eased off and then reversed; rolling away from
-## it is never restricted, because that is the recovery. The ceiling tightens as
-## the aircraft slows, so running out of speed quietly takes the steepest turns
-## away rather than letting the pilot fly into a departure.
-static func bank_limited_roll_rate(
-	commanded: float,
-	bank_radians: float,
-	roll_rate: float,
-	speed_mps: float
-) -> float:
-	var ceiling := sustainable_bank(speed_mps)
-	var projected := bank_radians + roll_rate * BANK_LEAD_S
-	var side := signf(projected)
-	if side == 0.0 or signf(commanded) != side:
-		return commanded
-	var band: float = minf(deg_to_rad(BANK_LIMIT_BAND_DEGREES), maxf(ceiling * 0.4, 0.0001))
-	var margin := ceiling - absf(projected)
-	if margin >= band:
-		return commanded
-	if margin <= 0.0:
-		return -side * minf(-margin, band) * BANK_RECOVERY_GAIN
-	return commanded * (margin / band)
-
-
 ## Sideslip is washed out rather than left to the pilot: an uncoordinated jet at
 ## these speeds simply reads as broken. Clamped, for the reason recorded on
 ## MAX_SIDESLIP_RATE.
 static func sideslip_damping(beta_radians: float, gain: float) -> float:
 	return clampf(beta_radians * gain, -MAX_SIDESLIP_RATE, MAX_SIDESLIP_RATE)
+
+
+## Rudder creates a yawing moment and therefore sideslip. Directional stability
+## then opposes that slip, so held rudder settles at an offset instead of
+## rotating the aircraft like a flat-steering vehicle.
+static func rudder_yaw_rate(
+	input: float,
+	maximum_rate: float,
+	beta_radians: float,
+	damping_gain: float
+) -> float:
+	return input * maximum_rate + sideslip_damping(beta_radians, damping_gain)
+
+
+## A yawed vertical tail also produces a smaller rolling moment. The coupling
+## remains secondary to aileron authority but makes slips and rolls interact.
+static func rudder_roll_rate(input: float, coupling_rate: float) -> float:
+	return input * coupling_rate
 
 
 ## How far outside the safe area the aircraft is, 0 inside and rising to 1 well
@@ -192,18 +189,17 @@ static func turn_back_bank(
 	return direction * strength * urgency * deg_to_rad(MAX_TURN_BACK_BANK_DEGREES)
 
 
-## Roll rate the pilot's stick asks for, after the aircraft's own bank ceiling.
-## Pilot rate authority stays constant across the arcade speed envelope; the
-## wing's available lift still determines what path the aircraft can fly.
+## Roll rate is the pilot's direct body-axis command. There is deliberately no
+## bank-angle limiter: fighter roll control must remain available through
+## knife-edge, inverted flight, and a complete 360-degree roll.
 static func commanded_roll_rate(
 	stick: float,
 	maximum_rate: float,
-	speed_mps: float,
-	bank_radians: float,
-	roll_rate: float
+	_speed_mps: float,
+	_bank_radians: float,
+	_roll_rate: float
 ) -> float:
-	var pilot := stick * maximum_rate
-	return bank_limited_roll_rate(pilot, bank_radians, roll_rate, speed_mps)
+	return stick * maximum_rate
 
 
 ## Pitch rate the stick asks for, put through every limit in turn. The automatic

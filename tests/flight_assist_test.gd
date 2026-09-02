@@ -14,7 +14,7 @@ const CRUISE := 155.0
 
 func _init() -> void:
 	_bank_hold()
-	_bank_ceiling()
+	_coordination_envelope()
 	_turn_geometry()
 	_alpha_limiter()
 	_sideslip()
@@ -79,65 +79,51 @@ func _bank_hold() -> void:
 	)
 
 
-## The bank ceiling. Without it a rate-commanded roll goes straight past
-## inverted, and the level-turn hold then loops the aircraft over the top rather
-## than turning it -- which is exactly what the model did before this existed.
-func _bank_ceiling() -> void:
-	# The ceiling is the steepest bank the wing can hold a level turn at, so it
-	# must tighten as the aircraft slows and never exceed the hard limit.
-	var ceiling := deg_to_rad(ASSIST.MAX_COMMAND_BANK_DEGREES)
-	_assert_approx(ASSIST.sustainable_bank(CRUISE), ceiling, "corner speed reaches the hard bank limit")
-	_assert_approx(ASSIST.sustainable_bank(260.0), ceiling, "high speed reaches the hard bank limit")
+## Ordinary banked turns receive pitch/yaw coordination. That assist must fade
+## away before knife-edge while direct roll authority remains untouched.
+func _coordination_envelope() -> void:
+	var ceiling := deg_to_rad(ASSIST.MAX_COORDINATED_BANK_DEGREES)
+	_assert_approx(ASSIST.sustainable_bank(CRUISE), ceiling, "corner speed reaches the coordination limit")
+	_assert_approx(ASSIST.sustainable_bank(260.0), ceiling, "high speed reaches the coordination limit")
 	var slow: float = ASSIST.sustainable_bank(90.0)
 	if slow >= ceiling:
-		_fail("the ceiling must tighten at low speed, got %.1f degrees" % rad_to_deg(slow))
+		_fail("the coordinated-turn envelope must tighten at low speed, got %.1f degrees" % rad_to_deg(slow))
 	if ASSIST.sustainable_bank(70.0) >= slow:
-		_fail("the ceiling must keep tightening as the aircraft slows further")
+		_fail("the coordination envelope must keep tightening as the aircraft slows further")
 
-	# At the ceiling, the level turn it implies must be one the wing can fly.
+	# Inside the envelope, the level-turn assist must ask for a load the wing can fly.
 	for speed in [90.0, 110.0, 155.0, 260.0]:
-		var bank: float = ASSIST.sustainable_bank(speed)
+		var bank: float = minf(ASSIST.sustainable_bank(speed), deg_to_rad(55.0))
 		var rate: float = ASSIST.level_turn_pitch_rate(bank, speed)
 		var load: float = AERO.load_factor(speed, rate)
 		var available: float = minf(AERO.LOAD_LIMIT_G, AERO.aerodynamic_load_limit(speed))
 		if load > available + 0.1:
-			_fail("holding the ceiling bank at %.0f m/s needs %.1f G but only %.1f is available" % [
+			_fail("coordinated bank at %.0f m/s needs %.1f G but only %.1f is available" % [
 				speed, load, available
 			])
 
-	# Well inside the ceiling the limiter must not touch the stick at all.
 	_assert_approx(
-		ASSIST.bank_limited_roll_rate(1.0, 0.0, 0.0, CRUISE),
+		ASSIST.coordination_weight(deg_to_rad(45.0)),
 		1.0,
-		"the bank limiter leaves ordinary rolling alone"
+		"ordinary banked flight gets full turn coordination"
 	)
-	# Rolling away from the ceiling is always free, because that is the recovery.
 	_assert_approx(
-		ASSIST.bank_limited_roll_rate(-1.0, deg_to_rad(85.0), 0.0, CRUISE),
-		-1.0,
-		"rolling away from the ceiling is never restricted"
+		ASSIST.coordination_weight(deg_to_rad(90.0)),
+		0.0,
+		"knife-edge flight gets no level-turn assist"
 	)
-	# Rolling further into it is eased, then reversed.
-	var eased: float = ASSIST.bank_limited_roll_rate(1.0, deg_to_rad(72.0), 0.0, CRUISE)
-	if not (eased > 0.0 and eased < 1.0):
-		_fail("roll into the ceiling must be eased off, got %f" % eased)
-	var reversed_rate: float = ASSIST.bank_limited_roll_rate(1.0, deg_to_rad(88.0), 0.0, CRUISE)
-	if reversed_rate >= 0.0:
-		_fail("past the ceiling the assist must roll back, got %f" % reversed_rate)
-
-	# The lead term is the difference between catching the bank and chasing it:
-	# a fast roll must start easing earlier than a stationary one.
-	var without: float = ASSIST.bank_limited_roll_rate(1.0, deg_to_rad(60.0), 0.0, CRUISE)
-	var with_rate: float = ASSIST.bank_limited_roll_rate(1.0, deg_to_rad(60.0), 1.5, CRUISE)
-	if with_rate >= without:
-		_fail("a fast roll must be eased off earlier than a slow one")
+	_assert_approx(
+		ASSIST.commanded_roll_rate(1.0, 1.8, CRUISE, deg_to_rad(135.0), 1.8),
+		1.8,
+		"inverted flight must retain full roll authority"
+	)
 
 
 func _turn_geometry() -> void:
 	# The body rates that sustain a level turn must resolve to the familiar
 	# g * tan(bank) / v heading rate. If they do not, the aircraft either climbs
 	# or descends through every turn it flies.
-	for degrees in [20.0, 45.0, 60.0, 75.0]:
+	for degrees in [20.0, 45.0, 60.0]:
 		var bank := deg_to_rad(degrees)
 		var pitch: float = ASSIST.level_turn_pitch_rate(bank, CRUISE)
 		var yaw: float = ASSIST.level_turn_yaw_rate(bank, CRUISE)
@@ -231,6 +217,19 @@ func _sideslip() -> void:
 		_fail("a large slip must clamp to the ceiling, got %f" % clamped)
 	if ASSIST.MAX_SIDESLIP_RATE >= 0.5:
 		_fail("a wash-out this strong is a control input, not a correction")
+
+	_assert_approx(
+		ASSIST.rudder_yaw_rate(1.0, 0.22, 0.0, 0.8),
+		0.22,
+		"rudder creates a yawing moment in still air"
+	)
+	if ASSIST.rudder_yaw_rate(1.0, 0.22, -0.2, 0.8) >= 0.22:
+		_fail("directional stability must oppose rudder-created sideslip")
+	_assert_approx(
+		ASSIST.rudder_roll_rate(1.0, 0.08),
+		0.08,
+		"rudder creates a smaller same-direction roll moment"
+	)
 
 
 func _boundary() -> void:

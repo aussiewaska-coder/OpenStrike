@@ -283,16 +283,20 @@ the right stick for camera look, L2/R2 for left/right rudder, and D-pad up/down
 to move a persistent throttle.
 Stick axes are sampled only from the selected physical controller with one
 circular deadzone; Android virtual devices cannot contribute duplicate input.
+Roll is unrestricted through knife-edge and inverted flight, so holding lateral
+stick completes a 360-degree roll. Upright turn coordination fades out before
+knife-edge instead of fighting the manoeuvre. Rudder yaws the nose into a
+sideslip and adds a smaller same-direction roll moment; releasing it lets
+directional stability align the nose with the flight path again.
 The HUD keeps that throttle visible in cockpit and external views and reports
 afterburner separately. L3 fires an invisible internal cannon fixed along the
 aircraft nose; it has no external gun model and cannot traverse.
 
 There is no departure. The angle-of-attack limiter eases off nose-up commands
-near the stall and actively pushes past it, the bank ceiling tightens as the
-aircraft slows to whatever the wing can still hold a level turn at, and the
-theatre edge warns and turns the aircraft back rather than walling it. Running
-out of speed still reduces lift and makes the aircraft sink, but it never
-suppresses the pilot's roll or recovery pitch command.
+near the stall and actively pushes past it, while the theatre edge warns and
+turns the aircraft back rather than walling it. Running out of speed still
+reduces lift and makes the aircraft sink, but it never suppresses the pilot's
+roll or recovery pitch command.
 
 Known limitation: `streamed_terrain.gd` suppresses near-detail imagery above
 45 m/s, which the jet is always above, so low passes render coarser than the

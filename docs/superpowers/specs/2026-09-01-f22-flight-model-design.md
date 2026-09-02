@@ -141,13 +141,19 @@ corridor crossing takes two to four minutes and the coastline stays readable.
 
 - **Bank holds; it does not auto-level.** With the stick centred, roll rate
   damps to zero and the bank stays where the pilot left it.
+- **Roll is unrestricted.** Full lateral stick remains authoritative through
+  knife-edge and inverted flight and can complete a 360-degree roll.
 - **Pitch holds flight-path angle** with the stick centred, rather than
   snapping to the horizon. Deliberate pitch input fades this hold completely.
 - **Angle-of-attack limiter** caps commanded pitch rate so alpha never reaches
   the stall angle.
 - **Load limiter** at 9 G.
-- **Turn coordination** drives yaw toward `g * tan(bank) / v` and washes out
-  sideslip. L2/R2 add direct left/right rudder authority.
+- **Turn coordination** drives yaw toward `g * tan(bank) / v` in ordinary
+  upright turns, then fades out between 60 and 80 degrees of bank so it does
+  not fight aerobatics.
+- **Rudder** on L2/R2 creates yaw and sideslip rather than flat turning. The
+  vertical-tail response adds a smaller coupled roll moment, while directional
+  stability recentres the slip after release.
 
 ## Boundaries
 
@@ -222,8 +228,8 @@ The pure modules are tested headless, in the established `SceneTree` style.
 | Test | Asserts |
 |---|---|
 | `tests/aero_model_test.gd` | Lift coefficient rises to the stall angle then falls; induced drag follows `Cl^2`; thrust spools monotonically toward its command; load-limited pitch rate *decreases* as speed rises |
-| `tests/flight_assist_test.gd` | Bank holds near stick centre; low speed does not suppress pilot rate commands; recovery input overrides turn hold; angle, coordination, and boundary limits remain active |
-| `tests/jet_controls_test.gd` | Integration: a full roll-and-pull produces a turn and loses speed; full opposite controls recover immediately afterward |
+| `tests/flight_assist_test.gd` | Bank holds near stick centre; full roll survives inverted flight; upright coordination fades before knife-edge; rudder yaw, sideslip damping, coupled roll, angle and boundary limits remain active |
+| `tests/jet_controls_test.gd` | Integration: full lateral stick completes a 360-degree roll; rudder creates and recovers sideslip; a banked pull turns and loses speed; opposite controls recover immediately afterward |
 
 There is no Godot binary on the development machine, so these are written to be
 run by hand:

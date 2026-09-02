@@ -42,12 +42,12 @@ signal boundary_warning(urgency: float)
 @export var hull_clearance_m := 2.5
 
 @export_group("Control")
-## Deliberately below the real aircraft's 200 degrees per second. The assist
-## caps bank at 80 degrees, so the whole usable range has to take about a
-## second to cross rather than a third of one, or the stick is uncontrollable.
+## Deliberately below the fastest published fighter roll responses so a full
+## revolution remains controllable on a thumbstick.
 @export var maximum_roll_rate := 1.8          ## rad/s at full stick
 @export var maximum_pitch_rate := 0.95        ## rad/s at full stick, before limits
-@export var yaw_trim_rate := 0.22             ## rad/s, trigger rudder authority
+@export var maximum_rudder_yaw_rate := 0.22   ## rad/s, trigger rudder authority
+@export var rudder_roll_coupling_rate := 0.08 ## rad/s at full rudder
 @export var sideslip_damping_gain := 0.8
 @export var control_response := 7.0           ## how quickly commanded rates are reached
 
@@ -200,6 +200,7 @@ func _read_controls(delta: float) -> void:
 		bank,
 		_roll_rate
 	)
+	commanded_roll += ASSIST.rudder_roll_rate(rudder_input, rudder_roll_coupling_rate)
 	commanded_roll += _boundary_roll_command()
 	var commanded_pitch := ASSIST.commanded_pitch_rate(
 		pitch_input,
@@ -209,8 +210,12 @@ func _read_controls(delta: float) -> void:
 		alpha
 	)
 	var commanded_yaw := ASSIST.level_turn_yaw_rate(bank, speed)
-	commanded_yaw += rudder_input * yaw_trim_rate
-	commanded_yaw += ASSIST.sideslip_damping(beta, sideslip_damping_gain)
+	commanded_yaw += ASSIST.rudder_yaw_rate(
+		rudder_input,
+		maximum_rudder_yaw_rate,
+		beta,
+		sideslip_damping_gain
+	)
 
 	# Control surfaces move quickly but not instantly, which is what stops the
 	# aircraft snapping between attitudes.
