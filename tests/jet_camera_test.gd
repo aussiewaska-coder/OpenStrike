@@ -24,6 +24,11 @@ func _init() -> void:
 	assert(moved.is_equal_approx(Vector2(-0.5, 0.25)), "right stick must move the jet camera look")
 	var returned := JET_CAMERA.updated_look(moved, Vector2.ZERO, 2.0, 6.0, 0.5)
 	assert(returned.length() < moved.length(), "released right stick must return the jet view")
+	var wrapped := JET_CAMERA.updated_external_look(
+		Vector2(0.9, 0.0), Vector2(-1.0, 0.0), 2.0, 6.0, 0.2
+	)
+	assert(wrapped.x < -0.6, "external yaw must wrap through 180 degrees for continuous orbit")
+	assert(absf(wrapped.y) <= 1.0, "external orbit pitch must remain bounded")
 	var focus := Vector3(10.0, 20.0, 30.0)
 	var behind := focus + Vector3(0.0, 4.0, 20.0)
 	var orbited := JET_CAMERA.orbited_position(focus, behind, Basis(Vector3.UP, PI * 0.5))
@@ -35,6 +40,7 @@ func _init() -> void:
 	var follow := JET_CAMERA.desired_position(JET_CAMERA.Mode.PURSUIT, focus, direction, 50.0, 12.0)
 	var track := JET_CAMERA.desired_position(JET_CAMERA.Mode.TRACK, focus, direction, 50.0, 12.0)
 	var isometric := JET_CAMERA.desired_position(JET_CAMERA.Mode.ISOMETRIC, focus, direction, 50.0, 12.0)
+	assert(follow.distance_to(focus) < 30.0, "pursuit must be a close aircraft view")
 	assert(track.distance_to(focus) > follow.distance_to(focus), "tracking view must frame more of the aircraft's path")
 	assert(isometric.x > focus.x and isometric.z > focus.z, "isometric view must keep a fixed world diagonal")
 	var pursuit_look := JET_CAMERA.look_target(

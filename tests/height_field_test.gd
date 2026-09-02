@@ -16,6 +16,12 @@ func _init() -> void:
 	}
 	assert(is_equal_approx(HeightField.sample(image, metadata, 0.0, 0.0), 50.0))
 	assert(is_equal_approx(HeightField.sample(image, metadata, -0.5, -0.5), 37.5))
+	var arcade_metadata := metadata.duplicate()
+	arcade_metadata["vertical_exaggeration"] = 1.8
+	assert(
+		is_equal_approx(HeightField.sample(image, arcade_metadata, 0.0, 0.0), 90.0),
+		"arcade vertical exaggeration must flow through shared terrain sampling"
+	)
 
 	# Missing imagery must read as flat ground, never crash the flight model.
 	assert(is_equal_approx(HeightField.sample(null, metadata, 0.0, 0.0), 0.0))

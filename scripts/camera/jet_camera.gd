@@ -48,6 +48,23 @@ static func updated_look(
 	return current.lerp(Vector2.ZERO, 1.0 - exp(-return_response * delta))
 
 
+## External orbit can pass either side of the tail indefinitely. Normalized
+## yaw wraps at +/-1 (the same 180-degree position) while pitch stays bounded.
+static func updated_external_look(
+	current: Vector2,
+	input: Vector2,
+	speed: float,
+	return_response: float,
+	delta: float
+) -> Vector2:
+	if not input.is_zero_approx():
+		return Vector2(
+			wrapf(current.x - input.x * speed * delta, -1.0, 1.0),
+			clampf(current.y - input.y * speed * delta, -1.0, 1.0)
+		)
+	return current.lerp(Vector2.ZERO, 1.0 - exp(-return_response * delta))
+
+
 static func orbited_position(focus: Vector3, camera_position: Vector3, look_basis: Basis) -> Vector3:
 	return focus + look_basis * (camera_position - focus)
 
@@ -83,6 +100,10 @@ static func desired_position(
 	base_height: float
 ) -> Vector3:
 	match mode:
+		Mode.PURSUIT:
+			var close_distance := maxf(base_distance * 0.45, 15.0)
+			var close_height := maxf(base_height * 0.35, 3.0)
+			return focus - direction * close_distance + Vector3.UP * close_height
 		Mode.TRACK:
 			return focus - direction * base_distance * 1.65 + Vector3.UP * base_height * 2.0
 		Mode.ISOMETRIC:

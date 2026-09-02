@@ -52,6 +52,7 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @export var free_look_pitch_degrees := 55.0
 @export var free_look_speed := 2.4
 @export var free_look_return_response := 6.0
+@export var jet_external_orbit_yaw_degrees := 180.0
 
 @export_group("Jet Camera")
 ## The Raptor is 19 m long and the helicopter's 110 m chase distance leaves it a
@@ -341,13 +342,19 @@ func _on_streamed_status_changed(message: String) -> void:
 func _update_free_look(delta: float) -> void:
 	if _flying_jet:
 		_external_aim.update(Vector2.ZERO, false, delta)
-		_free_look = JET_CAMERA.updated_look(
-			_free_look,
-			GamepadInput.get_jet_look_vector(),
-			free_look_speed,
-			free_look_return_response,
-			delta
-		)
+		var look := GamepadInput.get_jet_look_vector()
+		if _jet_view == JET_CAMERA.Mode.COCKPIT:
+			_free_look = JET_CAMERA.updated_look(
+				_free_look, look, free_look_speed, free_look_return_response, delta
+			)
+		else:
+			_free_look = JET_CAMERA.updated_external_look(
+				_free_look,
+				look if JET_CAMERA.allows_free_look(_jet_view) else Vector2.ZERO,
+				free_look_speed,
+				free_look_return_response,
+				delta
+			)
 		return
 	var held := GamepadInput.is_free_look_held()
 	var look := GamepadInput.get_aim_vector() if held else Vector2.ZERO
@@ -365,10 +372,11 @@ func _update_free_look(delta: float) -> void:
 	_free_look = _free_look.lerp(Vector2.ZERO, 1.0 - exp(-free_look_return_response * delta))
 
 
-func _free_look_basis() -> Basis:
+func _free_look_basis(yaw_degrees := -1.0) -> Basis:
 	if _free_look.is_zero_approx():
 		return Basis.IDENTITY
-	return Basis(Vector3.UP, deg_to_rad(_free_look.x * free_look_yaw_degrees)) \
+	var yaw_limit := free_look_yaw_degrees if yaw_degrees < 0.0 else yaw_degrees
+	return Basis(Vector3.UP, deg_to_rad(_free_look.x * yaw_limit)) \
 		* Basis(Vector3.RIGHT, deg_to_rad(_free_look.y * free_look_pitch_degrees))
 
 
@@ -465,7 +473,7 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		desired_position = JET_CAMERA.orbited_position(
 			focus,
 			desired_position,
-			_free_look_basis()
+			_free_look_basis(jet_external_orbit_yaw_degrees)
 		)
 	desired_position.y = maxf(
 		desired_position.y,

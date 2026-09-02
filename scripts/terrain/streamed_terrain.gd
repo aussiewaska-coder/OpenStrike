@@ -122,7 +122,8 @@ func load_region(region: Dictionary) -> bool:
 	await _build_chunks(world_size)
 	status_changed.emit("Theatre ready: %.0f km across, %.0f m of relief." % [
 		world_size / 1000.0,
-		_metadata["elevation_max_m"] - _metadata["elevation_min_m"],
+		(_metadata["elevation_max_m"] - _metadata["elevation_min_m"])
+			* _metadata["vertical_exaggeration"],
 	])
 	region_ready.emit()
 	return true

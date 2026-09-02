@@ -29,6 +29,10 @@ func _init() -> void:
 	)
 	assert(float(corridor.get("world_size_m", 0.0)) == 50000.0, "corridor must span 50 km")
 	assert(
+		is_equal_approx(float(corridor.get("vertical_exaggeration", 0.0)), 1.8),
+		"the wide theatre must exaggerate relief for arcade readability"
+	)
+	assert(
 		int(corridor.get("chunk_count", 0)) ** 2 <= 400,
 		"50 km terrain must stay within the mobile mesh/draw-call budget"
 	)
