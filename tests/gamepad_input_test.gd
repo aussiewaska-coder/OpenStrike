@@ -23,7 +23,16 @@ func _run() -> void:
 	_assert_axis(&"rudder_right", JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	# The panel's buttons are unreachable with a controller, so their actions
 	# have to exist on the pad.
-	_assert_button(&"flight_mode_toggle", JoyButton.JOY_BUTTON_Y)
+	# Y and B are reserved for lock-on. Nothing of OURS may claim them. Godot's
+	# own ui_* actions bind B to ui_cancel and Y to ui_select by default; those
+	# are the engine's, never fire in flight, and are not what this guards.
+	for button in [JoyButton.JOY_BUTTON_Y, JoyButton.JOY_BUTTON_B]:
+		for action in InputMap.get_actions():
+			if String(action).begins_with("ui_"):
+				continue
+			for event in InputMap.action_get_events(action):
+				if event is InputEventJoypadButton and event.button_index == button:
+					assert(false, "%s must stay unbound, %s claims it" % [button, action])
 	# X taps to cycle weapons and holds for settings, so the settings action is
 	# no longer bound to a button -- main.gd raises it from the hold, and the
 	# on-screen SETTINGS button still emits it.

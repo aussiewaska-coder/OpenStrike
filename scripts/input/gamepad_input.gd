@@ -53,9 +53,7 @@ const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_TARGET_NEXT,
 	ACTION_ZOOM_IN,
 	ACTION_ZOOM_OUT,
-	ACTION_FLIGHT_MODE,
 	ACTION_WEAPON_CYCLE,
-	ACTION_SWITCH_AIRCRAFT,
 ]
 
 var active_device := -1
@@ -356,13 +354,14 @@ func _register_input_actions() -> void:
 	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
 	_add_axis_action(ACTION_RUDDER_LEFT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
 	_add_axis_action(ACTION_RUDDER_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
-	_add_button_action(ACTION_FLIGHT_MODE, JoyButton.JOY_BUTTON_Y)
+	# Y and B are deliberately unbound. Flight mode and switch-aircraft live in
+	# the settings panel now, and both buttons are reserved for the lock-on
+	# controls in the next phase.
 	# X taps to cycle weapons and holds to open settings. The settings action
 	# keeps its constant for main.gd but no longer has a button of its own; the
 	# on-screen SETTINGS button calls the panel directly, so a mistimed hold can
 	# never lock anyone out of it.
 	_add_button_action(ACTION_WEAPON_CYCLE, JoyButton.JOY_BUTTON_X)
-	_add_button_action(ACTION_SWITCH_AIRCRAFT, JoyButton.JOY_BUTTON_B)
 	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	# The cannon moves off R1, which is now free look. Nothing fires yet, so
 	# this costs nothing today.

@@ -11,6 +11,10 @@ const ARCADE_CAMERA_FEEDBACK := preload("res://scripts/camera/arcade_camera_feed
 const TRAIL_RENDERER := preload("res://scripts/effects/trail_renderer.gd")
 const ROCKET_POD := preload("res://scripts/weapons/rocket_pod.gd")
 const WEAPON_SELECTION := preload("res://scripts/weapons/weapon_selection.gd")
+const DRONE_FIELD := preload("res://scripts/entities/drone_field.gd")
+const RAID_MISSION := preload("res://scripts/entities/raid_mission.gd")
+const RADAR_SCOPE := preload("res://scripts/ui/radar_scope.gd")
+const BEARING_TAPE := preload("res://scripts/ui/bearing_tape.gd")
 const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 const AIRFRAME_VISUALS := preload("res://scripts/helicopter/airframe_visuals.gd")
 const GROUND_RAY := preload("res://scripts/terrain/ground_ray.gd")
@@ -82,11 +86,16 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
 @onready var jet_anchor: Node3D = $JetAnchor
 @onready var camera: Camera3D = $Camera3D
-@onready var mission_panel: Control = $UI/Margin
-@onready var status_label: Label = $UI/Margin/Panel/Content/Status
-@onready var region_label: Label = $UI/Margin/Panel/Content/Region
-@onready var demo_button: Button = $UI/Margin/Panel/Content/DemoButton
-@onready var flight_mode_button: Button = $UI/Margin/Panel/Content/FlightModeButton
+@onready var ui_layer: CanvasLayer = $UI
+## The one line of the old mission panel that was actually live. Built in code
+## so the panel and its five dead labels could go.
+var status_label: Label
+var _mission_label: Label
+var _settings_button: Button
+var _radar: Control
+var _tape: Control
+var _drone_field: Node3D
+var _mission := RAID_MISSION.new()
 @onready var attack_reticle := $UI/AttackReticle
 @onready var settings_panel := $UI/SettingsPanel
 @onready var gamepad_diagnostic: Label = $UI/GamepadDiagnostic/Label
@@ -136,6 +145,7 @@ var _building_damage: RefCounted
 
 
 func _ready() -> void:
+	_build_hud()
 	LocationService.status_changed.connect(_on_location_status_changed)
 	LocationService.region_selected.connect(_on_region_selected)
 	LocationService.location_updated.connect(_on_location_updated)
@@ -151,11 +161,9 @@ func _ready() -> void:
 	settings_panel.aircraft_switched.connect(_switch_aircraft)
 	settings_panel.cache_cleared.connect(_on_cache_cleared)
 	settings_panel.quality_cycled.connect(_on_quality_cycled)
-	flight_mode_button.pressed.connect(_toggle_flight_mode)
-	_refresh_flight_mode_button()
-	demo_button.pressed.connect(_toggle_settings)
-	demo_button.text = "SETTINGS"
-	demo_button.visible = true
+	settings_panel.input_monitor_toggled.connect(func(on: bool): gamepad_diagnostic.get_parent().visible = on)
+	settings_panel.raid_restarted.connect(_start_raid)
+	_mission.raid_ended.connect(_on_raid_ended)
 	_spawn_helicopter()
 	_spawn_jet()
 	_refresh_aircraft_button()
@@ -183,6 +191,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	gamepad_diagnostic.text = "%s\n%s" % [GamepadInput.get_diagnostic_text(), _map_diagnostic_text()]
 	_update_rockets(delta)
+	_update_raid(delta)
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
 		_camera_aim_basis = camera.global_basis
@@ -211,6 +220,89 @@ func _update_rockets(delta: float) -> void:
 	for round_data in projectile_manager.active_rounds:
 		if round_data.weapon_source == "rocket":
 			_trail_renderer.push_point(round_data.sequence, round_data.position)
+
+
+## What is left on screen while flying: a status line, the raid line, the
+## radar, the tape in cockpit, and the way into settings. Everything the old
+## panel showed is in settings now.
+func _build_hud() -> void:
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	margin.add_theme_constant_override("margin_left", 28)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_right", 28)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_layer.add_child(margin)
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(row)
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(column)
+	status_label = Label.new()
+	status_label.add_theme_font_size_override("font_size", 16)
+	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(status_label)
+	_mission_label = Label.new()
+	_mission_label.add_theme_font_size_override("font_size", 20)
+	_mission_label.add_theme_color_override("font_color", Color(0.91, 0.77, 0.28))
+	_mission_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(_mission_label)
+	_settings_button = Button.new()
+	_settings_button.text = "SETTINGS"
+	_settings_button.pressed.connect(_toggle_settings)
+	row.add_child(_settings_button)
+
+	_radar = RADAR_SCOPE.new()
+	ui_layer.add_child(_radar)
+	_tape = BEARING_TAPE.new()
+	ui_layer.add_child(_tape)
+	# The input monitor is opt-in from settings now, not a fixture.
+	gamepad_diagnostic.get_parent().visible = false
+
+
+func _start_raid() -> void:
+	if _drone_field == null:
+		return
+	var half_extent: float = streamed_terrain.world_half_extent() if streamed_terrain.has_method("world_half_extent") else 5000.0
+	_drone_field.populate(10, half_extent, Vector3.ZERO)
+	_mission.start(10)
+	_mission_label.remove_theme_color_override("font_color")
+	_mission_label.add_theme_color_override("font_color", Color(0.91, 0.77, 0.28))
+	_mission_label.text = _mission.hud_line()
+
+
+func _on_building_damaged_for_raid(building_id: int, accumulated: float, _relative_height: float) -> void:
+	_mission.building_damaged(building_id, accumulated)
+	_mission_label.text = _mission.hud_line()
+
+
+func _on_raid_ended(won: bool) -> void:
+	_mission_label.text = _mission.hud_line()
+	_mission_label.add_theme_color_override("font_color", Color(0.45, 1.0, 0.6) if won else Color(1.0, 0.3, 0.25))
+	status_label.text = "RAID REPELLED -- SETTINGS TO RESTART" if won else "THE CITY IS BURNING -- SETTINGS TO RESTART"
+
+
+## The drones and the instruments that find them, stepped from the same frame
+## the camera uses so the player's position is the one already on screen.
+func _update_raid(delta: float) -> void:
+	if _drone_field == null or not _camera_follow_enabled:
+		return
+	var vehicle := _vehicle()
+	var nose: Vector3 = vehicle.global_basis.x if _flying_jet else -vehicle.global_basis.z
+	_drone_field.update(delta, vehicle.global_position, nose)
+	# Falling wreckage lays smoke through the phase 1 renderer until it is
+	# below the ground, at which point its trail is left to fade.
+	for drone in _drone_field.drones():
+		if drone.state == DRONE_FIELD.DRONE.State.DESTROYED:
+			_trail_renderer.push_point(drone.id, drone.position)
+			if drone.position.y < _ground_height_at(drone.position) - 20.0:
+				_trail_renderer.end_trail(drone.id)
+	var heading := atan2(nose.x, -nose.z)
+	_radar.set_contacts(vehicle.global_position, heading, _drone_field.drones())
+	if _tape.visible:
+		_tape.set_contacts(vehicle.global_position, heading, _drone_field.drones())
 
 
 func _on_rocket_fired(round_data: RefCounted, _hardpoint_index: int) -> void:
@@ -319,8 +411,8 @@ func _switch_aircraft() -> void:
 	_apply_view_chrome()
 	_snap_follow_camera()
 	_refresh_aircraft_button()
-	_refresh_flight_mode_button()
-	settings_panel.set_flight_mode_text(flight_mode_button.text)
+	settings_panel.set_flight_mode_text(_flight_mode_text())
+	settings_panel.set_flight_mode_text(_flight_mode_text())
 	status_label.text = "F-22 -- R1 + RIGHT STICK THROTTLE, L2/R2 RUDDER, R3 LEVEL" if _flying_jet else "AH-64D APACHE"
 
 
@@ -359,7 +451,7 @@ func _on_location_updated(_latitude: float, _longitude: float, accuracy_m: float
 
 func _on_region_selected(region: Dictionary) -> void:
 	if region.is_empty():
-		region_label.text = "REGION: NO THEATRE INSTALLED"
+		settings_panel.set_region_text("REGION: NO THEATRE INSTALLED")
 		return
 	await _load_streamed_region(region)
 
@@ -372,10 +464,10 @@ func _load_streamed_region(region: Dictionary) -> void:
 	if not streamed_terrain.status_changed.is_connected(_on_streamed_status_changed):
 		streamed_terrain.status_changed.connect(_on_streamed_status_changed)
 	_camera_follow_enabled = false
-	region_label.text = "REGION: %s\n%s" % [region.get("display_name", "Unknown"), region.get("subtitle", "")]
+	settings_panel.set_region_text("REGION: %s\n%s" % [region.get("display_name", "Unknown"), region.get("subtitle", "")])
 	var loaded: bool = await streamed_terrain.load_region(region)
 	if not loaded:
-		region_label.text = "REGION: %s // STREAM UNAVAILABLE" % region.get("display_name", "Unknown")
+		settings_panel.set_region_text("REGION: %s // STREAM UNAVAILABLE" % region.get("display_name", "Unknown"))
 		return
 	streamed_terrain.set_spawn_from_coordinate(
 		float(region.get("spawn_latitude", region.get("center_latitude", 0.0))),
@@ -402,6 +494,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 	streamed_terrain.set_focus(_vehicle())
 	launcher_field.populate(String(region.get("id", "")), streamed_terrain)
 	_camera_follow_enabled = true
+	_start_raid()
 	_snap_follow_camera()
 
 
@@ -1049,10 +1142,6 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		_cycle_jet_view(-1)
 	elif action == GamepadInput.ACTION_TARGET_NEXT and _flying_jet:
 		_cycle_jet_view(1)
-	elif action == GamepadInput.ACTION_SWITCH_AIRCRAFT:
-		_switch_aircraft()
-	elif action == GamepadInput.ACTION_FLIGHT_MODE:
-		_toggle_flight_mode()
 	# Settings is no longer a press: it is the hold half of X, handled in
 	# _on_gamepad_action_released. The on-screen SETTINGS button still calls
 	# _toggle_settings directly.
@@ -1072,8 +1161,7 @@ func _toggle_flight_mode() -> void:
 	var rotor: int = helicopter_anchor.FlightMode.ROTOR
 	var next: int = rotor if int(helicopter_anchor.flight_mode) == arcade else arcade
 	helicopter_anchor.set_flight_mode(next)
-	_refresh_flight_mode_button()
-	settings_panel.set_flight_mode_text(flight_mode_button.text)
+	settings_panel.set_flight_mode_text(_flight_mode_text())
 	status_label.text = "CONTROLS: %s" % ("REALISTIC ROTOR" if next == rotor else "ARCADE")
 
 
@@ -1087,7 +1175,7 @@ func _refresh_settings() -> void:
 		LocationService.installed_regions(),
 		String(LocationService.selected_region.get("id", ""))
 	)
-	settings_panel.set_flight_mode_text(flight_mode_button.text)
+	settings_panel.set_flight_mode_text(_flight_mode_text())
 	if streamed_terrain.has_method("quality_name"):
 		settings_panel.set_quality_text("GRAPHICS: %s" % streamed_terrain.quality_name())
 	var report: Dictionary = TileClient.cache_report()
@@ -1124,14 +1212,13 @@ func _on_cache_cleared() -> void:
 	_refresh_settings()
 
 
-func _refresh_flight_mode_button() -> void:
+func _flight_mode_text() -> String:
 	if _flying_jet:
-		flight_mode_button.text = "CONTROLS: FLY-BY-WIRE"
-		return
+		return "CONTROLS: FLY-BY-WIRE"
 	if not ("flight_mode" in helicopter_anchor):
-		return
+		return "CONTROLS: --"
 	var arcade: int = helicopter_anchor.FlightMode.ARCADE
-	flight_mode_button.text = "CONTROLS: %s" % ("ARCADE" if int(helicopter_anchor.flight_mode) == arcade else "REALISTIC")
+	return "CONTROLS: %s" % ("ARCADE" if int(helicopter_anchor.flight_mode) == arcade else "REALISTIC")
 
 
 ## Cockpit, chase, orbit. Cockpit shows the HUD alone; the external views keep
@@ -1173,9 +1260,10 @@ func _cycle_jet_view(direction: int) -> void:
 
 ## In the cockpit the screen is the HUD and nothing else.
 func _apply_view_chrome() -> void:
-	var external := not _is_cockpit_view()
-	mission_panel.visible = external
-	gamepad_diagnostic.get_parent().visible = external
+	# The tape is a cockpit instrument; the scope is always up. The input
+	# monitor is a settings toggle now and does not follow the view.
+	if _tape != null:
+		_tape.visible = _is_cockpit_view()
 
 
 func _on_gamepad_connection_changed(connected: bool, _device_id: int, device_name: String) -> void:
@@ -1216,8 +1304,15 @@ func _wire_cannon_systems() -> void:
 	_hit_query = WORLD_HIT_QUERY.new()
 	_hit_query.configure(_ground_height_xz, _building_hit_index, _surface_resolver, 0.0)
 	_hit_query.entity_index = launcher_field
+	_drone_field = DRONE_FIELD.new()
+	_drone_field.name = "DroneField"
+	add_child(_drone_field)
+	_drone_field.projectile_manager = projectile_manager
+	_hit_query.secondary_entity_index = _drone_field
 	_building_damage = BUILDING_DAMAGE.new()
 	_building_damage.building_index = _building_hit_index
+	_drone_field.building_index = _building_hit_index
+	_building_damage.building_damaged.connect(_on_building_damaged_for_raid)
 
 	# One profile and one Ballistics instance behind the sight and the rounds,
 	# so the pipper cannot be tuned away from where the shells actually go.
@@ -1340,7 +1435,19 @@ func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> 
 	if hit_result.object_type == WORLD_HIT.ObjectKind.BUILDING and _building_damage != null:
 		_building_damage.apply_hit(hit_result, round_data)
 	elif hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY:
-		var explosion_position: Variant = launcher_field.destroy_launcher(hit_result.object_id)
+		# The two fields have disjoint id spaces, so whichever claims the id
+		# is the one that was hit. A bomb striking its own drone is refused
+		# by weapon_source, or drones would shoot themselves down.
+		var explosion_position: Variant = null
+		if hit_result.object_id >= DRONE_FIELD.FIRST_ID:
+			if round_data.weapon_source != "bomb":
+				explosion_position = _drone_field.destroy_drone(hit_result.object_id)
+				if explosion_position is Vector3:
+					_mission.drone_destroyed()
+					_mission_label.text = _mission.hud_line()
+					_trail_renderer.begin_trail(hit_result.object_id)
+		else:
+			explosion_position = launcher_field.destroy_launcher(hit_result.object_id)
 		if explosion_position is Vector3:
 			impact_fx.spawn_explosion(explosion_position)
 			_play_destructive_hit_stop()

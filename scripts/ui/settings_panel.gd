@@ -11,6 +11,8 @@ signal flight_mode_toggled
 signal aircraft_switched
 signal cache_cleared
 signal quality_cycled
+signal input_monitor_toggled(enabled: bool)
+signal raid_restarted
 
 const PANEL_WIDTH := 520.0
 
@@ -20,6 +22,8 @@ var _aircraft_button: Button
 var _cache_label: Label
 var _quality_button: Button
 var _stats_label: Label
+var _monitor_button: CheckButton
+var _region_label: Label
 
 
 func _ready() -> void:
@@ -93,6 +97,18 @@ func _ready() -> void:
 	_mode_button.pressed.connect(func(): flight_mode_toggled.emit())
 	column.add_child(_mode_button)
 
+	column.add_child(_heading("RAID"))
+	var restart := Button.new()
+	restart.text = "RESTART RAID"
+	restart.pressed.connect(func(): raid_restarted.emit())
+	column.add_child(restart)
+
+	column.add_child(_heading("HUD"))
+	_monitor_button = CheckButton.new()
+	_monitor_button.text = "INPUT MONITOR OVERLAY"
+	_monitor_button.toggled.connect(func(on: bool): input_monitor_toggled.emit(on))
+	column.add_child(_monitor_button)
+
 	column.add_child(_heading("GRAPHICS"))
 	_quality_button = Button.new()
 	_quality_button.pressed.connect(func(): quality_cycled.emit())
@@ -111,6 +127,15 @@ func _ready() -> void:
 	_stats_label = Label.new()
 	_stats_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_stats_label)
+
+	column.add_child(_heading("THEATRE INFO"))
+	_region_label = Label.new()
+	_region_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	column.add_child(_region_label)
+	var privacy := Label.new()
+	privacy.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	privacy.text = "Foreground location only. Coordinates are not saved.\nMap © OpenStreetMap contributors. Aerial © State of Queensland."
+	column.add_child(privacy)
 
 	var close := Button.new()
 	close.text = "CLOSE"
@@ -154,6 +179,10 @@ func set_cache_report(files: int, bytes: int) -> void:
 	_cache_label.text = "%.1f MB across %d files. Imagery and elevation are kept so flown ground works offline; nothing prunes it." % [
 		float(bytes) / 1048576.0, files
 	]
+
+
+func set_region_text(text: String) -> void:
+	_region_label.text = text
 
 
 func set_status(text: String) -> void:

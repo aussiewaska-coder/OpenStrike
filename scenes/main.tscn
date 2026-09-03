@@ -71,58 +71,6 @@ far = 12000.0
 
 [node name="UI" type="CanvasLayer" parent="."]
 
-[node name="Margin" type="MarginContainer" parent="UI"]
-offset_right = 1280.0
-offset_bottom = 720.0
-theme_override_constants/margin_left = 28
-theme_override_constants/margin_top = 24
-theme_override_constants/margin_right = 28
-theme_override_constants/margin_bottom = 24
-
-[node name="Panel" type="PanelContainer" parent="UI/Margin"]
-layout_mode = 2
-size_flags_horizontal = 0
-size_flags_vertical = 0
-
-[node name="Content" type="VBoxContainer" parent="UI/Margin/Panel"]
-custom_minimum_size = Vector2(390, 0)
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="Title" type="Label" parent="UI/Margin/Panel/Content"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.91, 0.77, 0.28, 1)
-theme_override_font_sizes/font_size = 28
-text = "OPENSTRIKE // LOCAL THEATRE"
-
-[node name="Status" type="Label" parent="UI/Margin/Panel/Content"]
-layout_mode = 2
-theme_override_font_sizes/font_size = 16
-text = "Preparing location service..."
-autowrap_mode = 2
-
-[node name="Region" type="Label" parent="UI/Margin/Panel/Content"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.62, 0.82, 0.92, 1)
-theme_override_font_sizes/font_size = 18
-text = "REGION: —"
-autowrap_mode = 2
-
-[node name="Privacy" type="Label" parent="UI/Margin/Panel/Content"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.72, 0.74, 0.76, 1)
-theme_override_font_sizes/font_size = 13
-text = "Foreground location only. Coordinates are not saved.\nMap © OpenStreetMap contributors. Aerial © State of Queensland."
-autowrap_mode = 2
-
-[node name="DemoButton" type="Button" parent="UI/Margin/Panel/Content"]
-layout_mode = 2
-text = "LOAD SURFERS PARADISE DEMO"
-
-[node name="FlightModeButton" type="Button" parent="UI/Margin/Panel/Content"]
-layout_mode = 2
-text = "CONTROLS: ARCADE"
-
 [node name="AttackReticle" type="Control" parent="UI"]
 anchor_right = 1.0
 anchor_bottom = 1.0
