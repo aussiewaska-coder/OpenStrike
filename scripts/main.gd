@@ -95,6 +95,7 @@ var _settings_button: Button
 var _radar: Control
 var _tape: Control
 var _drone_field: Node3D
+var _hero_towers: Node3D
 var _mission := RAID_MISSION.new()
 @onready var attack_reticle := $UI/AttackReticle
 @onready var settings_panel := $UI/SettingsPanel
@@ -166,6 +167,9 @@ func _ready() -> void:
 	_mission.raid_ended.connect(_on_raid_ended)
 	_spawn_helicopter()
 	_spawn_jet()
+	_hero_towers = HeroTowers.new()
+	_hero_towers.name = "HeroTowers"
+	add_child(_hero_towers)
 	_refresh_aircraft_button()
 	jet_anchor.crashed.connect(_on_jet_crashed)
 	jet_anchor.respawned.connect(_on_jet_respawned)
@@ -460,6 +464,7 @@ func _on_region_selected(region: Dictionary) -> void:
 ## theatre already flown loads from disk and needs no signal.
 func _load_streamed_region(region: Dictionary) -> void:
 	launcher_field.clear()
+	_hero_towers.clear()
 	streamed_terrain.visible = true
 	if not streamed_terrain.status_changed.is_connected(_on_streamed_status_changed):
 		streamed_terrain.status_changed.connect(_on_streamed_status_changed)
@@ -493,6 +498,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 	)
 	streamed_terrain.set_focus(_vehicle())
 	launcher_field.populate(String(region.get("id", "")), streamed_terrain)
+	_hero_towers.populate(String(region.get("id", "")), streamed_terrain)
 	_camera_follow_enabled = true
 	_start_raid()
 	_snap_follow_camera()

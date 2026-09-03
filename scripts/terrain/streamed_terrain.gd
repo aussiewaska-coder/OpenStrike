@@ -52,6 +52,9 @@ const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_lay
 var _height_image: Image
 var _metadata: Dictionary = {}
 var _bounds: Dictionary = {}
+## World XZ of every hero tower in the loaded region. BuildingMesh hides the
+## OSM box under each; the hit index keeps it, so rounds still strike there.
+var hero_suppress := PackedVector2Array()
 var _chunks: Array = []
 var _overview_texture: ImageTexture
 var _focus: Node3D
@@ -87,6 +90,12 @@ func load_region(region: Dictionary) -> bool:
 	var center_latitude := float(region.get("center_latitude", 0.0))
 	var center_longitude := float(region.get("center_longitude", 0.0))
 	_bounds = MapTiles.region_bounds(center_latitude, center_longitude, world_size)
+	# Computed here, the moment the bounds exist, so no building chunk can
+	# build before it knows which boxes a hero tower hides.
+	hero_suppress = HeroTowers.suppress_points(
+		String(region.get("id", "")),
+		func(lat: float, lon: float) -> Vector2: return MapTiles.world_of(_bounds, lat, lon, world_size)
+	)
 	elevation_zoom = int(region.get("elevation_zoom", elevation_zoom))
 	_buildings_dir = String(region.get("buildings_dir", ""))
 	_building_world_size_m = float(region.get("building_world_size_m", world_size))
@@ -132,6 +141,11 @@ func load_region(region: Dictionary) -> bool:
 ## Half the region's width, which is how far the aircraft may fly from the
 ## centre. Theatres differ by an order of magnitude, so nothing downstream may
 ## assume a size.
+## A real coordinate as world metres, the way the spawn point is placed.
+func world_from_coordinate(latitude: float, longitude: float) -> Vector2:
+	return MapTiles.world_of(_bounds, latitude, longitude, float(_metadata.get("world_size_m", 50000.0)))
+
+
 func world_half_extent() -> float:
 	return float(_metadata.get("world_size_m", 50000.0)) * 0.5
 
@@ -552,7 +566,7 @@ func _build_buildings(paths: Array[String], bounds: Rect2, result: Dictionary) -
 			if bounds.has_point(point):
 				records.append(record)
 	result["records"] = records
-	result["mesh"] = BuildingMesh.build(records, sample_mesh_height)
+	result["mesh"] = BuildingMesh.build(records, sample_mesh_height, hero_suppress, HeroTowers.SUPPRESS_RADIUS_M)
 
 
 func _release_chunk_buildings(chunk: Dictionary) -> void:
@@ -577,6 +591,7 @@ func _clear_terrain() -> void:
 	_height_image = null
 	_metadata = {}
 	_bounds = {}
+	hero_suppress = PackedVector2Array()
 	_overview_texture = null
 	_building_world_size_m = 0.0
 	_building_chunk_count = 0
