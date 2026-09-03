@@ -64,6 +64,23 @@ func _initialize() -> void:
 	assert(streaming.building_count() == 0, "an emptied index must hold nothing")
 	assert(streaming.query_segment(Vector3(-50.0, 10.0, 0.0), Vector3(200.0, 10.0, 0.0)) == null, "empty index must miss")
 
+	# Drones pick targets by area. The list must carry height, because they go
+	# for the skyline, and a building outside the radius must not appear.
+	var area: RefCounted = INDEX.new()
+	area.add_chunk(0, [
+		_square(1, 0.0, 0.0, 10.0, 20.0),
+		_square(2, 100.0, 0.0, 10.0, 80.0),
+		_square(3, 5000.0, 0.0, 10.0, 200.0),
+	], flat)
+	var near: Array = area.buildings_near(Vector2(50.0, 0.0), 200.0)
+	assert(near.size() == 2, "two buildings sit inside 200 m, got %d" % near.size())
+	var tallest_height := 0.0
+	for entry in near:
+		assert(entry.has("handle") and entry.has("position") and entry.has("height"), "entries carry handle, position, height")
+		tallest_height = maxf(tallest_height, float(entry["height"]))
+	assert(is_equal_approx(tallest_height, 80.0), "the 80 m tower must be listed with its height")
+	assert(area.buildings_near(Vector2(50.0, 0.0), 10.0).is_empty(), "nothing inside 10 m of a point between buildings")
+
 	print("BUILDING_HIT_INDEX_TEST_PASS")
 	quit()
 

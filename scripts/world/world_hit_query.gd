@@ -9,6 +9,9 @@ const HIT := preload("res://scripts/world/world_hit_result.gd")
 
 var building_index: RefCounted = null
 var entity_index: Object = null
+## Drones. A second source rather than a list, because there are exactly two
+## and a list would need every caller to know the order.
+var secondary_entity_index: Object = null
 var surface_resolver: RefCounted = null
 var sea_level := 0.0
 var refine_iterations := 14
@@ -27,8 +30,10 @@ func query_segment(from: Vector3, to: Vector3) -> RefCounted:
 	var nearest: RefCounted = null
 	if building_index != null:
 		nearest = building_index.query_segment(from, to)
-	if entity_index != null:
-		var entity: RefCounted = entity_index.query_segment(from, to)
+	for index in [entity_index, secondary_entity_index]:
+		if index == null:
+			continue
+		var entity: RefCounted = index.query_segment(from, to)
 		if entity != null and (nearest == null or entity.t < nearest.t):
 			nearest = entity
 	# Roads are not yet a distinct mesh; when the world compiler emits them they

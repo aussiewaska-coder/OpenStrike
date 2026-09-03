@@ -277,3 +277,23 @@ func _point_in_polygon(point: Vector2, polygon: PackedVector2Array) -> bool:
 				inside = not inside
 		previous = current
 	return inside
+
+
+## Every building whose footprint centre lies within `radius` of `centre`, with
+## its height. Drones choose attack targets from this; the cell grid is not
+## used because a 2.5 km entry range spans most of the city anyway and a plain
+## scan of a few hundred records is cheaper than assembling cell lists.
+func buildings_near(centre: Vector2, radius: float) -> Array:
+	var found: Array = []
+	var radius_squared := radius * radius
+	for handle in buildings:
+		var building: Dictionary = buildings[handle]
+		var footprint_centre: Vector2 = (building["minimum"] + building["maximum"]) * 0.5
+		if footprint_centre.distance_squared_to(centre) > radius_squared:
+			continue
+		found.append({
+			"handle": int(handle),
+			"position": Vector3(footprint_centre.x, float(building["top_height"]), footprint_centre.y),
+			"height": float(building["building_height"]),
+		})
+	return found
