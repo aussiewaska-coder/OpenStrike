@@ -70,9 +70,15 @@ raid cannot be lost, which is acceptable rather than a case to special-case. Eac
 - a **target building** handle, chosen when it enters `ATTACK_RUN`
 
 Attitude for rendering is derived: nose along velocity, bank proportional to
-lateral acceleration, capped. The mesh is a placeholder primitive in this phase
-— a flattened box with a fin reads as a drone at the distances the radar is
-meant for. A real asset is a swap, not a rework.
+lateral acceleration, capped.
+
+The mesh is the **F-22 GLB the player flies, scaled down** — a mini Raptor. The
+asset is already in the build, it is already an aircraft from every angle, and
+it means a drone silhouette against the sky reads instantly. Each drone
+instantiates `JET_SCENE`, measures its wingspan the way `jet_controller.gd`
+does, and scales to `DRONE_WINGSPAN_M`, so the size is a number rather than a
+guess at the GLB's native scale. Landing gear is stowed the same way. The
+cockpit interior and gun mount are not attached; a drone has no pilot station.
 
 ### Attack runs
 
@@ -230,6 +236,7 @@ drone positions + states ──> radar_scope, bearing_tape (draw each frame)
 | constant | value | why |
 |---|---|---|
 | `DRONE_COUNT` | 10 | as asked |
+| `DRONE_WINGSPAN_M` | 5.5 | about 40% of the Raptor's 13.56 — clearly smaller, still an aircraft |
 | `DRONE_CRUISE_MPS` | 95 | below the F-22's 134 corner speed, so it can always be caught |
 | `DRONE_DASH_MPS` | 150 | briefly above the F-22's cruise, so a chase is a chase |
 | `DRONE_TURN_RATE` | 0.9 rad/s | tighter than the F-22 at speed, looser than it at corner |
@@ -268,7 +275,6 @@ once.
 - **Lock-on, camera follow, guided missile** — phase B. Y and B are freed here
   for it.
 - **Lock as an evasion trigger** — phase B, alongside the lock.
-- **A real drone mesh** — the placeholder primitive is designed to be swapped.
 - **Drones that shoot back** — you chose evasive-but-unarmed.
 - **Gun juice, afterburner plume, vortices, damage smoke columns** — the
   earlier phases 2 and 4, still queued. Bombed buildings smoke through the
