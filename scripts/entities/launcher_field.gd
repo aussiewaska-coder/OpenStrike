@@ -58,6 +58,19 @@ func launcher_count() -> int:
 	return _launchers.size()
 
 
+## The SAM sites, as positions. Added so the target tracker can see them
+## without the launcher field learning what a target tracker is.
+func launcher_positions() -> Array:
+	var out := []
+	for entity_id in _launchers:
+		var launcher: Dictionary = _launchers[entity_id]
+		var node: Node3D = launcher["node"]
+		if not is_instance_valid(node):
+			continue
+		out.append({"id": int(entity_id), "position": node.global_position})
+	return out
+
+
 func query_segment(from: Vector3, to: Vector3) -> RefCounted:
 	return hit_index.query_segment(from, to)
 

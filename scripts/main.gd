@@ -23,6 +23,8 @@ const WORLD_SURFACE_RESOLVER := preload("res://scripts/world/world_surface_resol
 const WORLD_HIT_QUERY := preload("res://scripts/world/world_hit_query.gd")
 const BUILDING_DAMAGE := preload("res://scripts/world/building_damage_system.gd")
 const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
+const TARGET_TRACKER := preload("res://scripts/targeting/target_tracker.gd")
+const HELMET_HUD := preload("res://scripts/ui/helmet_hud.gd")
 
 @export_group("Follow Camera")
 @export var camera_height := 150.0
@@ -90,6 +92,7 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @onready var helicopter_anchor: Node3D = $HelicopterAnchor
 @onready var jet_anchor: Node3D = $JetAnchor
 @onready var camera: Camera3D = $Camera3D
+@onready var enemy_squadron: Node3D = $EnemySquadron
 @onready var ui_layer: CanvasLayer = $UI
 ## The one line of the old mission panel that was actually live. Built in code
 ## so the panel and its five dead labels could go.
@@ -97,6 +100,10 @@ var status_label: Label
 var _mission_label: Label
 var _settings_button: Button
 var _radar: Control
+var _helmet: Control
+var _tracker := TARGET_TRACKER.new()
+## Enemy squadrons arrive on a timer while the player is flying the jet.
+var _next_squadron_in := 25.0
 var _tape: Control
 var _drone_field: Node3D
 var _hero_towers: Node3D
@@ -290,8 +297,13 @@ func _build_hud() -> void:
 	_settings_button.pressed.connect(_toggle_settings)
 	row.add_child(_settings_button)
 
+	# The visor goes in first so the scope and the tape draw over it.
+	_helmet = HELMET_HUD.new()
+	ui_layer.add_child(_helmet)
 	_radar = RADAR_SCOPE.new()
 	ui_layer.add_child(_radar)
+	_radar.range_changed.connect(_on_radar_range_changed)
+	_tracker.set_range(_radar.range_m())
 	_tape = BEARING_TAPE.new()
 	ui_layer.add_child(_tape)
 	# The input monitor is opt-in from settings now, not a fixture.
@@ -336,9 +348,76 @@ func _update_raid(delta: float) -> void:
 			if drone.position.y < _ground_height_at(drone.position) - 20.0:
 				_trail_renderer.end_trail(drone.id)
 	var heading := atan2(nose.x, -nose.z)
-	_radar.set_contacts(vehicle.global_position, heading, _drone_field.drones())
+	_update_targeting(delta, vehicle, nose, heading)
 	if _tape.visible:
 		_tape.set_contacts(vehicle.global_position, heading, _drone_field.drones())
+
+
+func _on_radar_range_changed(metres: float) -> void:
+	_tracker.set_range(metres)
+	status_label.text = "RADAR %d KM" % int(metres / 1000.0)
+
+
+## The one place the three target sources become one list, and the one place the
+## visor and the scope are told anything.
+func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: float) -> void:
+	if _flying_jet:
+		_next_squadron_in -= delta
+		if _next_squadron_in <= 0.0 and enemy_squadron.jet_count() == 0:
+			enemy_squadron.spawn(randi_range(2, 4), vehicle.global_position)
+			_next_squadron_in = 90.0
+	enemy_squadron.update(delta, vehicle.global_position, nose)
+
+	var contacts: Array = []
+	contacts.append_array(enemy_squadron.contacts())
+	for drone in _drone_field.drones():
+		if drone.state == DRONE_FIELD.DRONE.State.DESTROYED:
+			continue
+		contacts.append(TARGET_TRACKER.contact(
+			drone.id, TARGET_TRACKER.Kind.AIR_DRONE, drone.position, drone.velocity, "DRONE"
+		))
+	for launcher in launcher_field.launcher_positions():
+		contacts.append(TARGET_TRACKER.contact(
+			int(launcher["id"]), TARGET_TRACKER.Kind.GROUND_LAUNCHER,
+			launcher["position"], Vector3.ZERO, "SAM"
+		))
+
+	# The tracker's cone is the CAMERA's, not the airframe's: what the visor
+	# boxes is what the pilot is looking at, which is the point of a helmet.
+	var velocity := _vehicle_velocity()
+	_tracker.update(contacts, camera.global_position, -camera.global_basis.z, velocity)
+	var locked: Dictionary = _tracker.locked()
+	_helmet.set_state(
+		camera,
+		velocity,
+		_tracker.boxed(),
+		locked,
+		_tracker.closure_of(_tracker.locked_handle()),
+		{
+			"speed_mps": velocity.length(),
+			"altitude_m": _focus_position().y,
+			"heading_degrees": rad_to_deg(heading),
+			"g_load": 1.0,
+			"mach": velocity.length() / 340.0,
+		}
+	)
+	_radar.set_contacts(vehicle.global_position, heading, _tracker.tracked(), _tracker.locked_handle())
+	# The weapons need no wiring of their own: cannon_weapon.aim already reads
+	# `_orbit_target_point`, which already reads `_target_point`. Keeping those
+	# two in step with the lock is the whole integration.
+	if not locked.is_empty():
+		_target_point = locked["position"]
+		_has_target_point = true
+
+
+## jet_controller publishes `velocity`; the helicopter does not, so both are
+## guarded rather than assumed.
+func _vehicle_velocity() -> Vector3:
+	var vehicle := _vehicle()
+	if vehicle == null:
+		return Vector3.ZERO
+	var value = vehicle.get("velocity")
+	return value if value is Vector3 else Vector3.ZERO
 
 
 func _on_rocket_fired(round_data: RefCounted, _hardpoint_index: int) -> void:
@@ -1054,28 +1133,37 @@ func _unhandled_input(event: InputEvent) -> void:
 		screen = (event as InputEventMouseButton).position
 	else:
 		return
-	var hit := GROUND_RAY.intersect(
-		camera.project_ray_origin(screen),
-		camera.project_ray_normal(screen),
-		_ground_height_xz
-	)
-	if hit.is_empty():
+	var origin := camera.project_ray_origin(screen)
+	var direction := camera.project_ray_normal(screen)
+	var hit := GROUND_RAY.intersect(origin, direction, _ground_height_xz)
+	var point = null
+	var kind: int = TARGET_TRACKER.Kind.GROUND_POINT
+	var target_name := ""
+	if not hit.is_empty():
+		point = hit["point"]
+	# `_hit_query` already knows how to tell a building from the dirt, so the
+	# lock asks it rather than growing a second opinion about what was struck.
+	if _hit_query != null:
+		var world: RefCounted = _hit_query.query_segment(origin, origin + direction * 12000.0)
+		if world.hit and world.object_type == WORLD_HIT.ObjectKind.BUILDING:
+			point = world.position
+			kind = TARGET_TRACKER.Kind.BUILDING
+			target_name = "BUILDING"
+	var handle := _tracker.lock_at(origin, direction, point, kind, target_name)
+	if handle == -1:
 		_has_target_point = false
 		attack_reticle.clear_target()
 		if _vehicle().has_method("clear_orbit_target"):
 			_vehicle().clear_orbit_target()
 		status_label.text = "TARGET CLEARED"
 		return
-	_target_point = hit["point"]
+	var locked: Dictionary = _tracker.locked()
+	_target_point = locked["position"]
 	_has_target_point = true
 	if _vehicle().has_method("set_orbit_target"):
 		_vehicle().set_orbit_target(_target_point)
 	var range_m := roundi(_focus_position().distance_to(_target_point))
-	status_label.text = (
-		"TARGET MARKED %d m" % range_m
-		if _flying_jet
-		else "TARGET SET %d m -- L2/R2 to orbit it" % range_m
-	)
+	status_label.text = "LOCK %s  %d m" % [HELMET_HUD.kind_label(int(locked["kind"])), range_m]
 
 
 func _update_target_marker() -> void:
