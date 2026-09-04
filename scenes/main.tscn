@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=21 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/helicopter/helicopter_controller.gd" id="3_helicopter"]
@@ -11,6 +11,7 @@
 [ext_resource type="Script" path="res://scripts/effects/cannon_fx.gd" id="92_cannon_fx"]
 [ext_resource type="Script" path="res://scripts/weapons/cannon_weapon.gd" id="93_cannon"]
 [ext_resource type="Script" path="res://scripts/entities/launcher_field.gd" id="94_launchers"]
+[ext_resource type="Script" path="res://scripts/entities/enemy_squadron.gd" id="95_squadron"]
 [ext_resource type="Script" path="res://scripts/world/day_cycle.gd" id="5_day_cycle"]
 [ext_resource type="Shader" path="res://shaders/atmosphere_sky.gdshader" id="6_sky_shader"]
 [ext_resource type="Script" path="res://scripts/world/cloud_deck.gd" id="7_cloud_deck"]
@@ -186,3 +187,6 @@ script = ExtResource("92_cannon_fx")
 
 [node name="LauncherField" type="Node3D" parent="."]
 script = ExtResource("94_launchers")
+
+[node name="EnemySquadron" type="Node3D" parent="."]
+script = ExtResource("95_squadron")
