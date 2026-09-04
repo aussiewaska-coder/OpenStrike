@@ -357,9 +357,17 @@ func _clear_controller(disconnected_during_play: bool) -> void:
 	active_device_name = ""
 	active_device_guid = ""
 	connection_changed.emit(false, -1, "")
-	# Touch mode is a stand-in for hardware, so it must also stand in for the
-	# pause: freezing the game would put the overlay in front of the stick.
-	var must_pause := (OS.get_name() == "Android" or disconnected_during_play or _had_controller) and not touch_mode
+	# Never had a pad at all: fall back to the on-screen stick rather than
+	# demanding hardware. This decision belongs HERE and not in the touch layer,
+	# because pausing freezes the very node that would have turned touch on --
+	# a paused tree stops `_process` and `_gui_input`, so the game could not
+	# rescue itself and the overlay stayed up forever.
+	if not disconnected_during_play and not _had_controller:
+		set_touch_mode(true)
+		return
+	# A pad that WAS there and went away still pauses, which is the behaviour
+	# the disconnect overlay exists for -- unless a thumb is already flying it.
+	var must_pause := not touch_mode
 	if must_pause:
 		_paused_for_controller = true
 		get_tree().paused = true

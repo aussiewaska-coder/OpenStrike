@@ -45,6 +45,9 @@ var _view_button: Button
 
 
 func _ready() -> void:
+	# The controller overlay pauses the tree. Without this the stick would be
+	# frozen behind the very overlay it exists to dismiss.
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_view_button = Button.new()
@@ -56,6 +59,7 @@ func _ready() -> void:
 	_view_button.pressed.connect(func() -> void: view_pressed.emit())
 	add_child(_view_button)
 	set_process(true)
+	_apply_controller_state()
 
 
 ## The stick's deflection, in thumbstick units. Clamped to the ring so a thumb
@@ -75,13 +79,7 @@ func _process(_delta: float) -> void:
 	var gamepad := get_node_or_null("/root/GamepadInput")
 	if gamepad == null:
 		return
-	# A real pad always wins, and takes the on-screen stick off the glass.
-	var real: bool = gamepad.has_real_controller()
-	if visible == real:
-		visible = not real
-		gamepad.set_touch_mode(not real)
-		if real:
-			_release_all(gamepad)
+	_apply_controller_state()
 	if not visible:
 		return
 	gamepad.virtual_flight = (
@@ -92,6 +90,22 @@ func _process(_delta: float) -> void:
 		stick_vector(_right_origin, _right_point, LOOK_RADIUS_PX) if _right_index != -1
 		else Vector2.ZERO
 	)
+
+
+## Called every frame and once on entry. `set_touch_mode` is idempotent, so
+## this is stated unconditionally rather than only on a change -- the earlier
+## version only acted when the visibility flipped, which at startup it never
+## did, so touch mode was never switched on at all.
+func _apply_controller_state() -> void:
+	var gamepad := get_node_or_null("/root/GamepadInput")
+	if gamepad == null:
+		return
+	# A real pad always wins, and takes the on-screen stick off the glass.
+	var real: bool = gamepad.has_real_controller()
+	visible = not real
+	gamepad.set_touch_mode(not real)
+	if real:
+		_release_all(gamepad)
 
 
 func _release_all(gamepad) -> void:
