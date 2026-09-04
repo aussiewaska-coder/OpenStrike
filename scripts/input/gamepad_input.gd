@@ -56,6 +56,13 @@ const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_WEAPON_CYCLE,
 ]
 
+## The on-screen stick standing in for a gamepad. The flight and camera code
+## never learn about touch: they ask the same questions and get answers in the
+## same units, with the same signs, through the same two raw vectors.
+var touch_mode := false
+var virtual_flight := Vector2.ZERO
+var virtual_aim := Vector2.ZERO
+
 var active_device := -1
 var active_device_name := ""
 var active_device_guid := ""
@@ -97,7 +104,30 @@ static func is_hold(held_seconds: float) -> bool:
 
 
 func is_controller_ready() -> bool:
+	return touch_mode or has_real_controller()
+
+
+## Deliberately distinct from `is_controller_ready`: the disconnect overlay and
+## the on-screen stick both need to know whether real hardware is attached, and
+## touch mode must never masquerade as hardware.
+func has_real_controller() -> bool:
 	return active_device >= 0 and active_device in Input.get_connected_joypads()
+
+
+## Turning touch mode on lifts the "connect a controller" pause, which would
+## otherwise freeze the game before a thumb could reach the screen.
+func set_touch_mode(enabled: bool) -> void:
+	if touch_mode == enabled:
+		return
+	touch_mode = enabled
+	if not enabled:
+		return
+	virtual_flight = Vector2.ZERO
+	virtual_aim = Vector2.ZERO
+	if _paused_for_controller:
+		get_tree().paused = false
+		_paused_for_controller = false
+	controller_attention_changed.emit(false, "", "")
 
 
 func get_flight_vector() -> Vector2:
@@ -113,8 +143,8 @@ func get_aim_vector() -> Vector2:
 
 
 func get_raw_flight_vector() -> Vector2:
-	if not is_controller_ready():
-		return Vector2.ZERO
+	if not has_real_controller():
+		return virtual_flight if touch_mode else Vector2.ZERO
 	return Vector2(
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_LEFT_X),
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_LEFT_Y)
@@ -122,8 +152,8 @@ func get_raw_flight_vector() -> Vector2:
 
 
 func get_raw_aim_vector() -> Vector2:
-	if not is_controller_ready():
-		return Vector2.ZERO
+	if not has_real_controller():
+		return virtual_aim if touch_mode else Vector2.ZERO
 	return Vector2(
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_RIGHT_X),
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_RIGHT_Y)
@@ -327,7 +357,9 @@ func _clear_controller(disconnected_during_play: bool) -> void:
 	active_device_name = ""
 	active_device_guid = ""
 	connection_changed.emit(false, -1, "")
-	var must_pause := OS.get_name() == "Android" or disconnected_during_play or _had_controller
+	# Touch mode is a stand-in for hardware, so it must also stand in for the
+	# pause: freezing the game would put the overlay in front of the stick.
+	var must_pause := (OS.get_name() == "Android" or disconnected_during_play or _had_controller) and not touch_mode
 	if must_pause:
 		_paused_for_controller = true
 		get_tree().paused = true

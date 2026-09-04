@@ -25,6 +25,7 @@ const BUILDING_DAMAGE := preload("res://scripts/world/building_damage_system.gd"
 const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 const TARGET_TRACKER := preload("res://scripts/targeting/target_tracker.gd")
 const HELMET_HUD := preload("res://scripts/ui/helmet_hud.gd")
+const TOUCH_CONTROLS := preload("res://scripts/ui/touch_controls.gd")
 
 @export_group("Follow Camera")
 @export var camera_height := 150.0
@@ -101,6 +102,7 @@ var _mission_label: Label
 var _settings_button: Button
 var _radar: Control
 var _helmet: Control
+var _touch_controls: Control
 var _tracker := TARGET_TRACKER.new()
 ## Enemy squadrons arrive on a timer while the player is flying the jet.
 var _next_squadron_in := 25.0
@@ -297,7 +299,14 @@ func _build_hud() -> void:
 	_settings_button.pressed.connect(_toggle_settings)
 	row.add_child(_settings_button)
 
-	# The visor goes in first so the scope and the tape draw over it.
+	# Underneath everything, so the scope, the buttons and the settings row all
+	# take their own presses before the stick sees them.
+	_touch_controls = TOUCH_CONTROLS.new()
+	ui_layer.add_child(_touch_controls)
+	ui_layer.move_child(_touch_controls, 0)
+	_touch_controls.view_pressed.connect(_on_touch_view_pressed)
+	_touch_controls.tap_to_lock.connect(_lock_at_screen)
+	# The visor goes in next so the scope and the tape draw over it.
 	_helmet = HELMET_HUD.new()
 	ui_layer.add_child(_helmet)
 	_radar = RADAR_SCOPE.new()
@@ -1133,6 +1142,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		screen = (event as InputEventMouseButton).position
 	else:
 		return
+	_lock_at_screen(screen)
+
+
+## Reached from a bare screen press and from the touch layer's tap, which is the
+## same gesture arriving by a different road.
+func _lock_at_screen(screen: Vector2) -> void:
+	if not _camera_follow_enabled:
+		return
 	var origin := camera.project_ray_origin(screen)
 	var direction := camera.project_ray_normal(screen)
 	var hit := GROUND_RAY.intersect(origin, direction, _ground_height_xz)
@@ -1164,6 +1181,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_vehicle().set_orbit_target(_target_point)
 	var range_m := roundi(_focus_position().distance_to(_target_point))
 	status_label.text = "LOCK %s  %d m" % [HELMET_HUD.kind_label(int(locked["kind"])), range_m]
+
+
+## The VIEW button cycles whichever set of views the current aircraft has.
+func _on_touch_view_pressed() -> void:
+	if _flying_jet:
+		_cycle_jet_view(1)
+	else:
+		_cycle_view()
 
 
 func _update_target_marker() -> void:
