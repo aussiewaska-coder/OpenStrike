@@ -320,6 +320,51 @@ Known limitation: `streamed_terrain.gd` suppresses near-detail imagery above
 45 m/s, which the jet is always above, so low passes render coarser than the
 helicopter's until the streaming layer is given a fixed-wing budget.
 
+## Sky, weather and light
+
+The sun is where it really is: `scripts/world/solar_position.gd` computes it
+from the theatre's latitude and longitude and the phone's clock, and
+`scripts/world/sky_state.gd` turns its elevation into one curve of sun colour,
+ambient, sky colours and a terrain tint. The terrain is an aerial photograph
+drawn unshaded, so night is painted onto it. Settings has TIME (real clock,
+noon, dusk, night) and WEATHER (clear, overcast, rain, storm) buttons.
+
+One set of global shader uniforms (`os_*` in `project.godot`) is the seam
+between the day cycle, the weather and every shader; `shaders/os_clouds.gdshaderinc`
+holds the one cloud field that the sky, the ground's cloud shadows and the
+fly-through cloud deck all sample. The renderer is GL Compatibility, which
+rules out volumetric fog, screen-space reflections, decals and GPU particles,
+and renders `PhysicalSkyMaterial` near black and AgX washed out; the design
+notes in `docs/superpowers/specs/2026-09-03-weather-lighting-design.md` say
+what was chosen instead and why.
+
+## Looking at the device
+
+The loopback telemetry socket (127.0.0.1:8787) also takes commands, so the
+look can be tuned from a shell on the phone without an APK build per guess:
+
+```sh
+python3 tools/read_telemetry.py --count 1          # one JSON sample
+python3 tools/telemetry_cmd.py '{"screenshot": true}' --out shot.png
+python3 tools/telemetry_cmd.py '{"set": {"fog_density": 0.0001, "weather": 3}}'
+```
+
+`tools/telemetry_cmd.py --help` lists the knobs. The game must be in the
+foreground: no frames are drawn in the background, so a screenshot request
+waits forever.
+
+Shaders only compile on a real renderer, so head-less runs cannot catch a
+shader error. Xvfb plus Mesa's software GL does, slowly:
+
+```sh
+Xvfb :7 -screen 0 1280x720x24 &
+GALLIUM_DRIVER=softpipe DISPLAY=:7 godot --display-driver x11 --rendering-driver opengl3 \
+  --audio-driver Dummy --resolution 640x360 ++ --shot=/tmp/frame.png --shot-frame=45
+```
+
+`llvmpipe` crashes with an illegal instruction under proot; `softpipe` is the
+one that works, at about ten seconds a frame.
+
 ## Tests
 
 Head-less `SceneTree` scripts, run one at a time:
@@ -340,6 +385,9 @@ godot --headless --script tests/airframe_motion_test.gd
 godot --headless --script tests/aero_model_test.gd
 godot --headless --script tests/flight_assist_test.gd
 godot --headless --script tests/jet_controls_test.gd
+godot --headless --script tests/solar_position_test.gd
+godot --headless --script tests/sky_state_test.gd
+godot --headless --script tests/weather_state_test.gd
 ```
 
 `map_tiles_test.gd` pins the coordinate chain — region bounds, tile range,

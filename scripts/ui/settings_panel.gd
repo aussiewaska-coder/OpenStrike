@@ -11,6 +11,8 @@ signal flight_mode_toggled
 signal aircraft_switched
 signal cache_cleared
 signal quality_cycled
+signal time_cycled
+signal weather_cycled
 signal input_monitor_toggled(enabled: bool)
 signal raid_restarted
 
@@ -21,6 +23,8 @@ var _mode_button: Button
 var _aircraft_button: Button
 var _cache_label: Label
 var _quality_button: Button
+var _time_button: Button
+var _weather_button: Button
 var _stats_label: Label
 var _monitor_button: CheckButton
 var _region_label: Label
@@ -113,6 +117,12 @@ func _ready() -> void:
 	_quality_button = Button.new()
 	_quality_button.pressed.connect(func(): quality_cycled.emit())
 	column.add_child(_quality_button)
+	_time_button = Button.new()
+	_time_button.pressed.connect(func(): time_cycled.emit())
+	column.add_child(_time_button)
+	_weather_button = Button.new()
+	_weather_button.pressed.connect(func(): weather_cycled.emit())
+	column.add_child(_weather_button)
 
 	column.add_child(_heading("MAP CACHE"))
 	_cache_label = Label.new()
@@ -173,6 +183,14 @@ func set_aircraft_text(text: String) -> void:
 
 func set_quality_text(text: String) -> void:
 	_quality_button.text = text
+
+
+func set_time_text(text: String) -> void:
+	_time_button.text = text
+
+
+func set_weather_text(text: String) -> void:
+	_weather_button.text = text
 
 
 func set_cache_report(files: int, bytes: int) -> void:

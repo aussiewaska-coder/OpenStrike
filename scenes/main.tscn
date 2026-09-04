@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/helicopter/helicopter_controller.gd" id="3_helicopter"]
@@ -11,16 +11,19 @@
 [ext_resource type="Script" path="res://scripts/effects/cannon_fx.gd" id="92_cannon_fx"]
 [ext_resource type="Script" path="res://scripts/weapons/cannon_weapon.gd" id="93_cannon"]
 [ext_resource type="Script" path="res://scripts/entities/launcher_field.gd" id="94_launchers"]
+[ext_resource type="Script" path="res://scripts/world/day_cycle.gd" id="5_day_cycle"]
+[ext_resource type="Shader" path="res://shaders/atmosphere_sky.gdshader" id="6_sky_shader"]
+[ext_resource type="Script" path="res://scripts/world/cloud_deck.gd" id="7_cloud_deck"]
+[ext_resource type="Script" path="res://scripts/world/weather.gd" id="8_weather"]
+[ext_resource type="Script" path="res://scripts/world/lens_flare.gd" id="9_lens_flare"]
 
-[sub_resource type="ProceduralSkyMaterial" id="ProceduralSky_day"]
-sky_top_color = Color(0.19, 0.5, 0.82, 1)
-sky_horizon_color = Color(0.78, 0.88, 0.96, 1)
-ground_bottom_color = Color(0.19, 0.24, 0.25, 1)
-ground_horizon_color = Color(0.7, 0.78, 0.78, 1)
-sun_angle_max = 18.0
+[sub_resource type="ShaderMaterial" id="SkyShader_day"]
+shader = ExtResource("6_sky_shader")
 
 [sub_resource type="Sky" id="Sky_day"]
-sky_material = SubResource("ProceduralSky_day")
+sky_material = SubResource("SkyShader_day")
+process_mode = 2
+radiance_size = 1
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 2
@@ -29,7 +32,17 @@ ambient_light_source = 2
 ambient_light_color = Color(1, 1, 1, 1)
 ambient_light_energy = 0.24
 reflected_light_source = 1
-fog_enabled = false
+glow_enabled = true
+glow_intensity = 0.5
+glow_hdr_threshold = 0.98
+adjustment_enabled = true
+adjustment_contrast = 1.08
+adjustment_saturation = 1.05
+fog_enabled = true
+fog_light_color = Color(0.78, 0.88, 0.96, 1)
+fog_density = 0.0001
+fog_aerial_perspective = 0.6
+fog_sky_affect = 0.25
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
@@ -46,6 +59,26 @@ directional_shadow_max_distance = 6500.0
 
 [node name="StreamedTerrain" type="Node3D" parent="."]
 script = ExtResource("4_streamed")
+
+[node name="DayCycle" type="Node" parent="."]
+script = ExtResource("5_day_cycle")
+sun_path = NodePath("../Sun")
+environment_path = NodePath("../WorldEnvironment")
+
+[node name="LensFlare" type="Node" parent="."]
+script = ExtResource("9_lens_flare")
+camera_path = NodePath("../Camera3D")
+sun_path = NodePath("../Sun")
+ui_path = NodePath("../UI")
+
+[node name="Weather" type="Node" parent="."]
+script = ExtResource("8_weather")
+camera_path = NodePath("../Camera3D")
+day_cycle_path = NodePath("../DayCycle")
+
+[node name="CloudDeck" type="MeshInstance3D" parent="."]
+script = ExtResource("7_cloud_deck")
+camera_path = NodePath("../Camera3D")
 
 [node name="HelicopterAnchor" type="Node3D" parent="."]
 script = ExtResource("3_helicopter")
@@ -67,7 +100,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 55, 520, 68)
 physics_interpolation_mode = 2
 current = true
 fov = 42.0
-far = 12000.0
+far = 30000.0
 
 [node name="UI" type="CanvasLayer" parent="."]
 

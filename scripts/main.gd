@@ -78,6 +78,10 @@ const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 @export var cockpit_fov := 78.0
 
 @onready var streamed_terrain = $StreamedTerrain
+@onready var day_cycle = $DayCycle
+@onready var weather = $Weather
+@onready var sun: DirectionalLight3D = $Sun
+@onready var world_environment: WorldEnvironment = $WorldEnvironment
 @onready var projectile_manager: Node3D = $ProjectileManager
 @onready var impact_fx: Node3D = $ImpactFX
 @onready var cannon_fx: Node3D = $CannonFX
@@ -143,9 +147,25 @@ var _building_hit_index: RefCounted
 var _surface_resolver: RefCounted
 var _hit_query: RefCounted
 var _building_damage: RefCounted
+## `--shot=<path> --shot-frame=<n>` after `++` on the command line saves the
+## frame to disk and quits: how a local software-GL run is inspected.
+var _shot_path := ""
+var _shot_at_frame := 240
+var _shot_frames := 0
 
 
 func _ready() -> void:
+	var start_time_mode := -1
+	var start_weather := -1
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--shot="):
+			_shot_path = arg.trim_prefix("--shot=")
+		elif arg.begins_with("--shot-frame="):
+			_shot_at_frame = int(arg.trim_prefix("--shot-frame="))
+		elif arg.begins_with("--time="):
+			start_time_mode = int(arg.trim_prefix("--time="))
+		elif arg.begins_with("--weather="):
+			start_weather = int(arg.trim_prefix("--weather="))
 	_build_hud()
 	LocationService.status_changed.connect(_on_location_status_changed)
 	LocationService.region_selected.connect(_on_region_selected)
@@ -157,14 +177,23 @@ func _ready() -> void:
 	_configure_zoom_profile()
 	_apply_view_chrome()
 	Telemetry.add_source(_telemetry_sample)
+	Telemetry.add_command_handler(_telemetry_command)
 	settings_panel.theatre_chosen.connect(_on_theatre_chosen)
 	settings_panel.flight_mode_toggled.connect(_toggle_flight_mode)
 	settings_panel.aircraft_switched.connect(_switch_aircraft)
 	settings_panel.cache_cleared.connect(_on_cache_cleared)
 	settings_panel.quality_cycled.connect(_on_quality_cycled)
+	settings_panel.time_cycled.connect(_on_time_cycled)
+	settings_panel.weather_cycled.connect(_on_weather_cycled)
 	settings_panel.input_monitor_toggled.connect(func(on: bool): gamepad_diagnostic.get_parent().visible = on)
 	settings_panel.raid_restarted.connect(_start_raid)
 	_mission.raid_ended.connect(_on_raid_ended)
+	if start_time_mode >= 0:
+		day_cycle.mode = start_time_mode
+		day_cycle.refresh()
+	if start_weather >= 0:
+		weather.set_preset(start_weather)
+		weather.current = weather.WEATHER.target(start_weather)
 	_spawn_helicopter()
 	_spawn_jet()
 	_hero_towers = HeroTowers.new()
@@ -193,6 +222,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_shot_frames += 1
+	if _shot_path != "" and _shot_frames == _shot_at_frame:
+		_save_shot_and_quit()
 	gamepad_diagnostic.text = "%s\n%s" % [GamepadInput.get_diagnostic_text(), _map_diagnostic_text()]
 	_update_rockets(delta)
 	_update_raid(delta)
@@ -799,6 +831,88 @@ func _update_instruments() -> void:
 ## Says plainly what the map layer is doing: how big a chunk is, how many are
 ## detailed, what the chunk under the aircraft is textured at, and whether that
 ## imagery came off the disk or the network.
+func _save_shot_and_quit() -> void:
+	await RenderingServer.frame_post_draw
+	var image := get_viewport().get_texture().get_image()
+	if image != null and not image.is_empty():
+		image.save_png(_shot_path)
+		print("SHOT_SAVED ", _shot_path)
+	else:
+		print("SHOT_FAILED")
+	get_tree().quit()
+
+
+## Live tuning over the telemetry socket, so the look can be adjusted from a
+## shell on the device instead of through a five-minute APK build per guess.
+## {"set": {...}} writes the listed knobs; {"screenshot": true} returns the
+## frame as base64 PNG, shrunk to keep the line small.
+func _telemetry_command(command: Dictionary) -> Dictionary:
+	var reply := {}
+	var environment: Environment = world_environment.environment
+	var sky_material := environment.sky.sky_material as ShaderMaterial
+	var settings: Dictionary = command.get("set", {})
+	for key in settings:
+		var value = settings[key]
+		match String(key):
+			"day_cycle_enabled":
+				day_cycle.set_process(bool(value))
+			"time_mode":
+				day_cycle.mode = int(value)
+				day_cycle.refresh()
+			"fog_enabled":
+				environment.fog_enabled = bool(value)
+			"fog_density":
+				environment.fog_density = float(value)
+			"fog_aerial_perspective":
+				environment.fog_aerial_perspective = float(value)
+			"fog_sky_affect":
+				environment.fog_sky_affect = float(value)
+			"fog_light_color":
+				environment.fog_light_color = Color(value[0], value[1], value[2])
+			"tonemap_mode":
+				environment.tonemap_mode = int(value)
+			"tonemap_exposure":
+				environment.tonemap_exposure = float(value)
+			"tonemap_white":
+				environment.tonemap_white = float(value)
+			"ambient_energy":
+				environment.ambient_light_energy = float(value)
+			"camera_far":
+				camera.far = float(value)
+			"sun_energy":
+				sun.light_energy = float(value)
+			"sky_top_color":
+				if sky_material != null:
+					sky_material.set_shader_parameter("sky_top_color", Color(value[0], value[1], value[2]))
+			"sky_horizon_color":
+				if sky_material != null:
+					sky_material.set_shader_parameter("sky_horizon_color", Color(value[0], value[1], value[2]))
+			"fog_multiplier":
+				day_cycle.fog_multiplier = float(value)
+				day_cycle.refresh()
+			"weather":
+				weather.set_preset(int(value))
+			"cloud_coverage":
+				weather.current["cloud_coverage"] = float(value)
+			"sun_multiplier":
+				day_cycle.sun_multiplier = float(value)
+				day_cycle.refresh()
+			"terrain_tint":
+				RenderingServer.global_shader_parameter_set("os_terrain_tint", Vector3(value[0], value[1], value[2]))
+			_:
+				reply["unknown_" + String(key)] = true
+	if command.get("screenshot", false):
+		await RenderingServer.frame_post_draw
+		var image := get_viewport().get_texture().get_image()
+		if image == null or image.is_empty():
+			reply["screenshot_error"] = "no frame"
+		else:
+			var width := int(command.get("width", 960))
+			image.resize(width, int(float(image.get_height()) * float(width) / float(image.get_width())), Image.INTERPOLATE_BILINEAR)
+			reply["screenshot_png_base64"] = Marshalls.raw_to_base64(image.save_png_to_buffer())
+	return reply
+
+
 ## Feeds the loopback telemetry socket the map layer's state alongside the
 ## engine's own counters, so a shell on the device sees both at once.
 func _telemetry_sample() -> Dictionary:
@@ -877,6 +991,20 @@ func _telemetry_sample() -> Dictionary:
 			"under_detailed": report["under_detailed"],
 			"quality": streamed_terrain.quality_name() if streamed_terrain.has_method("quality_name") else "?",
 		}, true)
+	var environment: Environment = world_environment.environment
+	sample.merge({
+		"renderer": RenderingServer.get_current_rendering_method(),
+		"time_mode": day_cycle.mode_name(),
+		"sun_elevation_degrees": day_cycle.elevation_deg,
+		"sun_azimuth_degrees": day_cycle.azimuth_deg,
+		"sun_energy": sun.light_energy,
+		"terrain_tint": str(day_cycle.applied_tint),
+		"fog_enabled": environment.fog_enabled,
+		"fog_density": environment.fog_density,
+		"tonemap_mode": environment.tonemap_mode,
+		"weather": weather.preset_name(),
+		"cloud_coverage": float(weather.current.get("cloud_coverage", 0.0)),
+	}, true)
 	return sample
 
 
@@ -1184,6 +1312,8 @@ func _refresh_settings() -> void:
 	settings_panel.set_flight_mode_text(_flight_mode_text())
 	if streamed_terrain.has_method("quality_name"):
 		settings_panel.set_quality_text("GRAPHICS: %s" % streamed_terrain.quality_name())
+	settings_panel.set_time_text("TIME: %s" % day_cycle.mode_name())
+	settings_panel.set_weather_text("WEATHER: %s" % weather.preset_name())
 	var report: Dictionary = TileClient.cache_report()
 	settings_panel.set_cache_report(int(report["files"]), int(report["bytes"]))
 	var focus := _focus_position()
@@ -1209,6 +1339,18 @@ func _on_quality_cycled() -> void:
 	var next: int = (int(streamed_terrain.quality) + 1) % 3
 	streamed_terrain.set_quality(next)
 	status_label.text = "GRAPHICS: %s" % streamed_terrain.quality_name()
+	_refresh_settings()
+
+
+func _on_time_cycled() -> void:
+	day_cycle.cycle_mode()
+	status_label.text = "TIME: %s" % day_cycle.mode_name()
+	_refresh_settings()
+
+
+func _on_weather_cycled() -> void:
+	weather.cycle_preset()
+	status_label.text = "WEATHER: %s" % weather.preset_name()
 	_refresh_settings()
 
 

@@ -24,6 +24,17 @@ const float ROOF_PLAIN = 6.0;
 uniform float roof_scale_m = 18.0;   // roof tile covers 18 m so clutter reads bigger
 uniform float weathering = 0.15;     // darkens lower floors slightly
 
+// The world's state, shared with the terrain and sky shaders.
+global uniform vec3 os_terrain_tint;  // walls darken with the ground
+global uniform float os_wet;          // rain makes every surface glossy
+global uniform float os_night;        // windows light up
+
+float hash12(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
 varying vec3 world_pos;
 varying vec3 world_nrm;
 varying vec4 v_col;
@@ -66,11 +77,21 @@ void fragment() {
 	float h = clamp(world_pos.y / 30.0, 0.0, 1.0);
 	col *= mix(1.0 - weathering, 1.0, h);
 
-	ALBEDO = col;
+	ALBEDO = col * os_terrain_tint;
 
 	// glass pixels are the darker blue-ish ones; cheap luminance-based gloss
 	float glassiness = smoothstep(0.35, 0.15, dot(tex.rgb, vec3(0.333)));
-	ROUGHNESS = mix(0.85, 0.25, glassiness);
+	ROUGHNESS = mix(mix(0.85, 0.25, glassiness), 0.15, os_wet);
 	METALLIC = 0.0;
 	SPECULAR = mix(0.3, 0.6, glassiness);
+
+	// At night some windows are lit: one cell per bay per floor, chosen by a
+	// hash seeded with the building's tint so neighbours differ.
+	if (!is_roof && os_night > 0.01) {
+		vec2 cell = floor(uv * 3.0);
+		float lit = step(0.58, hash12(cell + v_col.rg * 37.0));
+		vec2 in_cell = fract(uv * 3.0);
+		float pane = step(0.15, in_cell.x) * step(in_cell.x, 0.85) * step(0.2, in_cell.y) * step(in_cell.y, 0.8);
+		EMISSION = vec3(1.0, 0.8, 0.5) * lit * pane * os_night * 0.7;
+	}
 }

@@ -41,3 +41,50 @@ enabled=PackedStringArray("res://addons/OpenStrikeLocation/plugin.cfg")
 [physics]
 
 common/physics_interpolation=true
+
+[shader_globals]
+
+os_cloud_noise={
+"type": "sampler2D",
+"value": "res://textures/cloud_noise.tres"
+}
+os_water_normal={
+"type": "sampler2D",
+"value": "res://textures/water_normal.tres"
+}
+os_cloud_wind={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+os_cloud_coverage={
+"type": "float",
+"value": 0.45
+}
+os_cloud_shadow={
+"type": "float",
+"value": 0.35
+}
+os_wet={
+"type": "float",
+"value": 0.0
+}
+os_night={
+"type": "float",
+"value": 0.0
+}
+os_terrain_tint={
+"type": "vec3",
+"value": Vector3(1, 1, 1)
+}
+os_sky_horizon={
+"type": "vec3",
+"value": Vector3(0.78, 0.88, 0.96)
+}
+os_sun_dir={
+"type": "vec3",
+"value": Vector3(0.5, 0.7, -0.5)
+}
+os_sun_color={
+"type": "vec3",
+"value": Vector3(0.9, 0.88, 0.85)
+}

@@ -240,11 +240,8 @@ func _build_chunks(world_size: float) -> void:
 			var origin_x := -world_size * 0.5 + float(cx) * chunk_size
 			var origin_z := row_origin_z
 			var mesh := _mesh_from_surface(row[cx])
-			var material := StandardMaterial3D.new()
-			material.albedo_texture = _overview_texture
-			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-			material.cull_mode = BaseMaterial3D.CULL_DISABLED
+			var material := ShaderMaterial.new()
+			material.shader = TERRAIN_SHADER
 			var instance := MeshInstance3D.new()
 			instance.name = "Chunk_%d_%d" % [cx, cz]
 			instance.mesh = mesh
@@ -256,10 +253,12 @@ func _build_chunks(world_size: float) -> void:
 				"cz": cz,
 				"instance": instance,
 				"material": material,
+				"texture": null,
 				"center": Vector2(origin_x + chunk_size * 0.5, origin_z + chunk_size * 0.5),
 				"detailed": false,
 				"buildings": null,
 			})
+			_set_chunk_texture(_chunks.back(), _overview_texture, Vector2.ONE, Vector2.ZERO)
 		await get_tree().process_frame
 
 
@@ -354,9 +353,8 @@ func detail_report(focus_position: Vector3) -> Dictionary:
 		for chunk in _chunks:
 			if int(chunk["cx"]) == cx and int(chunk["cz"]) == cz:
 				under_detailed = bool(chunk["detailed"])
-				var material: StandardMaterial3D = chunk["material"]
-				if material != null and material.albedo_texture != null:
-					under_px = material.albedo_texture.get_width()
+				if chunk["texture"] != null:
+					under_px = chunk["texture"].get_width()
 				break
 	return {
 		"chunk_metres": chunk_metres,
@@ -374,6 +372,9 @@ func detail_report(focus_position: Vector3) -> Dictionary:
 enum Quality {PERFORMANCE, BALANCED, QUALITY}
 
 var quality: Quality = Quality.BALANCED
+## One shader for every chunk: the photo, tinted, shadowed by clouds, with
+## the sea and the night lights painted in (see terrain_imagery.gdshader).
+const TERRAIN_SHADER := preload("res://shaders/terrain_imagery.gdshader")
 
 
 func set_quality(level: Quality) -> void:
@@ -415,6 +416,17 @@ func _apply_memory_budget() -> void:
 	near_detail_chunks = mini(near_detail_chunks, 2)
 
 
+## Points a chunk's shader at a texture, with the uv window a detail texture
+## needs when it covers several chunks.
+func _set_chunk_texture(chunk: Dictionary, texture: Texture2D, uv_scale: Vector2, uv_offset: Vector2) -> void:
+	chunk["texture"] = texture
+	var material: ShaderMaterial = chunk["material"]
+	material.set_shader_parameter("imagery", texture)
+	material.set_shader_parameter("has_imagery", texture != null)
+	material.set_shader_parameter("uv_scale", uv_scale)
+	material.set_shader_parameter("uv_offset", uv_offset)
+
+
 func quality_name() -> String:
 	return Quality.keys()[quality]
 
@@ -449,9 +461,7 @@ func _refresh_detail_chunks() -> void:
 	# Drop detail that has fallen behind so texture memory stays bounded.
 	for chunk in _chunks:
 		if chunk["detailed"] and not keep.has(int(chunk["index"])):
-			chunk["material"].albedo_texture = _overview_texture
-			chunk["material"].uv1_scale = Vector3.ONE
-			chunk["material"].uv1_offset = Vector3.ZERO
+			_set_chunk_texture(chunk, _overview_texture, Vector2.ONE, Vector2.ZERO)
 			chunk["detailed"] = false
 			_release_chunk_buildings(chunk)
 	for entry in wanted:
@@ -484,10 +494,8 @@ func _request_chunk_detail(chunk: Dictionary, tier_px: int = 0) -> void:
 	_pending_detail.erase(key)
 	if texture == null or not is_instance_valid(chunk["instance"]):
 		return
-	chunk["material"].albedo_texture = texture
+	_set_chunk_texture(chunk, texture, Vector2(float(chunk_count), float(chunk_count)), Vector2(-float(cx), -float(cz)))
 	# Stretch this chunk's slice of the region-wide UV back over 0..1.
-	chunk["material"].uv1_scale = Vector3(float(chunk_count), float(chunk_count), 1.0)
-	chunk["material"].uv1_offset = Vector3(-float(cx), -float(cz), 0.0)
 	chunk["detailed"] = true
 
 
