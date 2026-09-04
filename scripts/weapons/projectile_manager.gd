@@ -78,7 +78,13 @@ func _advance_all(fixed_step: float) -> void:
 
 
 func _advance_round(round_data: RefCounted, fixed_step: float) -> bool:
-	var stepped: Array = ballistics.advance(round_data.position, round_data.velocity, fixed_step)
+	# Each round flies through the model it carries. A shell has none and takes
+	# the shared ballistics; a rocket brings a motor. The manager stays the one
+	# place that owns pooling and the swept hit query.
+	var flight: RefCounted = round_data.flight if round_data.flight != null else ballistics
+	var stepped: Array = flight.advance(
+		round_data.position, round_data.velocity, fixed_step, round_data.age
+	)
 	var next_position: Vector3 = stepped[0]
 	round_data.previous_position = round_data.position
 	round_data.velocity = stepped[1]
@@ -93,7 +99,7 @@ func _advance_round(round_data: RefCounted, fixed_step: float) -> bool:
 	round_data.distance += round_data.position.distance_to(next_position)
 	round_data.position = next_position
 	round_data.age += fixed_step
-	if round_data.age >= ballistics.maximum_flight_seconds or round_data.distance >= ballistics.maximum_range:
+	if round_data.age >= flight.envelope_seconds() or round_data.distance >= flight.envelope_metres():
 		projectile_expired.emit(round_data)
 		return false
 	return true

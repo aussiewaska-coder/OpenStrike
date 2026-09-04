@@ -11,6 +11,11 @@ extends Node3D
 ## bank -- is the difference between an aircraft and a spaceship, and it is why
 ## none of the code below contains a turn.
 ##
+## The rudder joins that chain rather than bypassing it. It commands sideslip,
+## and the aircraft rolls through the dihedral effect of the slip it produced,
+## so stick and rudder together reach a steeper bank than either alone. Nothing
+## here steers.
+##
 ## The structural difference from helicopter_controller.gd: that one keeps only
 ## rotation.y on the anchor and puts pitch and roll on the visual as decoration.
 ## This one cannot. Bank has to be real, because it is what produces the turn,
@@ -49,7 +54,10 @@ signal boundary_warning(urgency: float)
 @export var maximum_pitch_rate := 0.95        ## rad/s at full stick, before limits
 @export var maximum_rudder_yaw_rate := 0.8    ## rad/s, exaggerated trigger authority
 @export var maximum_rudder_sideslip_degrees := 28.0
-@export var rudder_roll_coupling_rate := 0.12 ## rad/s at full rudder
+## Roll per radian of sideslip. Rudder rolls the aircraft through the slip it
+## creates rather than through a coupling constant, so stick and rudder together
+## reach a steeper bank than either does alone.
+@export var dihedral_roll_gain := 0.35
 @export var sideslip_damping_gain := 2.4
 @export var control_response := 7.0           ## how quickly commanded rates are reached
 
@@ -95,10 +103,14 @@ var roll_input := 0.0
 var pitch_input := 0.0
 var rudder_input := 0.0
 var throttle_input := 0.0
+## R1 held: the nozzles own the nose, and the limiter moves out to the
+## post-stall angle. Public so the HUD can say so.
+var vectoring := false
 
 var _terrain: Node
 var _visual: Node3D
 var _gun_mount: Node3D
+var _hardpoints: Array[Node3D] = []
 var _thrust_setting := 0.62
 var _roll_rate := 0.0
 var _pitch_rate := 0.0
@@ -153,6 +165,7 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	pitch_input = 0.0
 	rudder_input = 0.0
 	throttle_input = 0.0
+	vectoring = false
 	_crashed = false
 	_respawn_timer = 0.0
 	_wings_level_requested = false
@@ -189,6 +202,9 @@ func _read_controls(delta: float) -> void:
 		stick = gamepad.get_flight_vector()
 		rudder_axis = gamepad.get_rudder_axis()
 		throttle_axis = gamepad.get_jet_throttle_axis()
+		vectoring = gamepad.is_vectoring_held()
+	else:
+		vectoring = false
 	roll_input = stick.x
 	pitch_input = pitch_input_from_stick(stick.y)
 	rudder_input = rudder_axis
@@ -205,9 +221,10 @@ func _read_controls(delta: float) -> void:
 		maximum_roll_rate,
 		speed,
 		bank,
-		_roll_rate
+		_roll_rate,
+		vectoring
 	)
-	commanded_roll += ASSIST.rudder_roll_rate(rudder_input, rudder_roll_coupling_rate)
+	commanded_roll += ASSIST.dihedral_roll_rate(beta, dihedral_roll_gain)
 	commanded_roll += _boundary_roll_command()
 	if _wings_level_requested:
 		if absf(roll_input) > 0.2:
@@ -225,9 +242,12 @@ func _read_controls(delta: float) -> void:
 		maximum_pitch_rate,
 		speed,
 		bank,
-		alpha
+		alpha,
+		_roll_rate,
+		clampf(_thrust_setting, 0.0, 1.0),
+		vectoring
 	)
-	var commanded_yaw := ASSIST.level_turn_yaw_rate(bank, speed)
+	var commanded_yaw := ASSIST.level_turn_yaw_rate(bank, speed, _roll_rate)
 	commanded_yaw += ASSIST.rudder_yaw_rate(
 		rudder_input,
 		deg_to_rad(maximum_rudder_sideslip_degrees),
@@ -422,6 +442,7 @@ func _find_visual() -> void:
 	JET_VISUALS.clarify_canopy(_visual)
 	_measure_cockpit()
 	_attach_fixed_gun_mount()
+	_attach_hardpoints()
 
 
 ## The GLB is ten times real scale. Measure the wingspan and scale to the real
@@ -456,6 +477,35 @@ func _attach_fixed_gun_mount() -> void:
 	_gun_mount.name = "FixedInternalGunMuzzle"
 	add_child(_gun_mount)
 	_gun_mount.position = _visual.transform * local_muzzle
+
+
+## Two wing hardpoints, placed from the measured airframe rather than from magic
+## numbers, so swapping the GLB cannot leave rockets launching out of the
+## fuselage. Same reasoning as the gun muzzle above.
+func _attach_hardpoints() -> void:
+	if _visual == null or not _hardpoints.is_empty():
+		return
+	var bounds := _measure_bounds()
+	if bounds.size.is_zero_approx():
+		return
+	var span := bounds.size.z
+	var centre := bounds.get_center()
+	for side in [-1.0, 1.0]:
+		var mount := Node3D.new()
+		mount.name = "Hardpoint%s" % ("Left" if side < 0.0 else "Right")
+		add_child(mount)
+		# Under the wing rather than through it, and outboard far enough that the
+		# two trails read as two rather than as one thick one.
+		mount.position = _visual.transform * Vector3(
+			centre.x,
+			centre.y - bounds.size.y * 0.15,
+			side * span * 0.28
+		)
+		_hardpoints.append(mount)
+
+
+func get_hardpoints() -> Array[Node3D]:
+	return _hardpoints
 
 
 func get_gun_mount() -> Node3D:

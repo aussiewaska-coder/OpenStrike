@@ -52,6 +52,9 @@ const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_lay
 var _height_image: Image
 var _metadata: Dictionary = {}
 var _bounds: Dictionary = {}
+## World XZ of every hero tower in the loaded region. BuildingMesh hides the
+## OSM box under each; the hit index keeps it, so rounds still strike there.
+var hero_suppress := PackedVector2Array()
 var _chunks: Array = []
 var _overview_texture: ImageTexture
 var _focus: Node3D
@@ -87,6 +90,12 @@ func load_region(region: Dictionary) -> bool:
 	var center_latitude := float(region.get("center_latitude", 0.0))
 	var center_longitude := float(region.get("center_longitude", 0.0))
 	_bounds = MapTiles.region_bounds(center_latitude, center_longitude, world_size)
+	# Computed here, the moment the bounds exist, so no building chunk can
+	# build before it knows which boxes a hero tower hides.
+	hero_suppress = HeroTowers.suppress_points(
+		String(region.get("id", "")),
+		func(lat: float, lon: float) -> Vector2: return MapTiles.world_of(_bounds, lat, lon, world_size)
+	)
 	elevation_zoom = int(region.get("elevation_zoom", elevation_zoom))
 	_buildings_dir = String(region.get("buildings_dir", ""))
 	_building_world_size_m = float(region.get("building_world_size_m", world_size))
@@ -132,6 +141,11 @@ func load_region(region: Dictionary) -> bool:
 ## Half the region's width, which is how far the aircraft may fly from the
 ## centre. Theatres differ by an order of magnitude, so nothing downstream may
 ## assume a size.
+## A real coordinate as world metres, the way the spawn point is placed.
+func world_from_coordinate(latitude: float, longitude: float) -> Vector2:
+	return MapTiles.world_of(_bounds, latitude, longitude, float(_metadata.get("world_size_m", 50000.0)))
+
+
 func world_half_extent() -> float:
 	return float(_metadata.get("world_size_m", 50000.0)) * 0.5
 
@@ -226,11 +240,8 @@ func _build_chunks(world_size: float) -> void:
 			var origin_x := -world_size * 0.5 + float(cx) * chunk_size
 			var origin_z := row_origin_z
 			var mesh := _mesh_from_surface(row[cx])
-			var material := StandardMaterial3D.new()
-			material.albedo_texture = _overview_texture
-			material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-			material.cull_mode = BaseMaterial3D.CULL_DISABLED
+			var material := ShaderMaterial.new()
+			material.shader = TERRAIN_SHADER
 			var instance := MeshInstance3D.new()
 			instance.name = "Chunk_%d_%d" % [cx, cz]
 			instance.mesh = mesh
@@ -242,10 +253,12 @@ func _build_chunks(world_size: float) -> void:
 				"cz": cz,
 				"instance": instance,
 				"material": material,
+				"texture": null,
 				"center": Vector2(origin_x + chunk_size * 0.5, origin_z + chunk_size * 0.5),
 				"detailed": false,
 				"buildings": null,
 			})
+			_set_chunk_texture(_chunks.back(), _overview_texture, Vector2.ONE, Vector2.ZERO)
 		await get_tree().process_frame
 
 
@@ -340,9 +353,8 @@ func detail_report(focus_position: Vector3) -> Dictionary:
 		for chunk in _chunks:
 			if int(chunk["cx"]) == cx and int(chunk["cz"]) == cz:
 				under_detailed = bool(chunk["detailed"])
-				var material: StandardMaterial3D = chunk["material"]
-				if material != null and material.albedo_texture != null:
-					under_px = material.albedo_texture.get_width()
+				if chunk["texture"] != null:
+					under_px = chunk["texture"].get_width()
 				break
 	return {
 		"chunk_metres": chunk_metres,
@@ -360,6 +372,9 @@ func detail_report(focus_position: Vector3) -> Dictionary:
 enum Quality {PERFORMANCE, BALANCED, QUALITY}
 
 var quality: Quality = Quality.BALANCED
+## One shader for every chunk: the photo, tinted, shadowed by clouds, with
+## the sea and the night lights painted in (see terrain_imagery.gdshader).
+const TERRAIN_SHADER := preload("res://shaders/terrain_imagery.gdshader")
 
 
 func set_quality(level: Quality) -> void:
@@ -401,6 +416,17 @@ func _apply_memory_budget() -> void:
 	near_detail_chunks = mini(near_detail_chunks, 2)
 
 
+## Points a chunk's shader at a texture, with the uv window a detail texture
+## needs when it covers several chunks.
+func _set_chunk_texture(chunk: Dictionary, texture: Texture2D, uv_scale: Vector2, uv_offset: Vector2) -> void:
+	chunk["texture"] = texture
+	var material: ShaderMaterial = chunk["material"]
+	material.set_shader_parameter("imagery", texture)
+	material.set_shader_parameter("has_imagery", texture != null)
+	material.set_shader_parameter("uv_scale", uv_scale)
+	material.set_shader_parameter("uv_offset", uv_offset)
+
+
 func quality_name() -> String:
 	return Quality.keys()[quality]
 
@@ -435,9 +461,7 @@ func _refresh_detail_chunks() -> void:
 	# Drop detail that has fallen behind so texture memory stays bounded.
 	for chunk in _chunks:
 		if chunk["detailed"] and not keep.has(int(chunk["index"])):
-			chunk["material"].albedo_texture = _overview_texture
-			chunk["material"].uv1_scale = Vector3.ONE
-			chunk["material"].uv1_offset = Vector3.ZERO
+			_set_chunk_texture(chunk, _overview_texture, Vector2.ONE, Vector2.ZERO)
 			chunk["detailed"] = false
 			_release_chunk_buildings(chunk)
 	for entry in wanted:
@@ -470,10 +494,8 @@ func _request_chunk_detail(chunk: Dictionary, tier_px: int = 0) -> void:
 	_pending_detail.erase(key)
 	if texture == null or not is_instance_valid(chunk["instance"]):
 		return
-	chunk["material"].albedo_texture = texture
+	_set_chunk_texture(chunk, texture, Vector2(float(chunk_count), float(chunk_count)), Vector2(-float(cx), -float(cz)))
 	# Stretch this chunk's slice of the region-wide UV back over 0..1.
-	chunk["material"].uv1_scale = Vector3(float(chunk_count), float(chunk_count), 1.0)
-	chunk["material"].uv1_offset = Vector3(-float(cx), -float(cz), 0.0)
 	chunk["detailed"] = true
 
 
@@ -552,7 +574,7 @@ func _build_buildings(paths: Array[String], bounds: Rect2, result: Dictionary) -
 			if bounds.has_point(point):
 				records.append(record)
 	result["records"] = records
-	result["mesh"] = BuildingMesh.build(records, sample_mesh_height)
+	result["mesh"] = BuildingMesh.build(records, sample_mesh_height, hero_suppress, HeroTowers.SUPPRESS_RADIUS_M)
 
 
 func _release_chunk_buildings(chunk: Dictionary) -> void:
@@ -577,6 +599,7 @@ func _clear_terrain() -> void:
 	_height_image = null
 	_metadata = {}
 	_bounds = {}
+	hero_suppress = PackedVector2Array()
 	_overview_texture = null
 	_building_world_size_m = 0.0
 	_building_chunk_count = 0

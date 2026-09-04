@@ -35,7 +35,11 @@ func launch_velocity(direction: Vector3, inherited_velocity: Vector3) -> Vector3
 ## One integration step, trapezoidal like solve() below. Live rounds advance
 ## through this exact function, so a round cannot drift from the pipper.
 ## Returns [next_point, next_velocity].
-func advance(point: Vector3, velocity: Vector3, delta: float) -> Array:
+##
+## `age` is unused here and exists so that every projectile flight model shares
+## one signature: a rocket's thrust depends on how long its motor has been
+## burning, and a shell's does not.
+func advance(point: Vector3, velocity: Vector3, delta: float, _age := 0.0) -> Array:
 	var next_velocity := velocity * exp(-drag_per_second * delta)
 	next_velocity.y -= GRAVITY * delta
 	return [point + (velocity + next_velocity) * 0.5 * delta, next_velocity]
@@ -92,3 +96,14 @@ func solve(
 		velocity = next_velocity
 		previous_gap = gap
 	return {}
+
+
+## How long and how far this projectile may fly before the manager retires it.
+## Read per round rather than per manager, because a rocket judged by the 30 mm
+## shell's four kilometres would die with its motor still burning.
+func envelope_seconds() -> float:
+	return maximum_flight_seconds
+
+
+func envelope_metres() -> float:
+	return maximum_range

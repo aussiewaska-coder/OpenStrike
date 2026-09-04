@@ -18,6 +18,10 @@ var _server := TCPServer.new()
 var _peers: Array[StreamPeerTCP] = []
 var _accumulator := 0.0
 var _sources: Array[Callable] = []
+## Commands arrive as one JSON object per line from any peer; each handler
+## gets the object and returns a reply dictionary, sent back on that peer.
+var _command_handlers: Array[Callable] = []
+var _inbound: Dictionary = {}
 
 
 func _ready() -> void:
@@ -34,11 +38,16 @@ func add_source(source: Callable) -> void:
 	_sources.append(source)
 
 
+func add_command_handler(handler: Callable) -> void:
+	_command_handlers.append(handler)
+
+
 func _process(delta: float) -> void:
 	while _server.is_connection_available():
 		var peer := _server.take_connection()
 		if peer != null:
 			_peers.append(peer)
+	_read_commands()
 	_accumulator += delta
 	if _accumulator < SAMPLE_INTERVAL_S:
 		return
@@ -55,6 +64,38 @@ func _process(delta: float) -> void:
 		if peer.put_data(bytes) == OK:
 			live.append(peer)
 	_peers = live
+
+
+func _read_commands() -> void:
+	for peer in _peers:
+		peer.poll()
+		var available := peer.get_available_bytes()
+		if available <= 0:
+			continue
+		var chunk: Array = peer.get_data(available)
+		if chunk[0] != OK:
+			continue
+		var text: String = _inbound.get(peer, "") + (chunk[1] as PackedByteArray).get_string_from_utf8()
+		while text.contains("\n"):
+			var line := text.substr(0, text.find("\n")).strip_edges()
+			text = text.substr(text.find("\n") + 1)
+			if not line.is_empty():
+				_dispatch(peer, line)
+		_inbound[peer] = text
+
+
+func _dispatch(peer: StreamPeerTCP, line: String) -> void:
+	var command = JSON.parse_string(line)
+	if not (command is Dictionary):
+		peer.put_data((JSON.stringify({"reply": "error", "detail": "not a JSON object"}) + "\n").to_utf8_buffer())
+		return
+	var reply := {"reply": "ok"}
+	for handler in _command_handlers:
+		if handler.is_valid():
+			var result = await handler.call(command)
+			if result is Dictionary:
+				reply.merge(result, true)
+	peer.put_data((JSON.stringify(reply) + "\n").to_utf8_buffer())
 
 
 func _sample() -> Dictionary:

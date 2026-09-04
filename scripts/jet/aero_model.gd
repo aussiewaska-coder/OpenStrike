@@ -26,13 +26,25 @@ extends RefCounted
 const GRAVITY := 9.80665
 
 ## Lift curve. The slope is per radian, and the stall angle is where the
-## limiter holds the aircraft: real Raptors reach far higher angles on thrust
-## vectoring, which this model does not have.
+## limiter holds the aircraft. The Raptor reaches these angles because it has
+## leading-edge vortex lift and pitch-vectoring nozzles to hold the nose there;
+## THRUST_VECTOR_AUTHORITY below is the other half of the same aircraft.
 const CL_SLOPE := 4.6
-const STALL_ALPHA_DEGREES := 24.0
-const CL_MAX := CL_SLOPE * 0.41887902  ## CL_SLOPE * deg_to_rad(24)
-## How far past the stall the lift has fallen away to nothing.
-const CL_DECAY_DEGREES := 20.0
+const STALL_ALPHA_DEGREES := 32.0
+const CL_MAX := CL_SLOPE * 0.55850536  ## CL_SLOPE * deg_to_rad(32)
+## How far past the stall the lift has fallen away to nothing. Wide, because a
+## slender delta with leading-edge vortices does not lose its lift at the stall
+## the way a straight wing does -- it keeps well over half of it deep into the
+## post-stall range, and that residue is the only thing a vectored aircraft has
+## to turn with. At 20 degrees of decay the lift reached exactly zero at 52,
+## which made the post-stall envelope below a ballistic arc rather than a
+## manoeuvre.
+const CL_DECAY_DEGREES := 45.0
+
+## The angle the vectoring nozzles will hold the nose at while the pilot asks
+## for it. Past the wing's own stall by a long way: this is the post-stall
+## pointing envelope, not a flyable one, and separation drag makes it expensive.
+const POST_STALL_ALPHA_DEGREES := 55.0
 
 ## Drag polar. CD0 is parasite drag, K is the induced-drag factor, and CD_WAVE
 ## is the compressibility rise that actually sets a real aircraft's top speed --
@@ -41,6 +53,15 @@ const CD0 := 0.067962
 const K_INDUCED := 0.055
 const CD_WAVE := 0.076438
 const DRAG_DIVERGENCE_MPS := 180.0
+
+## Separated flow past the stall. Without this the drag polar has a hole in it:
+## once CL has decayed to nothing the induced term vanishes too, leaving a fully
+## stalled wing CHEAPER than a flying one -- 0.068 against 0.272 at the stall.
+## That hole is what let the aircraft fly serene 60-second loops at 63 m/s. A
+## real separated wing is a flat plate and costs about this much.
+const CD_STALLED := 1.10
+## Where separation is complete and the flat-plate value is fully paid.
+const CD_STALL_FULL_DEGREES := 70.0
 
 ## 0.5 * air density * wing area / mass, folded. Derived, not chosen: it is the
 ## value that puts the crossing of the two turn limits exactly at corner speed.
@@ -57,8 +78,22 @@ const LOAD_LIMIT_G := 9.0
 
 ## Best turn rate, and the speed the whole model is pinned to. Below it the
 ## wing runs out of lift first; above it the load limiter binds first. That
-## crossing is what corner speed means.
-const CORNER_SPEED_MPS := 155.0
+## crossing is what corner speed means. Derived from AERO_AUTHORITY and CL_MAX
+## rather than chosen: it is where aerodynamic_load_limit() reaches 9 G, so
+## raising the stall angle moves it down here automatically.
+const CORNER_SPEED_MPS := 134.0
+
+## Control authority. Aerodynamic surfaces make moments proportional to dynamic
+## pressure, so a slow aircraft has slack controls -- and that, not any limiter,
+## is why a real aeroplane cannot pull a tidy loop once it has run out of speed.
+## Holding these rates constant is what produced the backflip: at 63 m/s the
+## aircraft still had 100% of its cruise pitch rate.
+const CONTROL_AUTHORITY_FLOOR := 0.10
+## The nozzles do not care how fast the aircraft is going, only how hard the
+## engines are pushing, so pitch keeps authority the wing has already lost.
+## The Raptor's nozzles are two-dimensional: they vector in pitch alone, which
+## is why roll gets no such floor and goes slack with everything else.
+const THRUST_VECTOR_AUTHORITY := 0.38
 
 
 ## Lift coefficient. Linear to the stall angle, then falling away -- the model
@@ -82,10 +117,43 @@ static func wave_drag(speed_mps: float) -> float:
 	return over * over
 
 
+## How separated the flow is, 0 while the wing is flying and 1 once it is a
+## flat plate. Quadratic so the first few degrees past the stall are cheap and
+## the deep stall is ruinous.
+static func separation(alpha_radians: float) -> float:
+	var onset := deg_to_rad(STALL_ALPHA_DEGREES)
+	var full := deg_to_rad(CD_STALL_FULL_DEGREES)
+	var fraction := clampf((absf(alpha_radians) - onset) / maxf(full - onset, 0.001), 0.0, 1.0)
+	return fraction * fraction
+
+
 ## Drag coefficient. The induced term is the important one: it goes as the
-## square of the lift coefficient, which is why hard turns cost speed.
-static func drag_coefficient(lift_c: float, speed_mps: float) -> float:
-	return CD0 + K_INDUCED * lift_c * lift_c + CD_WAVE * wave_drag(speed_mps)
+## square of the lift coefficient, which is why hard turns cost speed. The
+## separated term takes over where the induced one gives up, so that past the
+## stall the aircraft is paying more for its drag rather than less.
+static func drag_coefficient(lift_c: float, speed_mps: float, alpha_radians := 0.0) -> float:
+	return (
+		CD0
+		+ K_INDUCED * lift_c * lift_c
+		+ CD_WAVE * wave_drag(speed_mps)
+		+ CD_STALLED * separation(alpha_radians)
+	)
+
+
+## Fraction of full control authority the surfaces have at this speed. Moments
+## go as dynamic pressure, so authority goes as the square of the speed ratio,
+## flat at 1.0 from corner speed upward.
+static func control_authority(speed_mps: float) -> float:
+	var ratio := speed_mps / CORNER_SPEED_MPS
+	return clampf(ratio * ratio, CONTROL_AUTHORITY_FLOOR, 1.0)
+
+
+## Pitch authority, which the nozzles hold up after the tailplane has gone
+## slack. Vectoring is worth what the engines are pushing, so it follows the
+## throttle rather than the airspeed.
+static func pitch_authority(speed_mps: float, thrust_fraction: float) -> float:
+	var vectored := THRUST_VECTOR_AUTHORITY * clampf(thrust_fraction, 0.0, 1.0)
+	return clampf(maxf(control_authority(speed_mps), vectored), 0.0, 1.0)
 
 
 ## Lift acceleration magnitude, in m/s^2.
@@ -105,7 +173,7 @@ static func trim_alpha(speed_mps: float, falloff: float = 1.0) -> float:
 ## Drag acceleration back along the velocity, in m/s^2.
 static func drag_acceleration(speed_mps: float, alpha_radians: float) -> float:
 	var lift_c := lift_coefficient(alpha_radians)
-	var drag_c := drag_coefficient(lift_c, speed_mps)
+	var drag_c := drag_coefficient(lift_c, speed_mps, alpha_radians)
 	return AERO_AUTHORITY * speed_mps * speed_mps * drag_c
 
 

@@ -31,21 +31,33 @@ static func routed_orbit_input(
 	return 0.0 if fixed_wing_active or aircraft_is_orbiting else raw_input
 
 
-## Right-stick look is always available in the jet. Releasing the spring stick
-## eases the view back behind the aircraft.
+## Right-stick look is always available in the jet, and the cockpit view STAYS
+## where the pilot left it. A head does not spring back to the instrument panel
+## when you stop turning it, and a view that does makes checking six impossible:
+## the moment you release the stick to do anything else, you lose the picture.
+##
+## Recentring is therefore a deliberate command rather than a consequence of
+## letting go -- see main.gd's R3 handling.
 static func updated_look(
 	current: Vector2,
 	input: Vector2,
 	speed: float,
-	return_response: float,
+	_return_response: float,
 	delta: float
 ) -> Vector2:
-	if not input.is_zero_approx():
-		return Vector2(
-			clampf(current.x - input.x * speed * delta, -1.0, 1.0),
-			clampf(current.y - input.y * speed * delta, -1.0, 1.0)
-		)
-	return current.lerp(Vector2.ZERO, 1.0 - exp(-return_response * delta))
+	if input.is_zero_approx():
+		return current
+	return Vector2(
+		clampf(current.x - input.x * speed * delta, -1.0, 1.0),
+		clampf(current.y - input.y * speed * delta, -1.0, 1.0)
+	)
+
+
+## Snapping the head forward. Returns true while there is anything to recentre,
+## so the caller can spend the button on something else when the view is
+## already straight ahead.
+static func is_look_displaced(look: Vector2, threshold := 0.02) -> bool:
+	return look.length() > threshold
 
 
 ## External orbit can pass either side of the tail indefinitely. Normalized
@@ -69,31 +81,23 @@ static func orbited_position(focus: Vector3, camera_position: Vector3, look_basi
 	return focus + look_basis * (camera_position - focus)
 
 
-## Pursuit is deliberately close astern, but that radius is cramped when the
-## player moves around the wings and nose. Expand it smoothly into an inspection
-## orbit; Tracking already has a much larger authored boom.
+## A sphere, and nothing else: the camera orbits the aircraft at whatever radius
+## the view and the zoom have already set, and the radius does not change
+## because the player looked somewhere.
+##
+## It used to. Pursuit stretched its boom to 1.65 times the radius as the look
+## grew, and the aim point slid from the velocity lead onto the aircraft at the
+## same time, so orbiting the aircraft also dollied and re-framed it. Two
+## smoothstepped blends running against each other is what made the 360 read as
+## warped rather than as a camera moving round a fixed object.
 static func external_orbit_position(
-	mode: int,
+	_mode: int,
 	focus: Vector3,
 	camera_position: Vector3,
 	look_basis: Basis,
-	look: Vector2
+	_look: Vector2
 ) -> Vector3:
-	var offset := camera_position - focus
-	if mode == Mode.PURSUIT and not offset.is_zero_approx():
-		var blend := smoothstep(0.05, 0.55, look.length())
-		var orbit_radius := maxf(offset.length() * 1.65, 32.0)
-		offset = offset.normalized() * lerpf(offset.length(), orbit_radius, blend)
-	return focus + look_basis * offset
-
-
-static func external_orbit_look_target(
-	focus: Vector3,
-	flight_look_target: Vector3,
-	look: Vector2
-) -> Vector3:
-	var blend := smoothstep(0.05, 0.55, look.length())
-	return flight_look_target.lerp(focus, blend)
+	return focus + look_basis * (camera_position - focus)
 
 
 static func flight_direction(
@@ -167,11 +171,31 @@ static func look_target(
 
 ## Each view has its own lens. Pursuit is wide for speed and peripheral
 ## awareness; tracking and tactical progressively compress the scene.
-static func field_of_view(mode: int, zoom: float, speed_fraction: float) -> float:
+## The cockpit's default lens is also its tightest. Widening past it is the
+## pilot leaning back off the panel to take in more of the canopy; there is
+## nothing useful to gain by narrowing, because the seat cannot move forward.
+const COCKPIT_FOV := 70.0
+const COCKPIT_FOV_WIDE := 100.0
+## Zoom values at or below the default are the same picture -- the cockpit only
+## opens up, and only as the player zooms out past neutral.
+const COCKPIT_ZOOM_DEFAULT := 1.0
+
+
+static func cockpit_field_of_view(zoom: float, speed_fraction: float, zoom_max: float) -> float:
+	var span := maxf(zoom_max - COCKPIT_ZOOM_DEFAULT, 0.001)
+	var widen := clampf((zoom - COCKPIT_ZOOM_DEFAULT) / span, 0.0, 1.0)
+	return lerpf(COCKPIT_FOV, COCKPIT_FOV_WIDE, widen) \
+		+ clampf(speed_fraction, 0.0, 1.0) * 1.5
+
+
+static func field_of_view(
+	mode: int,
+	zoom: float,
+	speed_fraction: float,
+	zoom_max := COCKPIT_ZOOM_DEFAULT
+) -> float:
 	if mode == Mode.COCKPIT:
-		# A fixed lens reads like a pilot's view. External zoom must not stretch
-		# the cockpit into an action-camera perspective.
-		return 70.0 + clampf(speed_fraction, 0.0, 1.0) * 1.5
+		return cockpit_field_of_view(zoom, speed_fraction, zoom_max)
 	var base := 68.0
 	var speed_gain := 8.0
 	match mode:
@@ -220,3 +244,37 @@ static func aim_response(mode: int) -> float:
 
 static func allows_free_look(mode: int) -> bool:
 	return mode != Mode.ISOMETRIC
+
+
+## Head bob, in degrees of camera rotation. Cockpit only.
+##
+## This is the second attempt. The first was high-frequency synthetic buffet
+## applied to the airframe, and it made both the external model and the cockpit
+## camera jitter -- the note on jet_controller._update_visual records it being
+## torn out. So: low frequency, sub-degree, applied to the CAMERA and never to
+## the airframe, and driven by what the aircraft is actually doing rather than
+## by noise. The two axes run at different rates so the motion is a slow figure
+## rather than a single rocking axis; they realign every ten seconds, which is
+## also the period the caller's clock wraps on.
+##
+## Amplitude follows load factor rather than speed, because what a pilot's head
+## does under G is the part worth feeling: heavy under the pull, still when
+## unloaded.
+const BOB_PITCH_HZ := 1.4
+const BOB_ROLL_HZ := 0.9
+const BOB_PITCH_DEGREES := 0.28
+const BOB_ROLL_DEGREES := 0.18
+## Below one G there is nothing pressing on the pilot and the bob dies away.
+const BOB_LOAD_REFERENCE := 4.0
+
+
+static func head_bob(time_seconds: float, load_factor: float, speed_fraction: float) -> Vector2:
+	var loaded := clampf((absf(load_factor) - 1.0) / BOB_LOAD_REFERENCE, 0.0, 1.0)
+	# A little always present at speed, so straight and level is not dead still.
+	var weight := clampf(0.25 * clampf(speed_fraction, 0.0, 1.0) + loaded, 0.0, 1.0)
+	if weight <= 0.001:
+		return Vector2.ZERO
+	return Vector2(
+		sin(time_seconds * TAU * BOB_PITCH_HZ) * BOB_PITCH_DEGREES * weight,
+		sin(time_seconds * TAU * BOB_ROLL_HZ) * BOB_ROLL_DEGREES * weight
+	)

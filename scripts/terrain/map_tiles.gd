@@ -89,6 +89,15 @@ static func longitude_at(bounds: Dictionary, u: float) -> float:
 	return lerpf(float(bounds["west"]), float(bounds["east"]), u)
 
 
+## A real coordinate as world metres from the region centre. u runs west to
+## east along +X and v runs north to south along +Z, matching the heightmap,
+## the aerial, and the spawn placement -- so this is the one conversion every
+## placed thing shares, hero towers included.
+static func world_of(bounds: Dictionary, latitude: float, longitude: float, world_size_m: float) -> Vector2:
+	var uv := uv_of(bounds, latitude, longitude)
+	return Vector2((uv.x - 0.5) * world_size_m, (uv.y - 0.5) * world_size_m)
+
+
 ## Inverse of the two above: where a real coordinate sits inside the region,
 ## as (u, v) in 0..1. Used to place the spawn point from a lat/lon.
 static func uv_of(bounds: Dictionary, latitude: float, longitude: float) -> Vector2:

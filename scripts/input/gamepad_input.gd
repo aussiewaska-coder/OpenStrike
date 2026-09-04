@@ -3,6 +3,9 @@ extends Node
 signal connection_changed(connected: bool, device_id: int, device_name: String)
 signal controller_attention_changed(required: bool, title: String, detail: String)
 signal action_pressed(action: StringName)
+## Carries how long the button was down, which is what lets one button mean two
+## things. Emitted for every action in BUTTON_ACTIONS, not just X.
+signal action_released(action: StringName, held_seconds: float)
 
 const DEAD_ZONE := 0.18
 const RESPONSE_EXPONENT := 1.0
@@ -28,6 +31,11 @@ const ACTION_ZOOM_OUT := &"camera_zoom_out"
 ## they do are bound to the face buttons instead of making the panel navigable.
 const ACTION_FLIGHT_MODE := &"flight_mode_toggle"
 const ACTION_SETTINGS := &"settings_panel"
+## Tap cycles the weapon; holding the same button opens settings. X was the only
+## button left, and settings is not something anyone reaches for mid-fight.
+const ACTION_WEAPON_CYCLE := &"weapon_cycle"
+## How long X must be held to mean settings rather than a weapon change.
+const SETTINGS_HOLD_SECONDS := 0.45
 ## B is the only face button the existing scheme leaves free.
 const ACTION_SWITCH_AIRCRAFT := &"switch_aircraft"
 ## On the helicopter R1 retains manual aim. On the F-22 it modifies the right
@@ -45,9 +53,7 @@ const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_TARGET_NEXT,
 	ACTION_ZOOM_IN,
 	ACTION_ZOOM_OUT,
-	ACTION_FLIGHT_MODE,
-	ACTION_SETTINGS,
-	ACTION_SWITCH_AIRCRAFT,
+	ACTION_WEAPON_CYCLE,
 ]
 
 var active_device := -1
@@ -55,6 +61,8 @@ var active_device_name := ""
 var active_device_guid := ""
 var _had_controller := false
 var _paused_for_controller := false
+## When each button went down, so the release can report how long it was held.
+var _hold_started: Dictionary = {}
 var _left_trigger_rest := 0.0
 var _right_trigger_rest := 0.0
 
@@ -69,9 +77,23 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if active_device < 0:
 		return
+	var now := Time.get_ticks_msec() / 1000.0
 	for action in BUTTON_ACTIONS:
 		if Input.is_action_just_pressed(action):
+			_hold_started[action] = now
 			action_pressed.emit(action)
+		elif Input.is_action_just_released(action):
+			# Missing start means the press predates this poll loop; treating it
+			# as instantaneous makes it a tap, which is the harmless reading.
+			var started: float = _hold_started.get(action, now)
+			_hold_started.erase(action)
+			action_released.emit(action, now - started)
+
+
+## A press is a hold once it passes the threshold. Static so the decision can be
+## tested without a controller attached.
+static func is_hold(held_seconds: float) -> bool:
+	return held_seconds >= SETTINGS_HOLD_SECONDS
 
 
 func is_controller_ready() -> bool:
@@ -138,6 +160,14 @@ func is_free_look_held() -> bool:
 ## throttle from its current position. Stick up opens it; stick down closes it.
 func get_jet_throttle_axis() -> float:
 	return jet_throttle_axis(get_aim_vector(), is_free_look_held())
+
+
+## The same R1 that claims the right stick for throttle also hands the nose to
+## the vectoring nozzles on the LEFT stick. The two never collide because they
+## read different sticks, which is why this is the same button rather than one
+## of the none that were left.
+func is_vectoring_held() -> bool:
+	return is_free_look_held()
 
 
 func get_jet_look_vector() -> Vector2:
@@ -324,9 +354,14 @@ func _register_input_actions() -> void:
 	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
 	_add_axis_action(ACTION_RUDDER_LEFT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
 	_add_axis_action(ACTION_RUDDER_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
-	_add_button_action(ACTION_FLIGHT_MODE, JoyButton.JOY_BUTTON_Y)
-	_add_button_action(ACTION_SETTINGS, JoyButton.JOY_BUTTON_X)
-	_add_button_action(ACTION_SWITCH_AIRCRAFT, JoyButton.JOY_BUTTON_B)
+	# Y and B are deliberately unbound. Flight mode and switch-aircraft live in
+	# the settings panel now, and both buttons are reserved for the lock-on
+	# controls in the next phase.
+	# X taps to cycle weapons and holds to open settings. The settings action
+	# keeps its constant for main.gd but no longer has a button of its own; the
+	# on-screen SETTINGS button calls the panel directly, so a mistimed hold can
+	# never lock anyone out of it.
+	_add_button_action(ACTION_WEAPON_CYCLE, JoyButton.JOY_BUTTON_X)
 	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	# The cannon moves off R1, which is now free look. Nothing fires yet, so
 	# this costs nothing today.

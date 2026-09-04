@@ -75,5 +75,14 @@ func _init() -> void:
 	if tall_request.y != 1024 or tall_request.x >= 1024:
 		push_error("a tall box must cap the height, got %s" % tall_request)
 		quit(1)
+	# World placement: the centre is the origin, the east edge is +X at half
+	# the size, and the north edge is -Z. Hero towers are placed through this.
+	var centre := MapTiles.world_of(bounds, CORRIDOR_LATITUDE, CORRIDOR_LONGITUDE, CORRIDOR_SIZE_M)
+	assert(centre.length() < 0.5, "the region centre must land at the origin, got %s" % centre)
+	var east := MapTiles.world_of(bounds, CORRIDOR_LATITUDE, float(bounds["east"]), CORRIDOR_SIZE_M)
+	assert(absf(east.x - CORRIDOR_SIZE_M * 0.5) < 0.5, "the east edge is +X at half size, got %f" % east.x)
+	var north := MapTiles.world_of(bounds, float(bounds["north"]), CORRIDOR_LONGITUDE, CORRIDOR_SIZE_M)
+	assert(absf(north.y + CORRIDOR_SIZE_M * 0.5) < 0.5, "the north edge is -Z at half size, got %f" % north.y)
+
 	print("MAP_TILES_TEST_PASS")
 	quit()
