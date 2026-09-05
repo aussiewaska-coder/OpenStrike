@@ -27,6 +27,10 @@ extends RefCounted
 
 const AERO := preload("res://scripts/jet/aero_model.gd")
 
+## The aircraft's aerodynamics. The owner replaces this when it knows which
+## airframe it is; the Raptor is the default so nothing has to.
+var aero = AERO.new()
+
 const GRAVITY := 9.80665
 
 ## How close to the stall the limiter starts easing off nose-up commands, as a
@@ -92,8 +96,8 @@ const MAX_TURN_BACK_BANK_DEGREES := 55.0
 ## commanding a pitch rate the aircraft cannot fly: at a fixed 82 degrees the
 ## hold demanded over 7 G, the wing could not deliver it, and the aircraft
 ## looped instead of turning.
-static func sustainable_bank(speed_mps: float) -> float:
-	var available: float = minf(AERO.LOAD_LIMIT_G, AERO.aerodynamic_load_limit(speed_mps))
+func sustainable_bank(speed_mps: float) -> float:
+	var available: float = minf(aero.airframe.load_limit_g, aero.aerodynamic_load_limit(speed_mps))
 	if available <= 1.05:
 		return 0.0
 	return acos(1.0 / available)
@@ -101,7 +105,7 @@ static func sustainable_bank(speed_mps: float) -> float:
 
 ## Coordination is for a bank being held, not a bank being changed. Rolling
 ## fast means aerobatics, and the coordinator must keep its hands off those.
-static func coordination_weight(roll_rate: float) -> float:
+func coordination_weight(roll_rate: float) -> float:
 	var span := maxf(COORDINATION_OFF_RATE - COORDINATION_FADE_START_RATE, 0.001)
 	return 1.0 - clampf((absf(roll_rate) - COORDINATION_FADE_START_RATE) / span, 0.0, 1.0)
 
@@ -114,7 +118,7 @@ static func coordination_weight(roll_rate: float) -> float:
 ## rates that sustain it are q = (g/v) * sin^2(bank)/cos(bank) about pitch and
 ## r = (g/v) * sin(bank) about yaw. Their resultant is the familiar
 ## g * tan(bank) / v turn rate.
-static func level_turn_pitch_rate(
+func level_turn_pitch_rate(
 	bank_radians: float,
 	speed_mps: float,
 	roll_rate := 0.0
@@ -130,7 +134,7 @@ static func level_turn_pitch_rate(
 
 ## Body yaw rate that keeps the turn coordinated, so the aircraft turns with the
 ## nose on the flight path instead of skidding through it.
-static func level_turn_yaw_rate(
+func level_turn_yaw_rate(
 	bank_radians: float,
 	speed_mps: float,
 	roll_rate := 0.0
@@ -143,7 +147,7 @@ static func level_turn_yaw_rate(
 
 
 ## Rate the aircraft's heading actually sweeps at a given bank.
-static func turn_rate(bank_radians: float, speed_mps: float) -> float:
+func turn_rate(bank_radians: float, speed_mps: float) -> float:
 	if speed_mps < 1.0:
 		return 0.0
 	var limit := sustainable_bank(speed_mps)
@@ -157,11 +161,15 @@ static func turn_rate(bank_radians: float, speed_mps: float) -> float:
 ## The ceiling is a parameter rather than the stall angle itself, because
 ## holding both rudder triggers hands the nose to the nozzles in the post-stall
 ## range. Everything below is unchanged; only where the wall sits moves.
-static func alpha_limited_pitch_rate(
+func alpha_limited_pitch_rate(
 	commanded: float,
 	alpha_radians: float,
-	ceiling_radians := deg_to_rad(AERO.STALL_ALPHA_DEGREES)
+	ceiling_radians := -1.0
 ) -> float:
+	# Negative means "the wing's own stall angle", which is an instance value
+	# and so cannot be written as a default argument.
+	if ceiling_radians < 0.0:
+		ceiling_radians = deg_to_rad(aero.airframe.stall_alpha_degrees)
 	if alpha_radians >= ceiling_radians:
 		return minf(commanded, -(alpha_radians - ceiling_radians) * ALPHA_RECOVERY_GAIN)
 	if commanded <= 0.0:
@@ -176,16 +184,16 @@ static func alpha_limited_pitch_rate(
 ## Where the limiter holds the nose. Vectoring trades the wing's limit for the
 ## nozzles': the aircraft will point far off its flight path, and pay for it in
 ## separation drag rather than in a departure.
-static func alpha_ceiling(vectoring: bool) -> float:
+func alpha_ceiling(vectoring: bool) -> float:
 	return deg_to_rad(
-		AERO.POST_STALL_ALPHA_DEGREES if vectoring else AERO.STALL_ALPHA_DEGREES
+		aero.airframe.post_stall_alpha_degrees if vectoring else aero.airframe.stall_alpha_degrees
 	)
 
 
 ## Sideslip is washed out rather than left to the pilot: an uncoordinated jet at
 ## these speeds simply reads as broken. Clamped, for the reason recorded on
 ## MAX_SIDESLIP_RATE.
-static func sideslip_damping(beta_radians: float, gain: float) -> float:
+func sideslip_damping(beta_radians: float, gain: float) -> float:
 	return clampf(beta_radians * gain, -MAX_SIDESLIP_RATE, MAX_SIDESLIP_RATE)
 
 
@@ -194,7 +202,7 @@ static func sideslip_damping(beta_radians: float, gain: float) -> float:
 ## rotating the aircraft like a flat-steering vehicle.
 ## On release the bounded wash-out lets the path catch up to the nose instead
 ## of snapping the aircraft back toward its old track.
-static func rudder_yaw_rate(
+func rudder_yaw_rate(
 	input: float,
 	maximum_sideslip_radians: float,
 	beta_radians: float,
@@ -220,7 +228,7 @@ static func rudder_yaw_rate(
 ## That indirection is the whole point: aileron sets the bank, rudder adds slip,
 ## and slip rolls the aircraft further into the bank. Combining the two is what
 ## gives a steeper bank than either alone.
-static func dihedral_roll_rate(beta_radians: float, gain := DIHEDRAL_ROLL_GAIN) -> float:
+func dihedral_roll_rate(beta_radians: float, gain := DIHEDRAL_ROLL_GAIN) -> float:
 	return clampf(-beta_radians * gain, -MAX_DIHEDRAL_ROLL_RATE, MAX_DIHEDRAL_ROLL_RATE)
 
 
@@ -229,18 +237,18 @@ static func dihedral_roll_rate(beta_radians: float, gain := DIHEDRAL_ROLL_GAIN) 
 ## command ten degrees of sideslip, which is why the rudder felt like a switch;
 ## 0.7 keeps the trigger usable without giving the whole slip range away in the
 ## first millimetre.
-static func rudder_input_response(input: float) -> float:
+func rudder_input_response(input: float) -> float:
 	return signf(input) * pow(absf(clampf(input, -1.0, 1.0)), 0.7)
 
 
 ## Shortest body-axis roll back to a level horizon. Below flying speed the
 ## surfaces cannot honour the command, so the pilot must recover airspeed first.
-static func wings_level_roll_rate(
+func wings_level_roll_rate(
 	bank_radians: float,
 	maximum_rate: float,
 	speed_mps: float
 ) -> float:
-	if AERO.aerodynamic_load_limit(speed_mps) <= 1.05:
+	if aero.aerodynamic_load_limit(speed_mps) <= 1.05:
 		return 0.0
 	var bank := wrapf(bank_radians, -PI, PI)
 	return clampf(-bank * WINGS_LEVEL_GAIN, -maximum_rate, maximum_rate)
@@ -248,7 +256,7 @@ static func wings_level_roll_rate(
 
 ## How far outside the safe area the aircraft is, 0 inside and rising to 1 well
 ## beyond. The margin is where the warning starts, not where a wall is.
-static func boundary_urgency(
+func boundary_urgency(
 	horizontal_position: Vector2,
 	half_extent: float,
 	margin: float
@@ -262,7 +270,7 @@ static func boundary_urgency(
 
 ## Bank the assist adds to bring the aircraft home, in radians. Zero inside the
 ## margin, so ordinary flying never feels a hand on the stick.
-static func turn_back_bank(
+func turn_back_bank(
 	horizontal_position: Vector2,
 	heading_radians: float,
 	half_extent: float,
@@ -289,7 +297,7 @@ static func turn_back_bank(
 ## What it is NOT available at is any airspeed. Ailerons are aerodynamic, and
 ## the Raptor's nozzles vector in pitch only, so roll is the axis that goes
 ## properly slack when the aircraft runs out of speed.
-static func commanded_roll_rate(
+func commanded_roll_rate(
 	stick: float,
 	maximum_rate: float,
 	speed_mps: float,
@@ -298,7 +306,7 @@ static func commanded_roll_rate(
 	vectoring := false
 ) -> float:
 	var boost := VECTORED_RATE_GAIN if vectoring else 1.0
-	return stick * maximum_rate * AERO.control_authority(speed_mps) * boost
+	return stick * maximum_rate * aero.control_authority(speed_mps) * boost
 
 
 ## Pitch rate the stick asks for, put through every limit in turn. The automatic
@@ -308,7 +316,7 @@ static func commanded_roll_rate(
 ## The pilot's term is scaled by pitch authority, so a slow aircraft has a slack
 ## stick rather than a full-rate one. The hold is not scaled: it is a trim term
 ## the aircraft owes its own bank, and it is already small at low speed.
-static func commanded_pitch_rate(
+func commanded_pitch_rate(
 	stick: float,
 	maximum_rate: float,
 	speed_mps: float,
@@ -321,9 +329,9 @@ static func commanded_pitch_rate(
 	var hold := level_turn_pitch_rate(bank_radians, speed_mps, roll_rate)
 	var boost := VECTORED_RATE_GAIN if vectoring else 1.0
 	var pilot := stick * maximum_rate \
-		* AERO.pitch_authority(speed_mps, thrust_fraction) * boost
+		* aero.pitch_authority(speed_mps, thrust_fraction) * boost
 	var hold_weight := 1.0 - clampf(absf(stick) / PITCH_HOLD_OVERRIDE_STICK, 0.0, 1.0)
 	var limited := alpha_limited_pitch_rate(
 		hold * hold_weight + pilot, alpha_radians, alpha_ceiling(vectoring)
 	)
-	return AERO.load_limited_pitch_rate(speed_mps, limited)
+	return aero.load_limited_pitch_rate(speed_mps, limited)

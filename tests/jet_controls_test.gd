@@ -3,7 +3,7 @@ extends SceneTree
 ## Flies the aircraft, rather than checking its coefficients.
 ##
 ## Every step below goes through the same statics the controller uses --
-## AERO.flight_acceleration for the forces and JET.rotate_body for the
+## aero.flight_acceleration for the forces and JET.rotate_body for the
 ## attitude -- so this is the real flight model, not a copy of it that can
 ## silently drift out of agreement.
 ##
@@ -16,7 +16,15 @@ extends SceneTree
 ## than the value of any single function.
 
 const AERO := preload("res://scripts/jet/aero_model.gd")
+
+## The Raptor, so every number below means what it did when it was written.
+var aero
 const ASSIST := preload("res://scripts/jet/flight_assist.gd")
+
+## One assist, flying the Raptor, so every expectation below is unchanged.
+## Built in _init: inferring a script instance's type at script scope makes
+## the parser report a cyclic reference.
+var assist
 const JET := preload("res://scripts/jet/jet_controller.gd")
 
 const STEP := 1.0 / 60.0
@@ -51,6 +59,8 @@ class Flight:
 
 
 func _init() -> void:
+	assist = ASSIST.new()
+	aero = assist.aero
 	assert(JET.pitch_input_from_stick(-1.0) < 0.0, "pushing the left stick up must lower the nose")
 	assert(JET.pitch_input_from_stick(1.0) > 0.0, "pulling the left stick down must raise the nose")
 	_pitch_responds()
@@ -82,7 +92,7 @@ func _pitch_responds() -> void:
 
 ## The angle of attack that holds level flight at a given speed.
 func _trim_alpha(speed: float) -> float:
-	return AERO.trim_alpha(speed)
+	return aero.trim_alpha(speed)
 
 
 ## Level, wings level, and trimmed. Starting with the velocity exactly along the
@@ -111,21 +121,21 @@ func _step(
 	var speed := flight.velocity.length()
 	var bank: float = JET.bank_angle(flight.basis)
 
-	var commanded_roll: float = ASSIST.commanded_roll_rate(
+	var commanded_roll: float = assist.commanded_roll_rate(
 		roll_stick, MAX_ROLL_RATE, speed, bank, flight.roll_rate
 	)
-	commanded_roll += ASSIST.dihedral_roll_rate(flight.beta, DIHEDRAL_ROLL_GAIN)
-	var commanded_pitch: float = ASSIST.commanded_pitch_rate(
+	commanded_roll += assist.dihedral_roll_rate(flight.beta, DIHEDRAL_ROLL_GAIN)
+	var commanded_pitch: float = assist.commanded_pitch_rate(
 		pitch_stick, MAX_PITCH_RATE, speed, bank, flight.alpha, flight.roll_rate, throttle
 	)
-	var commanded_yaw: float = ASSIST.level_turn_yaw_rate(bank, speed, flight.roll_rate)
-	commanded_yaw += ASSIST.rudder_yaw_rate(
+	var commanded_yaw: float = assist.level_turn_yaw_rate(bank, speed, flight.roll_rate)
+	commanded_yaw += assist.rudder_yaw_rate(
 		rudder_stick,
 		deg_to_rad(RUDDER_SIDESLIP),
 		flight.beta,
 		SIDESLIP_GAIN,
 		RUDDER_RATE
-	) * AERO.control_authority(speed)
+	) * aero.control_authority(speed)
 
 	var weight := 1.0 - exp(-CONTROL_RESPONSE * STEP)
 	flight.roll_rate = lerpf(flight.roll_rate, commanded_roll, weight)
@@ -135,14 +145,14 @@ func _step(
 		flight.basis, flight.roll_rate, flight.pitch_rate, flight.yaw_rate, STEP
 	)
 
-	var angles: Vector2 = AERO.alpha_beta(flight.basis.inverse() * flight.velocity)
+	var angles: Vector2 = aero.alpha_beta(flight.basis.inverse() * flight.velocity)
 	flight.alpha = angles.x
 	flight.beta = angles.y
 
 	var dry := clampf(throttle, 0.0, 1.0)
 	var wet := clampf((throttle - 1.0) / 0.35, 0.0, 1.0)
-	var thrust: float = AERO.thrust_acceleration(dry, wet)
-	flight.velocity += AERO.flight_acceleration(
+	var thrust: float = aero.thrust_acceleration(dry, wet)
+	flight.velocity += aero.flight_acceleration(
 		flight.basis.x, flight.basis.y, flight.velocity, thrust, flight.alpha, 1.0
 	) * STEP
 	flight.position += flight.velocity * STEP
@@ -150,7 +160,7 @@ func _step(
 	var heading: float = JET.heading_of(flight.basis)
 	flight.turned += wrapf(heading - flight.previous_heading, -PI, PI)
 	flight.previous_heading = heading
-	flight.peak_load = maxf(flight.peak_load, AERO.lift_acceleration(speed, flight.alpha) / AERO.GRAVITY)
+	flight.peak_load = maxf(flight.peak_load, aero.lift_acceleration(speed, flight.alpha) / AERO.GRAVITY)
 	flight.worst_alpha = maxf(flight.worst_alpha, flight.alpha)
 	flight.peak_bank = maxf(flight.peak_bank, absf(bank))
 
@@ -267,7 +277,7 @@ func _a_hard_turn_costs_speed() -> void:
 		_fail("an eight-second hard turn dumped out of the arcade envelope, got %.1f" % turning_speed)
 	if turning.peak_load <= 3.0:
 		_fail("a full pull must actually load the airframe, peaked at %.1f G" % turning.peak_load)
-	if turning.peak_load > AERO.LOAD_LIMIT_G + 0.5:
+	if turning.peak_load > aero.airframe.load_limit_g + 0.5:
 		_fail("the load limiter let the airframe reach %.1f G" % turning.peak_load)
 
 
@@ -338,7 +348,7 @@ func _throttle_sets_speed_not_thrust() -> void:
 		])
 	if idle >= CRUISE:
 		_fail("closing the throttle must lose speed, got %.1f" % idle)
-	if afterburner > AERO.CORNER_SPEED_MPS * 2.0:
+	if afterburner > aero.airframe.corner_speed_mps() * 2.0:
 		_fail("afterburner reached %.1f m/s, faster than the envelope allows" % afterburner)
 
 
@@ -351,12 +361,12 @@ func _it_cannot_be_departed() -> void:
 	for _step_index in range(int(30.0 / STEP)):
 		_step(flight, 0.0, 1.0, 1.0)
 
-	var stall := deg_to_rad(AERO.STALL_ALPHA_DEGREES)
+	var stall := deg_to_rad(aero.airframe.stall_alpha_degrees)
 	# A small overshoot is the one-frame lag between measuring alpha and acting
 	# on it. A large one means the limiter is not holding.
 	if flight.worst_alpha > stall + deg_to_rad(2.0):
 		_fail("full back stick reached %.1f degrees alpha against a %.1f degree stall" % [
-			rad_to_deg(flight.worst_alpha), AERO.STALL_ALPHA_DEGREES
+			rad_to_deg(flight.worst_alpha), aero.airframe.stall_alpha_degrees
 		])
 	if flight.worst_alpha < deg_to_rad(4.0):
 		_fail("full back stick barely moved the angle of attack, so nothing was tested")

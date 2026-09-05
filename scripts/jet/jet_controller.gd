@@ -27,6 +27,13 @@ extends Node3D
 
 const AERO := preload("res://scripts/jet/aero_model.gd")
 const ASSIST := preload("res://scripts/jet/flight_assist.gd")
+const AIRFRAME := preload("res://scripts/jet/airframe.gd")
+
+## Which aircraft this is. Set before the node enters the tree.
+var airframe = AIRFRAME.raptor()
+## Built from the airframe, and shared with the assist so both agree.
+var _aero
+var _assist
 const JET_VISUALS := preload("res://scripts/jet/jet_visuals.gd")
 const FIXED_GUN_MOUNT := preload("res://scripts/weapons/fixed_gun_mount.gd")
 
@@ -128,11 +135,20 @@ var _wings_level_requested := false
 
 
 func _ready() -> void:
+	_build_aerodynamics()
 	_terrain = get_node_or_null(terrain_path)
 	_adopt_world_bounds(_terrain)
 	throttle = starting_throttle
 	_thrust_setting = starting_throttle
 	call_deferred("_find_visual")
+
+
+## The airframe decides the aerodynamics, and the assist must fly by the same
+## ones the controller does. Called again if the airframe is swapped in place.
+func _build_aerodynamics() -> void:
+	_aero = AERO.new(airframe)
+	_assist = ASSIST.new()
+	_assist.aero = _aero
 
 
 func set_terrain(node: Node) -> void:
@@ -152,7 +168,7 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	global_position = at_position
 	var speed := (minimum_display_speed + maximum_display_speed) * 0.5
 	var altitude := at_position.y - _sample_ground()
-	var trim := AERO.trim_alpha(speed, AERO.altitude_falloff(altitude, service_ceiling_m))
+	var trim: float = _aero.trim_alpha(speed, _aero.altitude_falloff(altitude, service_ceiling_m))
 	basis = _basis_from_nose(nose, Vector3.UP)
 	basis = basis.rotated(basis.z, trim)
 	velocity = nose * speed
@@ -217,7 +233,7 @@ func _read_controls(delta: float) -> void:
 	throttle_input = throttle_axis
 
 	throttle = clampf(throttle + throttle_axis * throttle_rate * delta, 0.0, maximum_throttle)
-	_thrust_setting = AERO.spool(_thrust_setting, throttle, spool_response, delta)
+	_thrust_setting = _aero.spool(_thrust_setting, throttle, spool_response, delta)
 
 	var speed := velocity.length()
 	bank = bank_angle(basis)
@@ -226,7 +242,7 @@ func _read_controls(delta: float) -> void:
 	vectoring = boost_held and not _braking
 	airbrake = move_toward(airbrake, 1.0 if _braking else 0.0, delta * 3.0)
 
-	var commanded_roll := ASSIST.commanded_roll_rate(
+	var commanded_roll: float = _assist.commanded_roll_rate(
 		roll_input,
 		maximum_roll_rate,
 		speed,
@@ -234,7 +250,7 @@ func _read_controls(delta: float) -> void:
 		_roll_rate,
 		vectoring
 	)
-	commanded_roll += ASSIST.dihedral_roll_rate(beta, dihedral_roll_gain)
+	commanded_roll += _assist.dihedral_roll_rate(beta, dihedral_roll_gain)
 	commanded_roll += _boundary_roll_command()
 	if _wings_level_requested:
 		if absf(roll_input) > 0.2:
@@ -242,12 +258,12 @@ func _read_controls(delta: float) -> void:
 		elif absf(bank) <= deg_to_rad(1.5):
 			_wings_level_requested = false
 		else:
-			var recovery := ASSIST.wings_level_roll_rate(bank, maximum_roll_rate, speed)
+			var recovery: float = _assist.wings_level_roll_rate(bank, maximum_roll_rate, speed)
 			if is_zero_approx(recovery):
 				_wings_level_requested = false
 			else:
 				commanded_roll = recovery
-	var commanded_pitch := ASSIST.commanded_pitch_rate(
+	var commanded_pitch: float = _assist.commanded_pitch_rate(
 		pitch_input,
 		maximum_pitch_rate,
 		speed,
@@ -257,14 +273,14 @@ func _read_controls(delta: float) -> void:
 		clampf(_thrust_setting, 0.0, 1.0),
 		vectoring
 	)
-	var commanded_yaw := ASSIST.level_turn_yaw_rate(bank, speed, _roll_rate)
-	commanded_yaw += ASSIST.rudder_yaw_rate(
+	var commanded_yaw: float = _assist.level_turn_yaw_rate(bank, speed, _roll_rate)
+	commanded_yaw += _assist.rudder_yaw_rate(
 		rudder_input,
 		deg_to_rad(maximum_rudder_sideslip_degrees),
 		beta,
 		sideslip_damping_gain,
 		maximum_rudder_yaw_rate
-	) * AERO.control_authority(speed)
+	) * _aero.control_authority(speed)
 
 	# Control surfaces move quickly but not instantly, which is what stops the
 	# aircraft snapping between attitudes.
@@ -330,25 +346,25 @@ func _integrate(delta: float) -> void:
 	var up := basis.y
 
 	var body_velocity := basis.inverse() * velocity
-	var angles := AERO.alpha_beta(body_velocity)
+	var angles: Vector2 = _aero.alpha_beta(body_velocity)
 	alpha = angles.x
 	beta = angles.y
 
 	var ground_height := _sample_ground()
 	var altitude := global_position.y - ground_height
-	var falloff := AERO.altitude_falloff(altitude, service_ceiling_m)
+	var falloff: float = _aero.altitude_falloff(altitude, service_ceiling_m)
 
 	var dry := clampf(_thrust_setting, 0.0, 1.0)
 	var wet := clampf((_thrust_setting - 1.0) / maxf(afterburner_travel, 0.001), 0.0, 1.0)
-	var thrust := AERO.thrust_acceleration(dry, wet)
+	var thrust: float = _aero.thrust_acceleration(dry, wet)
 
-	var acceleration := AERO.flight_acceleration(nose, up, velocity, thrust, alpha, falloff)
+	var acceleration: Vector3 = _aero.flight_acceleration(nose, up, velocity, thrust, alpha, falloff)
 	# Drag opposes travel without pitching the nose or changing the throttle.
 	acceleration -= velocity.normalized() * airbrake * minf(35.0, 18.0 * pow(speed / 175.0, 2.0))
 	velocity += acceleration * delta
 	global_position += velocity * delta
 
-	load_factor = AERO.lift_acceleration(speed, alpha) * falloff / GRAVITY
+	load_factor = _aero.lift_acceleration(speed, alpha) * falloff / GRAVITY
 
 
 ## Roll the assist adds to bring the aircraft back over the theatre. Zero
@@ -356,7 +372,7 @@ func _integrate(delta: float) -> void:
 func _boundary_roll_command() -> float:
 	var here := Vector2(global_position.x, global_position.z)
 	var heading := _heading()
-	var wanted := ASSIST.turn_back_bank(here, heading, _world_limit, boundary_margin_m)
+	var wanted: float = _assist.turn_back_bank(here, heading, _world_limit, boundary_margin_m)
 	if is_zero_approx(wanted):
 		return 0.0
 	return (wanted - bank) * boundary_roll_gain
@@ -364,7 +380,7 @@ func _boundary_roll_command() -> float:
 
 func _check_boundaries() -> void:
 	var here := Vector2(global_position.x, global_position.z)
-	var urgency := ASSIST.boundary_urgency(here, _world_limit, boundary_margin_m)
+	var urgency: float = _assist.boundary_urgency(here, _world_limit, boundary_margin_m)
 	if not is_equal_approx(urgency, _boundary_urgency):
 		_boundary_urgency = urgency
 		boundary_warning.emit(urgency)
@@ -434,7 +450,7 @@ func body_rates() -> Vector3:
 
 ## Any deliberate roll-stick input cancels this one-shot recovery command.
 func request_wings_level() -> bool:
-	if _crashed or AERO.aerodynamic_load_limit(airspeed()) <= 1.05:
+	if _crashed or _aero.aerodynamic_load_limit(airspeed()) <= 1.05:
 		_wings_level_requested = false
 		return false
 	_wings_level_requested = absf(bank_angle(basis)) > deg_to_rad(1.5)
