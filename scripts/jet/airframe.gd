@@ -55,3 +55,52 @@ func corner_speed_mps() -> float:
 
 static func raptor() -> Airframe:
 	return Airframe.new()
+
+
+## The F-117A Nighthawk.
+##
+## The Raptor's tuned numbers scaled by the ratio between the two real
+## aircraft. aero_model.gd is explicit that its speed envelope is compressed
+## and its drag constants are game-feel rather than F-22 numbers, so dropping
+## measured F-117 coefficients into it would be a lie dressed as rigour. What
+## is preserved instead is the relationship: a subsonic bomber against a
+## supercruising fighter, each ratio recorded beside the value it produced.
+static func nighthawk() -> Airframe:
+	var f := Airframe.new()
+	f.display_name = "F-117 NIGHTHAWK"
+
+	# Real thrust-to-weight is 0.47 against the Raptor's 0.82, so 0.57 of it.
+	# Two F404s with no reheat, hauling an aircraft that is mostly angles.
+	f.thrust_military_g = 0.31
+	# There is no afterburner on the airframe at all. Equal values make the
+	# burner inert without a branch anywhere in the input path.
+	f.thrust_afterburner_g = 0.31
+	f.thrust_idle_g = 0.03
+
+	# The real airframe limit, against the Raptor's 9. It is a bomber.
+	f.load_limit_g = 6.0
+
+	# Mach 0.92 flat out and no supercruise, so the compressibility rise
+	# arrives well below where the Raptor's does and there is no running away.
+	f.drag_divergence_mps = 130.0
+
+	# A 67.5-degree swept faceted wing lifts poorly per degree and gives up
+	# earlier. No vortex lift to hold on to past the stall, and no nozzles to
+	# point the nose with, so the post-stall range is narrow and unrewarding.
+	f.cl_slope = 3.6
+	f.stall_alpha_degrees = 26.0
+	f.cl_decay_degrees = 22.0
+	f.post_stall_alpha_degrees = 30.0
+
+	# Faceting is not free: every flat panel that defeats a radar also spoils
+	# the airflow over it. More parasite drag than the Raptor carries.
+	f.cd0 = 0.082
+	f.k_induced = 0.075
+
+	# Lighter wing loading than the Raptor, which would flatter its turn if the
+	# lift curve and the thrust were not both against it.
+	f.aero_authority = 0.00205
+
+	# No vectoring nozzles. Both triggers stays an airbrake and nothing more.
+	f.thrust_vector_authority = 0.0
+	return f
