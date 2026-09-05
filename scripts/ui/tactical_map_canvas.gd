@@ -229,6 +229,7 @@ func _draw() -> void:
 	for index in range(12):
 		var angle := _sweep - float(index) * 0.025
 		draw_line(origin, origin + Vector2(sin(angle), -cos(angle)) * range_m * pixels_per_metre(), Color(GREEN, 0.23 * (1.0 - float(index) / 12.0)), 2, true)
+	_draw_places()
 	if route != null:
 		var previous := origin
 		for index in range(route.points.size()):
@@ -271,3 +272,83 @@ func _draw() -> void:
 	for y in range(0, int(size.y), 4):
 		draw_line(Vector2(0, y), Vector2(size.x, y), Color(0, 0.02, 0.02, 0.065), 1)
 	draw_rect(Rect2(Vector2.ONE, size - Vector2.ONE * 2), Color(GREEN, 0.35), false, 2)
+
+
+## Keep geographic labels readable during pan/zoom. They never participate in
+## contact picking: aircraft, threats and route input retain their own meaning.
+func place_labels() -> Array:
+	var result := []
+	var occupied: Array[Rect2] = []
+	var own := world_to_screen(Vector2(player.x, player.z))
+	occupied.append(Rect2(own - Vector2(16, 16), Vector2(68, 46)))
+	var font_size := 12 if size.x < 500 else 13
+	var font := ThemeDB.fallback_font
+	var area := Rect2(Vector2(8, 50), Vector2(maxf(size.x - 16, 1), maxf(size.y - 86, 1)))
+	for place in layers.get("places", []):
+		var at := world_to_screen(place.position)
+		if not Rect2(Vector2.ZERO, size).has_point(at):
+			continue
+		var lines: Array = [String(place.name)]
+		if place.has("subtitle"):
+			lines.append(String(place.subtitle))
+		var width := 0.0
+		for line in lines:
+			width = maxf(width, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+		var extent := Vector2(width + 10, lines.size() * (font_size + 4) + 6)
+		var chosen := Rect2()
+		for level in range(7):
+			for direction in [1.0, -1.0]:
+				var offset := Vector2(12 if direction > 0 else -extent.x - 12, -extent.y - 8 - level * (extent.y + 3))
+				if level % 2 == 1:
+					offset.y = 10 + (level / 2) * (extent.y + 3)
+				var origin := at + offset
+				origin.x = clampf(origin.x, area.position.x, maxf(area.position.x, area.end.x - extent.x))
+				origin.y = clampf(origin.y, area.position.y, maxf(area.position.y, area.end.y - extent.y))
+				var rect := Rect2(origin, extent)
+				var overlaps := false
+				for taken in occupied:
+					if rect.grow(3).intersects(taken):
+						overlaps = true
+						break
+				if not overlaps:
+					chosen = rect
+					break
+			if chosen.has_area():
+				break
+		if not chosen.has_area():
+			# Crowded overview: search free label rows, retaining a leader to
+			# the true position instead of dropping a town behind another name.
+			var best := INF
+			for y in range(int(area.position.y), int(area.end.y - extent.y) + 1, font_size + 6):
+				for fraction in [0.0, 0.25, 0.5, 0.75, 1.0]:
+					var rect := Rect2(Vector2(lerpf(area.position.x, maxf(area.position.x, area.end.x - extent.x), fraction), y), extent)
+					var overlaps := false
+					for taken in occupied:
+						if rect.grow(3).intersects(taken):
+							overlaps = true
+							break
+					var distance := rect.get_center().distance_squared_to(at)
+					if not overlaps and distance < best:
+						best = distance
+						chosen = rect
+		if chosen.has_area():
+			occupied.append(chosen)
+			result.append({"at": at, "rect": chosen, "lines": lines, "font_size": font_size, "airport": place.get("airport", false)})
+	return result
+
+func _draw_places() -> void:
+	for label in place_labels():
+		var at: Vector2 = label.at
+		var rect: Rect2 = label.rect
+		var colour := Color(1.0, 0.80, 0.40) if label.airport else Color(0.72, 0.86, 0.80)
+		var edge := Vector2(clampf(at.x, rect.position.x, rect.end.x), clampf(at.y, rect.position.y, rect.end.y))
+		draw_line(at, edge, Color(colour, 0.45), 1, true)
+		if label.airport:
+			draw_circle(at, 9, Color(0.01, 0.03, 0.03, 0.9))
+			draw_arc(at, 8, 0, TAU, 24, colour, 1.5, true)
+			draw_line(at + Vector2(-3, -5), at + Vector2(3, 5), colour, 3, true)
+		else:
+			draw_circle(at, 3, colour)
+		draw_rect(rect, Color(0.01, 0.035, 0.04, 0.82))
+		for i in range(label.lines.size()):
+			_text(rect.position + Vector2(5, 4 + label.font_size + i * (label.font_size + 4)), label.lines[i], colour, label.font_size)

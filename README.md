@@ -196,7 +196,7 @@ clearance stops the model flying you into a hill.
 | Tap the screen | Pick a ground point to orbit; tap the sky to clear it |
 | L2 / R2 | With a target: fly the aircraft around it, nose held on it. Without one: orbit the camera |
 | Left stick up/down, while orbiting | Close or widen the orbit, down to 100 m |
-| Y | Open / close tactical map |
+| Y | Open / close tactical map, with town labels and a Coolangatta Airport marker |
 | R1 | Lock the target nearest the view centre and track it; repeat for the next visible member of that cluster |
 | A (hold) | Helicopter manual view/aim with the right stick |
 | Home / Guide + D-pad up/down | Increase/decrease jet throttle; release holds the setting |

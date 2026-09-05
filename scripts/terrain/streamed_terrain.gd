@@ -618,4 +618,4 @@ func tactical_map_layers() -> Dictionary:
 	for chunk in _chunks:
 		if chunk.get("texture") != null and chunk.texture != _overview_texture:
 			details.append({"bounds": _terrain_chunk_bounds(int(chunk.cx), int(chunk.cz)), "texture": chunk.texture})
-	return {"world_size_m": float(_metadata.get("world_size_m", 50000.0)), "height": _height_image, "metadata": _metadata, "aerial": _overview_texture, "details": details}
+	return {"world_size_m": float(_metadata.get("world_size_m", 50000.0)), "height": _height_image, "metadata": _metadata, "aerial": _overview_texture, "details": details, "places": preload("res://scripts/ui/map_places.gd").for_bounds(_bounds, float(_metadata.get("world_size_m", 50000.0)))}
