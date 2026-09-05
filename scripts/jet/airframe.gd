@@ -49,6 +49,19 @@ var scene_path := "res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb"
 var model_basis := Basis.IDENTITY
 var reference_wingspan_m := 13.56
 var hull_clearance_m := 2.5
+## Where the pilot sits, as fractions of the airframe in the engine's
+## convention: along the length, and up through it.
+var cockpit_seat_fraction := 0.60
+var cockpit_eye_height_fraction := 0.80
+var cockpit_pitch_degrees := -8.0
+## The Raptor's parts have names -- "canopy", "landingon" -- and the
+## Nighthawk's are all Object_N, so each model's canopy and gear are found the
+## way that model allows.
+var parts_are_named := true
+## jet_effects.gd partitions the Raptor's trailing wing panels into ailerons
+## and hangs plumes off its nozzles. That is Raptor geometry, not a general
+## capability, so an aircraft it was not written for opts out.
+var has_jet_effects := true
 
 
 ## Peak lift coefficient, at the stall angle. aero_model.gd wrote this as
@@ -124,4 +137,14 @@ static func nighthawk() -> Airframe:
 	f.model_basis = Basis(Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3(0, 0, 1).cross(Vector3(0, 1, 0)))
 	f.reference_wingspan_m = 13.20
 	f.hull_clearance_m = 1.6
+
+	# There is no cockpit interior in this model at all: from the seat you see
+	# the inside of the canopy facets and the back of the exterior skin, with
+	# no seat, panel or consoles. The view is the seat point, the aircraft's
+	# own faceted canopy frame, and the drawn helmet HUD.
+	f.cockpit_seat_fraction = 0.62
+	f.cockpit_eye_height_fraction = 0.72
+	f.cockpit_pitch_degrees = -7.0
+	f.parts_are_named = false
+	f.has_jet_effects = false
 	return f

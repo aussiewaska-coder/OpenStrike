@@ -29,6 +29,9 @@ const AERO := preload("res://scripts/jet/aero_model.gd")
 const ASSIST := preload("res://scripts/jet/flight_assist.gd")
 const AIRFRAME := preload("res://scripts/jet/airframe.gd")
 
+## Anything hanging below this fraction of an unnamed model's height is gear.
+const GEAR_HEIGHT_FRACTION := 0.30
+
 ## Which aircraft this is. Set before the node enters the tree.
 var airframe = AIRFRAME.raptor()
 ## Built from the airframe, and shared with the assist so both agree.
@@ -53,7 +56,6 @@ signal boundary_warning(urgency: float)
 ## The GLB is ten times real scale, so the wingspan is measured and the model
 ## scaled to match rather than trusting a magic number that breaks if the asset
 ## is ever swapped.
-@export var reference_wingspan_m := 13.56
 ## Hull half-height, for deciding when the aircraft has touched the ground.
 @export var hull_clearance_m := 2.5
 
@@ -95,11 +97,8 @@ signal boundary_warning(urgency: float)
 ## Where along the cockpit tub the seat sits, and how high in it the pilot's
 ## eyes are. Fractions rather than metres, so they survive the model being
 ## rescaled or replaced.
-@export var cockpit_seat_fraction := 0.60
-@export var cockpit_eye_height_fraction := 0.80
 ## The view sits a few degrees nose-down so the instrument panel is in frame
 ## below the HUD combiner, rather than only the sky ahead of it.
-@export var cockpit_pitch_degrees := -8.0
 
 var velocity := Vector3.ZERO
 ## 0 to 1 is idle to military power; above 1 is afterburner.
@@ -466,10 +465,16 @@ func _find_visual() -> void:
 	if _visual == null:
 		return
 	_scale_to_reference()
-	_stow_landing_gear()
-	JET_VISUALS.clarify_canopy(_visual)
+	# The Raptor's parts have names and the Nighthawk's are all Object_N, so
+	# each is found the way its own model allows.
+	if airframe.parts_are_named:
+		_stow_landing_gear()
+		JET_VISUALS.clarify_canopy(_visual)
+	else:
+		JET_VISUALS.hide_landing_gear(_visual, airframe.model_basis, GEAR_HEIGHT_FRACTION)
+		JET_VISUALS.clarify_canopy_by_bounds(_visual, airframe.model_basis)
 	_measure_cockpit()
-	if _effects == null:
+	if airframe.has_jet_effects and _effects == null:
 		_effects = EFFECTS.new()
 		add_child(_effects)
 		_effects.build(_visual)
@@ -579,8 +584,8 @@ func _measure_cockpit() -> void:
 		return
 	var oriented: AABB = Transform3D(airframe.model_basis, Vector3.ZERO) * bounds
 	var seat := Vector3(
-		oriented.position.x + oriented.size.x * cockpit_seat_fraction,
-		oriented.position.y + oriented.size.y * cockpit_eye_height_fraction,
+		oriented.position.x + oriented.size.x * airframe.cockpit_seat_fraction,
+		oriented.position.y + oriented.size.y * airframe.cockpit_eye_height_fraction,
 		oriented.get_center().z
 	)
 	# _visual carries the corrective rotation now, and this is multiplied by
@@ -618,7 +623,7 @@ func get_cockpit_transform() -> Transform3D:
 	var frame := _visual.global_transform
 	var orientation := global_transform.basis.orthonormalized()
 	# Tilt down about the right wing so the panel is in frame under the HUD.
-	orientation = orientation.rotated(orientation.z, deg_to_rad(cockpit_pitch_degrees))
+	orientation = orientation.rotated(orientation.z, deg_to_rad(airframe.cockpit_pitch_degrees))
 	return Transform3D(orientation, frame * _cockpit_local)
 
 
@@ -627,7 +632,7 @@ func get_interpolated_cockpit_transform() -> Transform3D:
 		return get_cockpit_transform()
 	var frame := _visual.get_global_transform_interpolated()
 	var orientation := get_global_transform_interpolated().basis.orthonormalized()
-	orientation = orientation.rotated(orientation.z, deg_to_rad(cockpit_pitch_degrees))
+	orientation = orientation.rotated(orientation.z, deg_to_rad(airframe.cockpit_pitch_degrees))
 	return Transform3D(orientation, frame * _cockpit_local)
 
 
