@@ -145,6 +145,8 @@ var _arcade_camera_feedback := ARCADE_CAMERA_FEEDBACK.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
+var _manual_view_active := false
+var _manual_view_basis := Basis.IDENTITY
 var _view_returning := false
 var _view_return_start := Vector2.ZERO
 var _view_return_elapsed := 0.0
@@ -703,8 +705,13 @@ func _update_free_look(delta: float) -> void:
 	var manual_look := GamepadInput.get_jet_look_vector() if _flying_jet else (GamepadInput.get_aim_vector() if GamepadInput.is_free_look_held() else Vector2.ZERO)
 	if _flying_jet and _advance_view_return(delta, manual_look):
 		return
-	if _tracker.tracking_view and manual_look.length() > 0.25:
-		_tracker.stop_view_tracking()
+	if _tracker.tracking_view and not manual_look.is_zero_approx():
+		_begin_manual_view()
+	if _manual_view_active:
+		var yaw := -manual_look.x * free_look_speed * deg_to_rad(free_look_yaw_degrees) * delta
+		var pitch := -manual_look.y * free_look_speed * deg_to_rad(free_look_pitch_degrees) * delta
+		_manual_view_basis = (Basis(Vector3.UP, yaw) * _manual_view_basis * Basis(Vector3.RIGHT, pitch)).orthonormalized()
+		return
 	if _flying_jet:
 		_external_aim.update(Vector2.ZERO, false, delta)
 		var look := GamepadInput.get_jet_look_vector()
@@ -760,7 +767,7 @@ func _view_return_weight() -> float:
 
 
 func _begin_view_return() -> void:
-	_view_return_from_tracking = _tracker.tracking_view
+	_view_return_from_tracking = _tracker.tracking_view or _manual_view_active
 	if _view_return_from_tracking:
 		var reference: Basis
 		if _jet_view == JET_CAMERA.Mode.COCKPIT:
@@ -771,6 +778,7 @@ func _begin_view_return() -> void:
 			reference = Basis.looking_at(_look_target - camera.global_position, JET_CAMERA.camera_up(_jet_view, frame.basis.y))
 		_view_return_basis = reference.inverse() * camera.global_basis
 	_tracker.stop_view_tracking()
+	_manual_view_active = false
 	_view_return_start = _free_look
 	_view_return_elapsed = 0.0
 	_view_returning = true
@@ -780,13 +788,8 @@ func _advance_view_return(delta: float, manual_look: Vector2) -> bool:
 	if not _view_returning:
 		return false
 	if not manual_look.is_zero_approx():
-		if _view_return_from_tracking and _jet_view == JET_CAMERA.Mode.COCKPIT:
-			var frame: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
-			var local: Vector3 = Basis.looking_at(frame.basis.x, frame.basis.y).inverse() * -camera.global_basis.z
-			_free_look = Vector2(
-				atan2(-local.x, -local.z) / deg_to_rad(free_look_yaw_degrees),
-				asin(clampf(local.y, -1.0, 1.0)) / deg_to_rad(free_look_pitch_degrees)
-			).clamp(Vector2(-1, -1), Vector2.ONE)
+		if _view_return_from_tracking:
+			_begin_manual_view()
 		_view_returning = false
 		return false
 	_view_return_elapsed += delta
@@ -878,6 +881,7 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		)
 		_look_target = cockpit.origin + cockpit.basis.x * 100.0
 		_jet_camera_focus = _focus_position()
+		_apply_manual_view()
 		return
 
 	var focus := _focus_position()
@@ -953,6 +957,7 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		camera.look_at(_look_target, JET_CAMERA.camera_up(_jet_view, airframe.basis.y))
 		if _view_returning and _view_return_from_tracking:
 			camera.global_basis *= _view_return_basis.slerp(Basis.IDENTITY, _view_return_weight())
+	_apply_manual_view()
 
 
 ## In travel view L2/R2 sweep around a locked ground point instead of steering
@@ -1402,6 +1407,7 @@ func _update_cockpit_camera() -> void:
 	# than its own -Z.
 	camera.global_basis = Basis.looking_at(frame.basis.x, Vector3.UP) * _free_look_basis()
 	camera.fov = cockpit_fov + _speed_fov_offset() * 0.55
+	_apply_manual_view()
 
 
 func _is_cockpit_view() -> bool:
@@ -1409,6 +1415,7 @@ func _is_cockpit_view() -> bool:
 
 
 func _snap_follow_camera() -> void:
+	_manual_view_active = false
 	_view_returning = false
 	_release_orbit_lock()
 	if _flying_jet:
@@ -1463,6 +1470,7 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-camera_mode_response * delta))
 	if camera.global_position.distance_squared_to(_look_target) > 0.0001:
 		camera.look_at(_look_target, _camera_horizon(delta, snap))
+	_apply_manual_view()
 
 
 ## Helicopter follow cameras retain a level horizon. F-22 views use their own
@@ -1531,7 +1539,7 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 			# is the more urgent of the two -- and you cannot judge a wings-level
 			# recovery while looking at your own tailplane anyway -- so the view
 			# comes back before the aircraft does.
-			if JET_CAMERA.is_look_displaced(_free_look):
+			if _manual_view_active or JET_CAMERA.is_look_displaced(_free_look):
 				_begin_view_return()
 				status_label.text = "RETURNING VIEW FORWARD"
 			else:
@@ -1570,6 +1578,7 @@ func _track_looked_at_target() -> void:
 func _apply_target_tracking(delta: float) -> void:
 	if not _tracker.tracking_view:
 		return
+	_manual_view_active = false
 	var c := _tracker.locked()
 	if c.is_empty():
 		_tracker.stop_view_tracking()
@@ -1987,3 +1996,34 @@ func _add_map_waypoint(point: Vector2) -> void:
 	else:
 		_tactical_mfd.show_message("Route full · maximum 12 waypoints")
 	_sync_tactical_state()
+
+
+## A tracking handoff keeps the complete displayed pose, including neck roll
+## and directions outside normal manual-look limits. The old look/orbit state
+## stays fixed until an explicit recenter or view change.
+func _manual_view_reference() -> Basis:
+	if _is_cockpit_view():
+		if _flying_jet:
+			var frame: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
+			return Basis.looking_at(frame.basis.x, frame.basis.y)
+		var vehicle := _vehicle()
+		var frame: Transform3D = vehicle.get_cockpit_transform() if vehicle.has_method("get_cockpit_transform") else vehicle.global_transform
+		return Basis.looking_at(frame.basis.x, Vector3.UP)
+	var up := Vector3.UP
+	if _flying_jet:
+		var frame: Transform3D = jet_anchor.get_interpolated_airframe_transform()
+		up = JET_CAMERA.camera_up(_jet_view, frame.basis.y)
+	if camera.global_position.distance_squared_to(_look_target) < 0.0001:
+		return camera.global_basis
+	return Basis.looking_at(_look_target - camera.global_position, up)
+
+
+func _begin_manual_view() -> void:
+	_manual_view_basis = (_manual_view_reference().inverse() * camera.global_basis).orthonormalized()
+	_manual_view_active = true
+	_tracker.stop_view_tracking()
+
+
+func _apply_manual_view() -> void:
+	if _manual_view_active:
+		camera.global_basis = _manual_view_reference() * _manual_view_basis
