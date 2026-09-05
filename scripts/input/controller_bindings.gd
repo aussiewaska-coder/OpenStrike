@@ -16,8 +16,9 @@ const ACTIONS := [
 	["camera_zoom_in", "Zoom in", 11], ["camera_zoom_out", "Zoom out", 12],
 	["tactical_map", "Tactical map / close map", 3],
 	["camera_orbit_left", "Apache orbit left", 5, 1], ["camera_orbit_right", "Apache orbit right", 4, 1],
-	["throttle_up", "Throttle up (Home)", 5],
-	["throttle_down", "Throttle down (Turbo)", -1],
+	["throttle_up", "Throttle up (hold modifier)", 11],
+	["throttle_down", "Throttle down (hold modifier)", 12],
+	["throttle_modifier", "Throttle modifier (Home)", 5],
 ]
 const BUTTON_NAMES := ["A / Cross", "B / Circle", "X / Square", "Y / Triangle", "Back / Share", "Home / Guide", "Start / Options", "L3", "R3", "LB / L1", "RB / R1", "D-pad up", "D-pad down", "D-pad left", "D-pad right"]
 const AXIS_NAMES := ["Left stick X", "Left stick Y", "Right stick X", "Right stick Y", "LT / L2", "RT / R2"]
@@ -62,6 +63,7 @@ func shared(action: String, binding: Dictionary) -> PackedStringArray:
 
 func save_to(path := PATH) -> Error:
 	var config := ConfigFile.new()
+	config.set_value("layout", "version", 2)
 	for action in values:
 		config.set_value("bindings", action, values[action])
 	return config.save(path)
@@ -76,6 +78,12 @@ func load_from(path := PATH) -> Error:
 		var binding = config.get_value("bindings", action, values[action])
 		if valid(binding):
 			values[action] = binding.duplicate()
+	# Upgrade the former Home/Turbo defaults without resetting custom controls.
+	if int(config.get_value("layout", "version", 1)) < 2:
+		if values.throttle_up == {"type": "button", "index": 5}:
+			values.throttle_up = {"type": "button", "index": 11}
+		if values.throttle_down == {"type": "unassigned"}:
+			values.throttle_down = {"type": "button", "index": 12}
 	return OK
 
 func apply_input_map() -> void:

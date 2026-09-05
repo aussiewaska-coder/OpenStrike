@@ -1,6 +1,6 @@
 extends SceneTree
 
-## Heroes exist only in the Surfers theatre, their suppression points come
+## Heroes belong to Surfers and the enclosing corridor; suppression points come
 ## from the same coordinate conversion the terrain uses, and BuildingMesh hides
 ## an OSM box under a hero without hiding its neighbour.
 
@@ -11,7 +11,7 @@ func _init() -> void:
 	if HEROES.layout_for("au_qld_surfers").size() != 3:
 		_fail("Surfers has three hero towers")
 	if not HEROES.layout_for("somewhere_else").is_empty():
-		_fail("no other theatre has heroes")
+		_fail("unrelated theatres must not have these heroes")
 	for hero in HEROES.layout_for("au_qld_surfers"):
 		for key in ["name", "lat", "lon", "scene", "yaw_degrees"]:
 			if not hero.has(key):

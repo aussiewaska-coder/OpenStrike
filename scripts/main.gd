@@ -605,7 +605,7 @@ func _switch_aircraft() -> void:
 	_snap_follow_camera()
 	_refresh_aircraft_button()
 	settings_panel.set_flight_mode_text(_flight_mode_text())
-	status_label.text = "F-22 -- " + GamepadInput.control_hint("HOME THROTTLE UP · SET TURBO IN CONTROLLER · BOTH TRIGGERS BRAKE / VECTOR") if _flying_jet else "AH-64D APACHE"
+	status_label.text = "F-22 -- " + GamepadInput.control_hint("HOME + D-PAD THROTTLE · D-PAD ZOOM · BOTH TRIGGERS BRAKE / VECTOR") if _flying_jet else "AH-64D APACHE"
 
 
 func _bind_cannon_to(vehicle: Node3D) -> void:
@@ -1520,6 +1520,8 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		return
 	if settings_panel != null and settings_panel.visible:
 		return
+	if _flying_jet and GamepadInput.is_throttle_modifier_held() and action in [GamepadInput.ACTION_ZOOM_IN, GamepadInput.ACTION_ZOOM_OUT]:
+		return
 	if action == GamepadInput.ACTION_TRACK_TARGET:
 		_track_looked_at_target()
 	elif action == GamepadInput.ACTION_ZOOM_IN:
@@ -1768,7 +1770,7 @@ func _on_jet_crashed(_point: Vector3) -> void:
 
 
 func _on_jet_respawned() -> void:
-	status_label.text = "AIRBORNE -- " + GamepadInput.control_hint("HOME THROTTLE UP · SET TURBO IN CONTROLLER · BOTH TRIGGERS BRAKE / VECTOR")
+	status_label.text = "AIRBORNE -- " + GamepadInput.control_hint("HOME + D-PAD THROTTLE · D-PAD ZOOM · BOTH TRIGGERS BRAKE / VECTOR")
 	_snap_follow_camera()
 
 

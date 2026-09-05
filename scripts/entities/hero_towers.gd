@@ -12,6 +12,7 @@ extends Node3D
 ## Mirrors launcher_field.gd: a pure layout, a populate, a clear.
 
 const SURFERS_REGION := "au_qld_surfers"
+const CORRIDOR_REGION := "au_gold_coast_tweed_corridor"
 
 ## How close an OSM building's centre must be to a hero to be hidden. Q1's
 ## own record sits at its footprint centre, and the next building's centre is
@@ -26,7 +27,7 @@ var _instances: Array[Node3D] = []
 ## README; the GLBs are true scale, Y-up and grounded at y = 0, so they are
 ## placed and not scaled.
 static func layout_for(region_id: String) -> Array:
-	if region_id != SURFERS_REGION:
+	if region_id not in [SURFERS_REGION, CORRIDOR_REGION]:
 		return []
 	return [
 		{"name": "Q1", "lat": -28.0067, "lon": 153.4300, "scene": "res://3dassets/q1_tower.glb", "yaw_degrees": 0.0},

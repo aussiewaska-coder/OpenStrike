@@ -199,8 +199,7 @@ clearance stops the model flying you into a hill.
 | Y | Open / close tactical map |
 | R1 | Lock the target nearest the view centre and track it; repeat for the next visible member of that cluster |
 | A (hold) | Helicopter manual view/aim with the right stick |
-| Home / Guide | Increase jet throttle; release holds the setting |
-| Turbo (assign through Controller → Detect) | Decrease jet throttle; its input code depends on the controller |
+| Home / Guide + D-pad up/down | Increase/decrease jet throttle; release holds the setting |
 | Both triggers (jet) | Level flight with neutral stick: airbrake. Manoeuvring: thrust vectoring |
 | X | Tap: cycle weapon; hold: settings |
 | L3 | Fire the 30 mm chin cannon |
@@ -309,9 +308,9 @@ Surfers, Burleigh and Tweed theatres, so normal launch selects the 50 km map.
 The smaller entries remain available explicitly from settings.
 
 The jet uses conventional left-stick pitch and roll (pull back for nose up),
-the right stick for camera look, and L2/R2 for left/right rudder. Home increases
-the persistent throttle; the detected Turbo binding decreases it. Releasing
-keeps the current setting. Hold **L2 + R2 together** in level flight with a neutral
+the right stick for camera look, and L2/R2 for left/right rudder. Hold Home and
+press D-pad up/down to increase/decrease persistent throttle. Releasing keeps
+the current setting. Without Home, D-pad up/down zooms. Hold **L2 + R2 together** in level flight with a neutral
 stick to deploy the airbrake. Moving the stick restores thrust vectoring for
 stronger pitch response and tighter banked turns, with extra speed loss. Equal
 trigger pressure cancels rudder; unequal pressure still adds differential yaw.

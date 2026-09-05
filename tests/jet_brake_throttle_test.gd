@@ -21,26 +21,29 @@ func _run():
 	var pad := Pad.new()
 	pad.name = "GamepadInput"
 	root.add_child(pad)
-	pad.bindings.values.throttle_down = {"type": "button", "index": 16}
 	var jet := JET.new()
 	root.add_child(jet)
 	jet.set_physics_process(false)
 	jet._world_limit = 100000.0
 	jet.launch(Vector3(0, 1000, 0), 0.0)
 	pad.buttons[5] = true
+	assert(pad.get_jet_throttle_axis() == 0.0, "Home alone leaves throttle unchanged")
+	pad.buttons[11] = true
 	jet._read_controls(0.5)
 	var opened := jet.throttle
-	assert(opened > 0.85, "Home opens throttle")
+	assert(opened > 0.85, "Home plus up opens throttle")
 	pad.buttons.clear()
 	jet._read_controls(0.5)
 	assert(jet.throttle == opened, "release holds throttle")
-	pad.buttons[16] = true
-	jet._read_controls(0.5)
-	assert(jet.throttle < opened - 0.2, "detected down button closes throttle")
+	pad.buttons[12] = true
+	assert(pad.get_jet_throttle_axis() == 0.0, "D-pad alone leaves throttle unchanged")
 	pad.buttons[5] = true
+	jet._read_controls(0.5)
+	assert(jet.throttle < opened - 0.2, "Home plus down closes throttle")
+	pad.buttons[11] = true
 	assert(pad.get_jet_throttle_axis() == 0.0, "opposing buttons cancel")
 	pad._settings_open = true
-	pad.buttons.erase(16)
+	pad.buttons.erase(12)
 	assert(pad.get_jet_throttle_axis() == 0.0)
 	pad._settings_open = false
 	pad.buttons.clear()

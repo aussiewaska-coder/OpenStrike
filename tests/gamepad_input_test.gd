@@ -69,8 +69,9 @@ func _run() -> void:
 		service.route_aim_input_to_flight(Vector2(0.75, -0.5), false).is_equal_approx(Vector2(0.75, -0.5)),
 		"right-stick flight controls must resume when free look is released"
 	)
-	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_GUIDE)
-	assert(InputMap.action_get_events(&"throttle_down").is_empty(), "Turbo needs an observed binding")
+	_assert_button(&"throttle_modifier", JoyButton.JOY_BUTTON_GUIDE)
+	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_DPAD_UP)
+	_assert_button(&"throttle_down", JoyButton.JOY_BUTTON_DPAD_DOWN)
 	assert(service.normalized_trigger(0.0, 0.0) == 0.0)
 	assert(service.normalized_trigger(-1.0, -1.0) == 0.0)
 	assert(service.normalized_trigger(1.0, 0.0) == 1.0)
