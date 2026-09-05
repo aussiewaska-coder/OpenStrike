@@ -1520,8 +1520,6 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		return
 	if settings_panel != null and settings_panel.visible:
 		return
-	if _flying_jet and GamepadInput.is_throttle_modifier_held() and action in [GamepadInput.ACTION_ZOOM_IN, GamepadInput.ACTION_ZOOM_OUT]:
-		return
 	if action == GamepadInput.ACTION_TRACK_TARGET:
 		_track_looked_at_target()
 	elif action == GamepadInput.ACTION_ZOOM_IN:

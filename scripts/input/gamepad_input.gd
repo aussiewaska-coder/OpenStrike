@@ -49,7 +49,7 @@ const ACTION_WEAPON_CYCLE := &"weapon_cycle"
 const SETTINGS_HOLD_SECONDS := 0.45
 ## B is the only face button the existing scheme leaves free.
 const ACTION_SWITCH_AIRCRAFT := &"switch_aircraft"
-## A holds manual aim on the helicopter. Jet throttle uses its own modifier.
+## A holds manual aim on the helicopter, and jet throttle in the jet.
 const ACTION_FREE_LOOK := &"free_look"
 const ACTION_TACTICAL_MAP := &"tactical_map"
 const ACTION_TRACK_TARGET := &"track_target"
@@ -196,15 +196,13 @@ func is_free_look_held() -> bool:
 	return not _settings_open and not _tactical_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
 
 
-## Hold Home to route the shared D-pad buttons to persistent throttle.
+## B and A hold persistent throttle. They carry no other meaning in the jet --
+## A is the helicopter's manual aim modifier and every jet reader of it is
+## already gated on not flying the jet -- so neither needs a modifier.
 func get_jet_throttle_axis() -> float:
-	if not is_throttle_modifier_held():
+	if _settings_open or _tactical_open or mapper_active or not is_controller_ready():
 		return 0.0
 	return binding_strength(&"throttle_up") - binding_strength(&"throttle_down")
-
-
-func is_throttle_modifier_held() -> bool:
-	return not _settings_open and not _tactical_open and not mapper_active and binding_strength(&"throttle_modifier") > 0.5
 
 
 ## Squeezing both rudder triggers engages the post-stall pitch envelope.

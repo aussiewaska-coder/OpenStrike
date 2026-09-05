@@ -89,7 +89,7 @@ signal boundary_warning(urgency: float)
 ## eyes are. Fractions rather than metres, so they survive the model being
 ## rescaled or replaced.
 @export var cockpit_seat_fraction := 0.60
-@export var cockpit_eye_height_fraction := 0.86
+@export var cockpit_eye_height_fraction := 0.80
 ## The view sits a few degrees nose-down so the instrument panel is in frame
 ## below the HUD combiner, rather than only the sky ahead of it.
 @export var cockpit_pitch_degrees := -8.0

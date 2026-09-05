@@ -23,12 +23,14 @@ func _run() -> void:
 	_assert_axis(&"rudder_right", JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	# The panel's buttons are unreachable with a controller, so their actions
 	# have to exist on the pad.
-	# B stays available for menu cancellation. Y opens the tactical map. Nothing of OURS may claim them. Godot's
-	# own ui_* actions bind B to ui_cancel and Y to ui_select by default; those
-	# are the engine's, never fire in flight, and are not what this guards.
+	# B carries jet throttle now, and is the only action of ours allowed to:
+	# get_jet_throttle_axis() returns zero while a menu or the map is open, so
+	# B still cancels a menu. Nothing else of OURS may claim it. Godot's own
+	# ui_* actions bind B to ui_cancel and Y to ui_select by default; those are
+	# the engine's, never fire in flight, and are not what this guards.
 	for button in [JoyButton.JOY_BUTTON_B]:
 		for action in InputMap.get_actions():
-			if String(action).begins_with("ui_"):
+			if String(action).begins_with("ui_") or action == &"throttle_up":
 				continue
 			for event in InputMap.action_get_events(action):
 				if event is InputEventJoypadButton and event.button_index == button:
@@ -69,9 +71,8 @@ func _run() -> void:
 		service.route_aim_input_to_flight(Vector2(0.75, -0.5), false).is_equal_approx(Vector2(0.75, -0.5)),
 		"right-stick flight controls must resume when free look is released"
 	)
-	_assert_button(&"throttle_modifier", JoyButton.JOY_BUTTON_GUIDE)
-	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_DPAD_UP)
-	_assert_button(&"throttle_down", JoyButton.JOY_BUTTON_DPAD_DOWN)
+	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_B)
+	_assert_button(&"throttle_down", JoyButton.JOY_BUTTON_A)
 	assert(service.normalized_trigger(0.0, 0.0) == 0.0)
 	assert(service.normalized_trigger(-1.0, -1.0) == 0.0)
 	assert(service.normalized_trigger(1.0, 0.0) == 1.0)
