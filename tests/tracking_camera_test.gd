@@ -7,6 +7,9 @@ func _init() -> void:
 func _run() -> void:
 	# Exercise production camera methods without starting streamed terrain.
 	var main = load("res://scripts/main.gd").new()
+	# This portion exercises helicopter release; jet return is covered by the
+	# production motion fixture with an actual cockpit transform provider.
+	main._flying_jet = false
 	var camera := Camera3D.new()
 	root.add_child(camera)
 	camera.position = Vector3(0, 100, 0)

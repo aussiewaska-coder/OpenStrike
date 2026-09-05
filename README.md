@@ -151,6 +151,12 @@ Tuning is in `scripts/weapons/ballistic_profile.gd`.
 Open this directory in Godot 4.7.2 and run `scenes/main.tscn`. Desktop/editor
 runs automatically select the demo region.
 
+Flight starts in the F-22's forward cockpit view. Settings is a paused menu
+with Flight, World, Display and Storage sections. Use the D-pad to navigate,
+A to select, and B or a short X press to resume; touch controls are also
+available for every menu action. The Resume button stays above the scrolling
+content. Reconnecting a controller leaves the menu paused until you resume.
+
 For Android export, install the Godot Android build template, enable Gradle
 build in the Android preset, and leave the `OpenStrikeLocation` editor plugin
 enabled. The AAR files are already packaged under

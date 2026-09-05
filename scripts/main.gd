@@ -129,7 +129,7 @@ var _camera_orbit_velocity := 0.0
 enum View {COCKPIT, CHASE, ORBIT}
 
 var _view: View = View.CHASE
-var _jet_view: int = JET_CAMERA.Mode.PURSUIT
+var _jet_view: int = JET_CAMERA.Mode.COCKPIT
 var _camera_current_height := camera_height
 var _camera_current_distance := camera_trailing_distance
 var _orbit_lock := ORBIT_LOCK.new()
@@ -160,7 +160,7 @@ var _camera_aim_basis := Basis.IDENTITY
 var _hit_stop_serial := 0
 var _target_point := Vector3.ZERO
 var _has_target_point := false
-var _flying_jet := false
+var _flying_jet := true
 var _camera_up := Vector3.UP
 var _active_terrain: Node
 var _building_hit_index: RefCounted
@@ -199,6 +199,7 @@ func _ready() -> void:
 	Telemetry.add_source(_telemetry_sample)
 	Telemetry.add_command_handler(_telemetry_command)
 	settings_panel.theatre_chosen.connect(_on_theatre_chosen)
+	settings_panel.open_changed.connect(_on_settings_open_changed)
 	settings_panel.flight_mode_toggled.connect(_toggle_flight_mode)
 	settings_panel.aircraft_switched.connect(_switch_aircraft)
 	settings_panel.cache_cleared.connect(_on_cache_cleared)
@@ -216,6 +217,7 @@ func _ready() -> void:
 		weather.current = weather.WEATHER.target(start_weather)
 	_spawn_helicopter()
 	_spawn_jet()
+	_snap_follow_camera()
 	_hero_towers = HeroTowers.new()
 	_hero_towers.name = "HeroTowers"
 	add_child(_hero_towers)
@@ -321,6 +323,7 @@ func _build_hud() -> void:
 	column.add_child(_mission_label)
 	_settings_button = Button.new()
 	_settings_button.text = "SETTINGS"
+	_settings_button.custom_minimum_size = Vector2(140, 52)
 	_settings_button.pressed.connect(_toggle_settings)
 	row.add_child(_settings_button)
 	_weapon_label = Label.new()
@@ -486,6 +489,10 @@ func _on_projectile_expired(round_data: RefCounted) -> void:
 ## the release, because until the button comes up there is no way to know which
 ## one the player meant.
 func _on_gamepad_action_released(action: StringName, held_seconds: float) -> void:
+	if settings_panel != null and settings_panel.visible:
+		if action == GamepadInput.ACTION_WEAPON_CYCLE:
+			settings_panel.close_panel()
+		return
 	if action != GamepadInput.ACTION_WEAPON_CYCLE:
 		return
 	if GamepadInput.is_hold(held_seconds):
@@ -507,7 +514,10 @@ func _spawn_jet() -> void:
 	jet_anchor.add_child(jet)
 	# The controller measures the wingspan and scales the model itself, so
 	# there is no magic number here the way there is for the Apache.
-	_set_vehicle_active(jet_anchor, false)
+	_set_vehicle_active(jet_anchor, _flying_jet)
+	_set_vehicle_active(helicopter_anchor, not _flying_jet)
+	if _flying_jet:
+		jet_anchor.launch(Vector3(0.0, 900.0, 0.0), 0.0)
 
 
 func _set_vehicle_active(anchor: Node3D, active: bool) -> void:
@@ -565,7 +575,6 @@ func _switch_aircraft() -> void:
 	_apply_view_chrome()
 	_snap_follow_camera()
 	_refresh_aircraft_button()
-	settings_panel.set_flight_mode_text(_flight_mode_text())
 	settings_panel.set_flight_mode_text(_flight_mode_text())
 	status_label.text = "F-22 -- A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR" if _flying_jet else "AH-64D APACHE"
 
@@ -641,8 +650,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 	helicopter_anchor.reset_physics_interpolation()
 	if helicopter_anchor.has_method("reset_altitude_smoothing"):
 		helicopter_anchor.reset_altitude_smoothing()
-	# The jet is parked level over the same spawn, high enough to have somewhere
-	# to fall, so swapping to it never starts inside a hill.
+	# Prepare the F-22 at cruise altitude, whether active or parked.
 	jet_anchor.launch(
 		streamed_terrain.get_spawn_position(900.0),
 		deg_to_rad(streamed_terrain.get_spawn_yaw_degrees(-35.0))
@@ -1234,6 +1242,8 @@ func _camera_orbit_input() -> float:
 ## A tap picks a point on the ground to orbit. There are no collision shapes
 ## under the streamed terrain, so the ray is marched against the height field.
 func _unhandled_input(event: InputEvent) -> void:
+	if settings_panel != null and settings_panel.visible:
+		return
 	if not _camera_follow_enabled:
 		return
 	var screen := Vector2.ZERO
@@ -1460,6 +1470,8 @@ func _apply_arcade_camera_shake(delta: float) -> void:
 
 
 func _on_gamepad_action_pressed(action: StringName) -> void:
+	if settings_panel != null and settings_panel.visible:
+		return
 	if action == GamepadInput.ACTION_TRACK_TARGET:
 		_track_looked_at_target()
 	elif action == GamepadInput.ACTION_ZOOM_IN:
@@ -1565,6 +1577,12 @@ func _toggle_settings() -> void:
 		_refresh_settings()
 
 
+func _on_settings_open_changed(is_open: bool) -> void:
+	GamepadInput.set_settings_open(is_open)
+	if not is_open and _settings_button != null:
+		_settings_button.release_focus()
+
+
 func _refresh_settings() -> void:
 	settings_panel.populate_theatres(
 		LocationService.installed_regions(),
@@ -1578,8 +1596,9 @@ func _refresh_settings() -> void:
 	var report: Dictionary = TileClient.cache_report()
 	settings_panel.set_cache_report(int(report["files"]), int(report["bytes"]))
 	var focus := _focus_position()
-	settings_panel.set_status("View %s. Position %d, %d. Height %d m above ground." % [
-		View.keys()[_view], roundi(focus.x), roundi(focus.z), roundi(focus.y - _ground_height_at(focus))
+	var view_name: String = JET_CAMERA.Mode.keys()[_jet_view] if _flying_jet else View.keys()[_view]
+	settings_panel.set_status("%s · %s view\n%d m above ground" % [
+		"F-22 Raptor" if _flying_jet else "AH-64D Apache", view_name.to_lower(), roundi(focus.y - _ground_height_at(focus))
 	])
 
 

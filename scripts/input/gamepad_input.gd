@@ -65,6 +65,7 @@ var active_device_name := ""
 var active_device_guid := ""
 var _had_controller := false
 var _paused_for_controller := false
+var _settings_open := false
 ## When each button went down, so the release can report how long it was held.
 var _hold_started: Dictionary = {}
 var _left_trigger_rest := 0.0
@@ -105,14 +106,21 @@ func is_controller_ready() -> bool:
 	return active_device >= 0 and active_device in Input.get_connected_joypads()
 
 
+## The menu and a disconnected controller independently keep flight paused.
+## Reconnecting a pad must not resume flight underneath an open menu.
+func set_settings_open(is_open: bool) -> void:
+	_settings_open = is_open
+	get_tree().paused = _settings_open or _paused_for_controller
+
+
 func get_flight_vector() -> Vector2:
-	if not is_controller_ready():
+	if _settings_open or not is_controller_ready():
 		return Vector2.ZERO
 	return apply_response_curve(apply_circular_deadzone(get_raw_flight_vector()))
 
 
 func get_aim_vector() -> Vector2:
-	if not is_controller_ready():
+	if _settings_open or not is_controller_ready():
 		return Vector2.ZERO
 	return apply_response_curve(apply_circular_deadzone(get_raw_aim_vector()))
 
@@ -155,7 +163,7 @@ static func route_aim_input_to_flight(aim_input: Vector2, free_look_held: bool) 
 
 
 func is_free_look_held() -> bool:
-	return is_controller_ready() and Input.is_joy_button_pressed(
+	return not _settings_open and is_controller_ready() and Input.is_joy_button_pressed(
 		active_device,
 		JoyButton.JOY_BUTTON_A
 	)
@@ -171,7 +179,7 @@ func get_jet_throttle_axis() -> float:
 ## Separate press/release thresholds prevent noisy trigger readings flickering
 ## the limiter. Unequal pressure still supplies differential rudder.
 func is_vectoring_held() -> bool:
-	if not is_controller_ready():
+	if _settings_open or not is_controller_ready():
 		_vectoring_held = false
 		return false
 	var raw := get_raw_trigger_vector()
@@ -196,19 +204,19 @@ static func jet_look_vector(aim_input: Vector2, modifier_held: bool) -> Vector2:
 
 
 func is_cannon_firing() -> bool:
-	return is_controller_ready() and Input.is_action_pressed(ACTION_CANNON)
+	return not _settings_open and is_controller_ready() and Input.is_action_pressed(ACTION_CANNON)
 
 
 func is_rockets_firing() -> bool:
-	return is_controller_ready() and Input.is_action_pressed(ACTION_ROCKETS)
+	return not _settings_open and is_controller_ready() and Input.is_action_pressed(ACTION_ROCKETS)
 
 
 func is_context_held() -> bool:
-	return is_controller_ready() and Input.is_action_pressed(ACTION_CONTEXT)
+	return not _settings_open and is_controller_ready() and Input.is_action_pressed(ACTION_CONTEXT)
 
 
 func get_camera_orbit_axis() -> float:
-	if not is_controller_ready():
+	if _settings_open or not is_controller_ready():
 		return 0.0
 	var left_strength := Input.get_action_strength(ACTION_CAMERA_ORBIT_LEFT)
 	var right_strength := Input.get_action_strength(ACTION_CAMERA_ORBIT_RIGHT)
@@ -217,7 +225,7 @@ func get_camera_orbit_axis() -> float:
 
 ## Positive yaws right. L2 is left rudder and R2 is right rudder.
 func get_rudder_axis() -> float:
-	if not is_controller_ready():
+	if _settings_open or not is_controller_ready():
 		return 0.0
 	var raw := get_raw_trigger_vector()
 	var left_strength := normalized_trigger(raw.x, _left_trigger_rest)
@@ -330,8 +338,8 @@ func _set_active_controller(device: int) -> void:
 	_right_trigger_rest = Input.get_joy_axis(device, JoyAxis.JOY_AXIS_TRIGGER_RIGHT)
 	_had_controller = true
 	if _paused_for_controller:
-		get_tree().paused = false
 		_paused_for_controller = false
+		get_tree().paused = _settings_open
 	connection_changed.emit(true, active_device, active_device_name)
 	controller_attention_changed.emit(false, "", "")
 
