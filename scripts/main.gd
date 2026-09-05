@@ -1,7 +1,12 @@
 extends Node3D
 
 const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
-const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const AIRFRAME := preload("res://scripts/jet/airframe.gd")
+
+## The jets, in the order the aircraft control walks them. const cannot hold a
+## call result in GDScript, so this is a var that is never reassigned.
+var JET_PROFILES := [AIRFRAME.raptor(), AIRFRAME.nighthawk()]
+var _jet_index := 0
 const JET_CAMERA := preload("res://scripts/camera/jet_camera.gd")
 const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
@@ -537,8 +542,23 @@ func _vehicle() -> Node3D:
 	return jet_anchor if _flying_jet else helicopter_anchor
 
 
+## The one place that knows what the player is flying, by name.
+func current_aircraft_name() -> String:
+	return String(JET_PROFILES[_jet_index].display_name) if _flying_jet else "AH-64D APACHE"
+
+
+## Puts the selected jet's model under the anchor and hands the controller its
+## airframe, so the aerodynamics, the rigging and the cockpit all agree.
 func _spawn_jet() -> void:
-	var jet := JET_SCENE.instantiate()
+	var old := jet_anchor.get_node_or_null("HeroJet")
+	if old != null:
+		old.name = "HeroJetRetired"
+		old.queue_free()
+	var profile = JET_PROFILES[_jet_index]
+	jet_anchor.airframe = profile
+	if jet_anchor.has_method("_build_aerodynamics"):
+		jet_anchor._build_aerodynamics()
+	var jet: Node3D = (load(String(profile.scene_path)) as PackedScene).instantiate()
 	jet.name = "HeroJet"
 	jet_anchor.add_child(jet)
 	# The controller measures the wingspan and scales the model itself, so
@@ -568,7 +588,17 @@ func _switch_aircraft() -> void:
 		nose = nose.normalized()
 		heading = atan2(nose.x, -nose.z)
 
-	_flying_jet = not _flying_jet
+	# Raptor, Nighthawk, Apache, and back to the Raptor.
+	var changing_jet := false
+	if _flying_jet and _jet_index + 1 < JET_PROFILES.size():
+		_jet_index += 1
+		changing_jet = true
+	elif _flying_jet:
+		_flying_jet = false
+	else:
+		_flying_jet = true
+		_jet_index = 0
+		changing_jet = true
 	_free_look = Vector2.ZERO
 	_external_aim = EXTERNAL_AIM_CURSOR.new()
 	_set_vehicle_active(leaving, false)
@@ -576,6 +606,8 @@ func _switch_aircraft() -> void:
 	_set_vehicle_active(arriving, true)
 
 	var ground := _ground_height_at(handover)
+	if changing_jet:
+		_spawn_jet()
 	if _flying_jet:
 		jet_anchor.launch(
 			Vector3(handover.x, maxf(handover.y, ground + 600.0), handover.z),
@@ -605,7 +637,7 @@ func _switch_aircraft() -> void:
 	_snap_follow_camera()
 	_refresh_aircraft_button()
 	settings_panel.set_flight_mode_text(_flight_mode_text())
-	status_label.text = "F-22 -- " + GamepadInput.control_hint("HOME + D-PAD THROTTLE · D-PAD ZOOM · BOTH TRIGGERS BRAKE / VECTOR") if _flying_jet else "AH-64D APACHE"
+	status_label.text = current_aircraft_name() + " -- " + GamepadInput.control_hint("B/A THROTTLE · D-PAD ZOOM · BOTH TRIGGERS BRAKE") if _flying_jet else current_aircraft_name()
 
 
 func _bind_cannon_to(vehicle: Node3D) -> void:
@@ -618,7 +650,7 @@ func _bind_cannon_to(vehicle: Node3D) -> void:
 
 
 func _refresh_aircraft_button() -> void:
-	settings_panel.set_aircraft_text("AIRCRAFT: %s" % ("F-22 RAPTOR" if _flying_jet else "AH-64D APACHE"))
+	settings_panel.set_aircraft_text("AIRCRAFT: %s" % current_aircraft_name())
 
 
 func _spawn_helicopter() -> void:
