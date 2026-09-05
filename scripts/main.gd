@@ -1693,6 +1693,8 @@ func _apply_view_chrome() -> void:
 	# monitor is a settings toggle now and does not follow the view.
 	if _tape != null:
 		_tape.visible = _is_cockpit_view()
+	if _helmet != null:
+		_helmet.set_cockpit_view(_is_cockpit_view())
 
 
 func _on_gamepad_connection_changed(connected: bool, _device_id: int, device_name: String) -> void:

@@ -44,10 +44,34 @@ static func far_point(origin: Vector3, direction: Vector3) -> Vector3:
 ## it cants under roll and slides under pitch without being told to.
 static func horizon_points(basis: Basis, origin: Vector3) -> Array:
 	var right := level_right(basis)
+	var ahead := origin + level_forward(basis) * CONFORMAL_DISTANCE_M
 	return [
-		origin - right * CONFORMAL_DISTANCE_M,
-		origin + right * CONFORMAL_DISTANCE_M,
+		ahead - right * CONFORMAL_DISTANCE_M,
+		ahead + right * CONFORMAL_DISTANCE_M,
 	]
+
+
+## Constant-elevation arcs on the sphere around the pilot. Their projection
+## curves naturally away from the centre and rolls with the real horizon.
+static func pitch_arc(basis: Basis, pitch_degrees: float, start_azimuth: float, end_azimuth: float, segments := 8) -> PackedVector3Array:
+	var points := PackedVector3Array()
+	var pitch := deg_to_rad(pitch_degrees)
+	var forward := level_forward(basis)
+	var right := level_right(basis)
+	for index in range(segments + 1):
+		var azimuth := deg_to_rad(lerpf(start_azimuth, end_azimuth, float(index) / float(segments)))
+		points.append((forward * cos(azimuth) + right * sin(azimuth)) * cos(pitch) + Vector3.UP * sin(pitch))
+	return points
+
+
+## Keep attitude symbols inside the useful central area of the visor, fading
+## before the edge instead of drawing over every peripheral instrument.
+static func visor_alpha(point: Vector2, viewport_size: Vector2) -> float:
+	var radius := viewport_size * Vector2(0.37, 0.39)
+	if radius.x <= 0.0 or radius.y <= 0.0:
+		return 0.0
+	var distance := ((point - viewport_size * 0.5) / radius).length()
+	return 1.0 - smoothstep(0.65, 1.0, distance)
 
 
 static func ladder_direction(basis: Basis, degrees: float) -> Vector3:

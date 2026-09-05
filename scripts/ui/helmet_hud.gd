@@ -26,14 +26,16 @@ const BOX_MIN_PX := 7.0
 ## The range at which a box has shrunk to its floor.
 const BOX_FALLOFF_M := 6000.0
 
-const LADDER_HALF_LENGTH_PX := 46.0
-const LADDER_GAP_PX := 16.0
 const TAPE_MARGIN_PX := 26.0
 const TAPE_HEIGHT_PX := 190.0
 const FPM_RADIUS_PX := 8.0
 const EDGE_MARGIN_PX := 34.0
+const LADDER_LABEL_SIZE := 15
+const LADDER_INNER_DEGREES := 2.0
+const LADDER_OUTER_DEGREES := 11.0
 
 var _camera: Camera3D
+var _cockpit_view := true
 var _velocity := Vector3.ZERO
 var _boxed: Array = []
 var _locked := {}
@@ -90,13 +92,20 @@ func set_state(
 func _draw() -> void:
 	if _camera == null:
 		return
-	_draw_horizon()
-	_draw_ladder()
-	_draw_flight_path_marker()
-	_draw_boresight()
+	if _cockpit_view:
+		_draw_visor()
+		_draw_horizon()
+		_draw_ladder()
+		_draw_flight_path_marker()
+		_draw_boresight()
+		_draw_tapes()
 	_draw_boxes()
 	_draw_lock()
-	_draw_tapes()
+
+
+func set_cockpit_view(enabled: bool) -> void:
+	_cockpit_view = enabled
+	queue_redraw()
 
 
 ## A world point becomes a screen point, or null when it is behind the camera.
@@ -107,60 +116,81 @@ func _screen(world: Vector3):
 
 
 func _draw_horizon() -> void:
-	var points: Array = HUD.horizon_points(_camera.global_basis, _camera.global_position)
-	var a = _screen(points[0])
-	var b = _screen(points[1])
-	if a == null or b == null:
-		return
-	draw_line(a, b, Color(GREEN, 0.85), LINE_WIDTH)
+	_draw_attitude_arc(0.0, -65.0, -LADDER_INNER_DEGREES, Color(GREEN, 0.68), 32)
+	_draw_attitude_arc(0.0, LADDER_INNER_DEGREES, 65.0, Color(GREEN, 0.68), 32)
 
 
-## Climb bars solid, dive bars dashed with their ends turned down toward the
-## ground. That is what a real ladder does, and it is the cheapest way to tell
-## a climb from a dive at a glance.
+## Solid climb bars and dashed dive bars, with major ticks hooked toward the
+## horizon. Constant-elevation arcs preserve the attitude under head movement.
 func _draw_ladder() -> void:
-	var basis := _camera.global_basis
-	var origin := _camera.global_position
-	var along := _horizon_direction()
-	var down := Vector2(-along.y, along.x)
 	for degrees in HUD.ladder_degrees():
 		if is_zero_approx(degrees):
 			continue
-		var centre = _screen(HUD.far_point(origin, HUD.ladder_direction(basis, degrees)))
-		if centre == null:
+		var centre = _screen(HUD.far_point(_camera.global_position, HUD.ladder_direction(_camera.global_basis, degrees)))
+		if centre == null or HUD.visor_alpha(centre, size) < 0.02:
 			continue
-		var climbing := degrees > 0.0
-		var colour := Color(GREEN, 0.6)
+		var major := int(absf(degrees)) % 10 == 0
+		var outer := LADDER_OUTER_DEGREES if major else 7.0
+		var colour := Color(GREEN, 0.78 if major else 0.38)
 		for side in [-1.0, 1.0]:
-			var inner: Vector2 = centre + along * (LADDER_GAP_PX * side)
-			var outer: Vector2 = centre + along * (LADDER_HALF_LENGTH_PX * side)
-			if climbing:
-				draw_line(inner, outer, colour, LINE_WIDTH)
+			var start: float = LADDER_INNER_DEGREES * side
+			var end: float = outer * side
+			if degrees > 0.0:
+				_draw_attitude_arc(degrees, start, end, colour)
 			else:
-				# Dashed: three short strokes rather than one line.
 				for step in range(3):
 					var t0 := float(step) / 3.0
 					var t1 := t0 + 0.22
-					draw_line(inner.lerp(outer, t0), inner.lerp(outer, t1), colour, LINE_WIDTH)
-				# The turned-down end, on dive bars only.
-				draw_line(outer, outer + down * 7.0, colour, LINE_WIDTH)
-		draw_string(
-			ThemeDB.fallback_font,
-			centre + along * (LADDER_HALF_LENGTH_PX + 6.0) + Vector2(0.0, 4.0),
-			"%d" % int(absf(degrees)),
-			HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE, colour
-		)
+					_draw_attitude_arc(degrees, lerpf(start, end, t0), lerpf(start, end, t1), colour, 3)
+			if not major:
+				continue
+			var tip = _arc_screen(degrees, end)
+			var hook = _arc_screen(degrees - signf(degrees) * 1.0, end)
+			if tip != null and hook != null:
+				_draw_attitude_line(tip, hook, colour)
+			var label_at = _arc_screen(degrees, end + side * 2.1)
+			if label_at != null:
+				var alpha := HUD.visor_alpha(label_at, size)
+				var label := "%+d" % int(degrees)
+				var width := ThemeDB.fallback_font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, LADDER_LABEL_SIZE).x
+				var text_position: Vector2 = label_at + Vector2(-width * 0.5, 5.0)
+				draw_string_outline(ThemeDB.fallback_font, text_position, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, LADDER_LABEL_SIZE, 2, Color(0.02, 0.08, 0.05, colour.a * alpha * 0.75))
+				draw_string(ThemeDB.fallback_font, text_position, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, LADDER_LABEL_SIZE, Color(GREEN, colour.a * alpha))
 
 
-## The screen direction the horizon runs along, so ladder bars cant with it.
-func _horizon_direction() -> Vector2:
-	var points: Array = HUD.horizon_points(_camera.global_basis, _camera.global_position)
-	var a = _screen(points[0])
-	var b = _screen(points[1])
-	if a == null or b == null:
-		return Vector2.RIGHT
-	var delta: Vector2 = (b as Vector2) - (a as Vector2)
-	return delta.normalized() if delta.length_squared() > 1e-6 else Vector2.RIGHT
+## Project a point on the attitude sphere for a hook or label.
+func _arc_screen(pitch: float, azimuth: float):
+	var direction := HUD.pitch_arc(_camera.global_basis, pitch, azimuth, azimuth, 1)[0]
+	return _screen(HUD.far_point(_camera.global_position, direction))
+
+
+func _draw_attitude_arc(pitch: float, start: float, end: float, colour: Color, segments := 8) -> void:
+	var previous = null
+	for direction in HUD.pitch_arc(_camera.global_basis, pitch, start, end, segments):
+		var at = _screen(HUD.far_point(_camera.global_position, direction))
+		if previous != null and at != null:
+			_draw_attitude_line(previous, at, colour)
+		previous = at
+
+
+func _draw_attitude_line(a: Vector2, b: Vector2, colour: Color) -> void:
+	var alpha := HUD.visor_alpha((a + b) * 0.5, size)
+	if alpha < 0.01 or a.distance_to(b) > size.length() * 0.25:
+		return
+	draw_line(a, b, Color(0.02, 0.08, 0.05, colour.a * alpha * 0.55), LINE_WIDTH + 1.5, true)
+	draw_line(a, b, Color(colour, colour.a * alpha), LINE_WIDTH, true)
+
+
+func _draw_visor() -> void:
+	# Faint peripheral arcs suggest the inside of a visor without distorting
+	# the scene, target positions or the flight-path marker.
+	var radius := size * Vector2(0.45, 0.47)
+	for side in [0.0, PI]:
+		var points := PackedVector2Array()
+		for index in range(33):
+			var angle: float = side + lerpf(-0.72, 0.72, float(index) / 32.0)
+			points.append(size * 0.5 + Vector2(cos(angle), sin(angle)) * radius)
+		draw_polyline(points, Color(GREEN, 0.12), 1.0, true)
 
 
 ## The winged circle: where the aircraft is actually going, which is not where
@@ -278,33 +308,44 @@ func _draw_tapes() -> void:
 	var altitude := float(_instruments.get("altitude_m", 0.0))
 	var heading := float(_instruments.get("heading_degrees", 0.0))
 	var middle := size.y * 0.5
-	_draw_tape(Vector2(TAPE_MARGIN_PX, middle), "%d" % roundi(speed_knots), "KT", true)
-	_draw_tape(Vector2(size.x - TAPE_MARGIN_PX, middle), "%d" % roundi(altitude), "M", false)
+	var margin := maxf(TAPE_MARGIN_PX, size.x * 0.13)
+	_draw_tape(Vector2(margin, middle), "%d" % roundi(speed_knots), "KT", true)
+	_draw_tape(Vector2(size.x - margin, middle), "%d" % roundi(altitude), "M", false)
 	# Heading across the top, boxed at the nose.
-	var top := Vector2(size.x * 0.5, TAPE_MARGIN_PX)
-	draw_line(top + Vector2(-140.0, 10.0), top + Vector2(140.0, 10.0), Color(GREEN, 0.5), LINE_WIDTH)
+	var top := Vector2(size.x * 0.5, maxf(TAPE_MARGIN_PX, size.y * 0.14))
+	var heading_arc := PackedVector2Array()
+	for index in range(33):
+		var x := lerpf(-140.0, 140.0, float(index) / 32.0)
+		heading_arc.append(top + Vector2(x, 10.0 + pow(x / 140.0, 2.0) * 12.0))
+	draw_polyline(heading_arc, Color(GREEN, 0.5), LINE_WIDTH, true)
 	for offset in range(-60, 61, 15):
 		var x: float = top.x + float(offset) * 2.2
-		draw_line(Vector2(x, top.y + 6.0), Vector2(x, top.y + 14.0), Color(GREEN, 0.5), LINE_WIDTH)
+		var bend := pow((x - top.x) / 140.0, 2.0) * 12.0
+		draw_line(Vector2(x, top.y + 6.0 + bend), Vector2(x, top.y + 14.0 + bend), Color(GREEN, 0.5), LINE_WIDTH)
 	var heading_text := "%03d" % (int(roundi(heading)) % 360)
 	draw_rect(Rect2(top + Vector2(-22.0, -10.0), Vector2(44.0, 18.0)), Color(GREEN, 0.9), false, LINE_WIDTH)
 	draw_string(font, top + Vector2(-17.0, 4.0), heading_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE + 1, GREEN)
 	# G and Mach beneath the speed tape.
-	var readout := Vector2(TAPE_MARGIN_PX, middle + TAPE_HEIGHT_PX * 0.5 + 22.0)
+	var readout := Vector2(margin, middle + minf(TAPE_HEIGHT_PX, size.y * 0.38) * 0.5 + 22.0)
 	draw_string(font, readout, "G %.1f" % float(_instruments.get("g_load", 1.0)), HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE, Color(GREEN, 0.8))
 	draw_string(font, readout + Vector2(0.0, LABEL_SIZE + 4.0), "M %.2f" % float(_instruments.get("mach", 0.0)), HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE, Color(GREEN, 0.8))
 
 
 func _draw_tape(anchor: Vector2, value: String, unit: String, left: bool) -> void:
 	var font := ThemeDB.fallback_font
-	var half := TAPE_HEIGHT_PX * 0.5
+	var half := minf(TAPE_HEIGHT_PX, size.y * 0.38) * 0.5
 	var colour := Color(GREEN, 0.5)
-	draw_line(anchor + Vector2(0.0, -half), anchor + Vector2(0.0, half), colour, LINE_WIDTH)
 	var direction := 1.0 if left else -1.0
+	var rail := PackedVector2Array()
+	for index in range(25):
+		var t := lerpf(-1.0, 1.0, float(index) / 24.0)
+		rail.append(anchor + Vector2(t * t * 14.0 * direction, t * half))
+	draw_polyline(rail, colour, LINE_WIDTH, true)
 	for step in range(-4, 5):
 		var y: float = anchor.y + float(step) * (half / 4.0)
 		var length := 10.0 if step % 2 == 0 else 5.0
-		draw_line(Vector2(anchor.x, y), Vector2(anchor.x + length * direction, y), colour, LINE_WIDTH)
+		var x := anchor.x + pow(float(step) / 4.0, 2.0) * 14.0 * direction
+		draw_line(Vector2(x, y), Vector2(x + length * direction, y), colour, LINE_WIDTH)
 	var box := Rect2(anchor + Vector2(-4.0 if left else -56.0, -11.0), Vector2(60.0, 22.0))
 	draw_rect(box, Color(GREEN, 0.9), false, LINE_WIDTH)
 	draw_string(font, box.position + Vector2(5.0, 16.0), value, HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE + 2, GREEN)
