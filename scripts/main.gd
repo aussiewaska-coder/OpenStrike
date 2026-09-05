@@ -103,6 +103,13 @@ var status_label: Label
 var _mission_label: Label
 var _settings_button: Button
 var _radar: Control
+const TACTICAL_MFD := preload("res://scripts/ui/tactical_mfd.gd")
+const TACTICAL_NAV := preload("res://scripts/ui/tactical_navigation.gd")
+const WAYPOINT_HUD := preload("res://scripts/ui/waypoint_hud.gd")
+var _tactical_mfd: Control
+var _waypoint_hud: Control
+var _navigation := TACTICAL_NAV.new()
+var _map_layers_timer := 0.0
 var _helmet: Control
 var _tracker := TARGET_TRACKER.new()
 ## Enemy squadrons arrive on a timer while the player is flying the jet.
@@ -335,6 +342,15 @@ func _build_hud() -> void:
 	# The visor goes in first so the scope and the tape draw over it.
 	_helmet = HELMET_HUD.new()
 	ui_layer.add_child(_helmet)
+	_waypoint_hud = WAYPOINT_HUD.new()
+	ui_layer.add_child(_waypoint_hud)
+	_tactical_mfd = TACTICAL_MFD.new()
+	ui_layer.add_child(_tactical_mfd)
+	_tactical_mfd.open_changed.connect(func(on: bool): GamepadInput.set_tactical_open(on, _tactical_mfd.pause_flight))
+	_tactical_mfd.contact_selected.connect(_select_map_contact)
+	_tactical_mfd.waypoint_requested.connect(_add_map_waypoint)
+	_tactical_mfd.route_skip_requested.connect(func(): _navigation.skip(); _sync_tactical_state())
+	_tactical_mfd.route_clear_requested.connect(func(): _navigation.clear(); _sync_tactical_state())
 	_radar = RADAR_SCOPE.new()
 	ui_layer.add_child(_radar)
 	_radar.range_changed.connect(_on_radar_range_changed)
@@ -441,6 +457,15 @@ func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: fl
 		}
 	)
 	_radar.set_contacts(vehicle.get_global_transform_interpolated().origin, heading, _tracker.tracked(), _tracker.locked_handle())
+	_navigation.advance(vehicle.global_position)
+	if _waypoint_hud != null:
+		_waypoint_hud.set_state(camera, vehicle.global_position, _navigation)
+	if _tactical_mfd != null and _tactical_mfd.visible:
+		_sync_tactical_state()
+		_map_layers_timer += delta
+		if _map_layers_timer >= 1.0:
+			_map_layers_timer = 0.0
+			_tactical_mfd.map.set_layers(streamed_terrain.tactical_map_layers())
 	# The weapons need no wiring of their own: cannon_weapon.aim already reads
 	# `_orbit_target_point`, which already reads `_target_point`. Keeping those
 	# two in step with the lock is the whole integration.
@@ -489,6 +514,8 @@ func _on_projectile_expired(round_data: RefCounted) -> void:
 ## the release, because until the button comes up there is no way to know which
 ## one the player meant.
 func _on_gamepad_action_released(action: StringName, held_seconds: float) -> void:
+	if _tactical_mfd != null and _tactical_mfd.visible:
+		return
 	if settings_panel != null and settings_panel.visible:
 		if action == GamepadInput.ACTION_WEAPON_CYCLE and not GamepadInput.mapper_active:
 			settings_panel.close_panel()
@@ -622,6 +649,9 @@ func _on_region_selected(region: Dictionary) -> void:
 ## Every theatre streams. The map cache is checked before the network, so a
 ## theatre already flown loads from disk and needs no signal.
 func _load_streamed_region(region: Dictionary) -> void:
+	_navigation.clear()
+	if _tactical_mfd != null:
+		_tactical_mfd.map.set_layers({})
 	_tracker.clear_lock()
 	launcher_field.clear()
 	_hero_towers.clear()
@@ -1242,6 +1272,8 @@ func _camera_orbit_input() -> float:
 ## A tap picks a point on the ground to orbit. There are no collision shapes
 ## under the streamed terrain, so the ray is marched against the height field.
 func _unhandled_input(event: InputEvent) -> void:
+	if _tactical_mfd != null and _tactical_mfd.visible:
+		return
 	if settings_panel != null and settings_panel.visible:
 		return
 	if not _camera_follow_enabled:
@@ -1470,6 +1502,11 @@ func _apply_arcade_camera_shake(delta: float) -> void:
 
 
 func _on_gamepad_action_pressed(action: StringName) -> void:
+	if action == GamepadInput.ACTION_TACTICAL_MAP:
+		_toggle_tactical_map()
+		return
+	if _tactical_mfd != null and _tactical_mfd.visible:
+		return
 	if settings_panel != null and settings_panel.visible:
 		return
 	if action == GamepadInput.ACTION_TRACK_TARGET:
@@ -1573,6 +1610,8 @@ func _toggle_flight_mode() -> void:
 
 
 func _toggle_settings() -> void:
+	if _tactical_mfd != null:
+		_tactical_mfd.close_panel()
 	if settings_panel.toggle_panel():
 		_refresh_settings()
 
@@ -1901,3 +1940,50 @@ func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> 
 				_has_target_point = false
 			impact_fx.spawn_explosion(explosion_position)
 			_play_destructive_hit_stop()
+
+
+func _toggle_tactical_map() -> void:
+	if _tactical_mfd == null or (settings_panel != null and settings_panel.visible):
+		return
+	if _tactical_mfd.visible:
+		_tactical_mfd.close_panel()
+	else:
+		_sync_tactical_state()
+		_tactical_mfd.map.set_layers(streamed_terrain.tactical_map_layers())
+		_tactical_mfd.open_panel()
+
+
+func _sync_tactical_state() -> void:
+	if _tactical_mfd == null or _vehicle() == null:
+		return
+	var position := _vehicle().global_position
+	var heading: float = _radar._heading if _radar != null else 0.0
+	_tactical_mfd.map.set_state(position, heading, _tracker.known_contacts(), _tracker.locked_handle(), _navigation)
+	if _waypoint_hud != null:
+		_waypoint_hud.set_state(camera, position, _navigation)
+
+
+func _select_map_contact(handle: int) -> void:
+	if not _tracker.select_contact(handle):
+		_tactical_mfd.show_message("Contact unavailable or outside 40 km lock range")
+		return
+	var contact: Dictionary = _tracker.locked()
+	_target_point = contact.position
+	_has_target_point = true
+	if _vehicle().has_method("set_orbit_target"):
+		_vehicle().set_orbit_target(_target_point)
+	_tactical_mfd.show_message("SELECTED %s · %.1f km · Weapon lock set" % [contact.get("name", "CONTACT"), _focus_position().distance_to(_target_point) / 1000.0])
+	_sync_tactical_state()
+
+
+func _add_map_waypoint(point: Vector2) -> void:
+	var half := float(_tactical_mfd.map.layers.get("world_size_m", 50000.0)) * 0.5
+	if absf(point.x) > half or absf(point.y) > half:
+		_tactical_mfd.show_message("Waypoint outside this theatre · pan back inside the mapped area")
+		return
+	var position := Vector3(point.x, _ground_height_xz(point.x, point.y), point.y)
+	if _navigation.add(position):
+		_tactical_mfd.show_message("WP %02d SET · %d remaining · Add WP mode stays active" % [_navigation.completed + _navigation.points.size(), _navigation.points.size()])
+	else:
+		_tactical_mfd.show_message("Route full · maximum 12 waypoints")
+	_sync_tactical_state()

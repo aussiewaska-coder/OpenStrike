@@ -276,3 +276,19 @@ func _refresh_lock() -> void:
 	var break_range: float = RADAR_RANGES_M[RADAR_RANGES_M.size() - 1]
 	if (c["position"] as Vector3).distance_to(_origin) > break_range:
 		clear_lock()
+
+
+## Map selection uses the contact handle directly, independent of camera angle.
+func select_contact(handle: int) -> bool:
+	if not _contacts.has(handle):
+		return false
+	if (_contacts[handle].position as Vector3).distance_to(_origin) > RADAR_RANGES_M.back():
+		return false
+	stop_view_tracking()
+	_locked_fallback.clear()
+	_locked_handle = handle
+	return true
+
+
+func known_contacts() -> Array:
+	return _contacts.values()

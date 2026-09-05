@@ -603,3 +603,12 @@ func _clear_terrain() -> void:
 	_overview_texture = null
 	_building_world_size_m = 0.0
 	_building_chunk_count = 0
+
+
+## Shared texture references: the MFD does not duplicate or download imagery.
+func tactical_map_layers() -> Dictionary:
+	var details := []
+	for chunk in _chunks:
+		if chunk.get("texture") != null and chunk.texture != _overview_texture:
+			details.append({"bounds": _terrain_chunk_bounds(int(chunk.cx), int(chunk.cz)), "texture": chunk.texture})
+	return {"world_size_m": float(_metadata.get("world_size_m", 50000.0)), "height": _height_image, "metadata": _metadata, "aerial": _overview_texture, "details": details}

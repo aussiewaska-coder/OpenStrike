@@ -52,6 +52,7 @@ const ACTION_SWITCH_AIRCRAFT := &"switch_aircraft"
 ## On the helicopter A retains manual aim. On the F-22 it modifies the right
 ## stick into a persistent throttle control.
 const ACTION_FREE_LOOK := &"free_look"
+const ACTION_TACTICAL_MAP := &"tactical_map"
 const ACTION_TRACK_TARGET := &"track_target"
 const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
@@ -59,6 +60,7 @@ const ACTION_RUDDER_LEFT := &"rudder_left"
 const ACTION_RUDDER_RIGHT := &"rudder_right"
 
 const BUTTON_ACTIONS: Array[StringName] = [
+	ACTION_TACTICAL_MAP,
 	ACTION_CAMERA_TRAVEL_TOGGLE,
 	ACTION_CONTEXT,
 	ACTION_TARGET_PREVIOUS,
@@ -75,6 +77,8 @@ var active_device_guid := ""
 var _had_controller := false
 var _paused_for_controller := false
 var _settings_open := false
+var _tactical_open := false
+var _tactical_pauses := true
 ## When each button went down, so the release can report how long it was held.
 var _hold_started: Dictionary = {}
 var _left_trigger_rest := 0.0
@@ -97,6 +101,10 @@ func _process(_delta: float) -> void:
 		return
 	var now := Time.get_ticks_msec() / 1000.0
 	for action in BUTTON_ACTIONS:
+		if _tactical_open and action != ACTION_TACTICAL_MAP:
+			_hold_started.erase(action)
+			_pressed_actions.erase(action)
+			continue
 		var pressed := binding_strength(action) > 0.5
 		var was_pressed: bool = _pressed_actions.get(action, false)
 		_pressed_actions[action] = pressed
@@ -125,11 +133,11 @@ func is_controller_ready() -> bool:
 ## Reconnecting a pad must not resume flight underneath an open menu.
 func set_settings_open(is_open: bool) -> void:
 	_settings_open = is_open
-	get_tree().paused = _settings_open or _paused_for_controller
+	get_tree().paused = _settings_open or (_tactical_open and _tactical_pauses) or _paused_for_controller
 
 
 func get_flight_vector() -> Vector2:
-	if _settings_open or not is_controller_ready():
+	if _settings_open or _tactical_open or not is_controller_ready():
 		return Vector2.ZERO
 	var vector := Vector2(
 		binding_strength(ACTION_FLIGHT_RIGHT) - binding_strength(ACTION_FLIGHT_LEFT),
@@ -139,7 +147,7 @@ func get_flight_vector() -> Vector2:
 
 
 func get_aim_vector() -> Vector2:
-	if _settings_open or not is_controller_ready():
+	if _settings_open or _tactical_open or not is_controller_ready():
 		return Vector2.ZERO
 	var vector := Vector2(
 		binding_strength(ACTION_AIM_RIGHT) - binding_strength(ACTION_AIM_LEFT),
@@ -186,7 +194,7 @@ static func route_aim_input_to_flight(aim_input: Vector2, free_look_held: bool) 
 
 
 func is_free_look_held() -> bool:
-	return not _settings_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
+	return not _settings_open and not _tactical_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
 
 
 ## A turns right-stick vertical motion into a rate that moves the persistent
@@ -199,7 +207,7 @@ func get_jet_throttle_axis() -> float:
 ## Separate press/release thresholds prevent noisy trigger readings flickering
 ## the limiter. Unequal pressure still supplies differential rudder.
 func is_vectoring_held() -> bool:
-	if _settings_open or not is_controller_ready():
+	if _settings_open or _tactical_open or not is_controller_ready():
 		_vectoring_held = false
 		return false
 	var pressure := minf(binding_strength(ACTION_RUDDER_LEFT), binding_strength(ACTION_RUDDER_RIGHT))
@@ -220,19 +228,19 @@ static func jet_look_vector(aim_input: Vector2, modifier_held: bool) -> Vector2:
 
 
 func is_cannon_firing() -> bool:
-	return not _settings_open and is_controller_ready() and binding_strength(ACTION_CANNON) > 0.5
+	return not _settings_open and not _tactical_open and is_controller_ready() and binding_strength(ACTION_CANNON) > 0.5
 
 
 func is_rockets_firing() -> bool:
-	return not _settings_open and is_controller_ready() and binding_strength(ACTION_ROCKETS) > 0.5
+	return not _settings_open and not _tactical_open and is_controller_ready() and binding_strength(ACTION_ROCKETS) > 0.5
 
 
 func is_context_held() -> bool:
-	return not _settings_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
+	return not _settings_open and not _tactical_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
 
 
 func get_camera_orbit_axis() -> float:
-	if _settings_open or not is_controller_ready():
+	if _settings_open or _tactical_open or not is_controller_ready():
 		return 0.0
 	var left_strength := binding_strength(ACTION_CAMERA_ORBIT_LEFT)
 	var right_strength := binding_strength(ACTION_CAMERA_ORBIT_RIGHT)
@@ -241,7 +249,7 @@ func get_camera_orbit_axis() -> float:
 
 ## Positive yaws right. L2 is left rudder and R2 is right rudder.
 func get_rudder_axis() -> float:
-	if _settings_open or not is_controller_ready():
+	if _settings_open or _tactical_open or not is_controller_ready():
 		return 0.0
 	var left_strength := binding_strength(ACTION_RUDDER_LEFT)
 	var right_strength := binding_strength(ACTION_RUDDER_RIGHT)
@@ -354,7 +362,7 @@ func _set_active_controller(device: int) -> void:
 	_had_controller = true
 	if _paused_for_controller:
 		_paused_for_controller = false
-		get_tree().paused = _settings_open
+		get_tree().paused = _settings_open or (_tactical_open and _tactical_pauses)
 	connection_changed.emit(true, active_device, active_device_name)
 	controller_attention_changed.emit(false, "", "")
 
@@ -469,3 +477,9 @@ func restore_bindings() -> Error:
 
 func control_hint(default_text: String) -> String:
 	return default_text if bindings.values == BINDINGS.new().values else "CUSTOM CONTROLS · SETTINGS > CONTROLLER"
+
+
+func set_tactical_open(is_open: bool, pause_flight := true) -> void:
+	_tactical_open = is_open
+	_tactical_pauses = pause_flight
+	get_tree().paused = _settings_open or (_tactical_open and _tactical_pauses) or _paused_for_controller

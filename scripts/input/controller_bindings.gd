@@ -14,6 +14,7 @@ const ACTIONS := [
 	["weapon_cycle", "Cycle weapon / hold for settings", 2],
 	["target_previous", "Previous target / jet view", 13], ["target_next", "Next target / jet view", 14],
 	["camera_zoom_in", "Zoom in", 11], ["camera_zoom_out", "Zoom out", 12],
+	["tactical_map", "Tactical map / close map", 3],
 	["camera_orbit_left", "Apache orbit left", 5, 1], ["camera_orbit_right", "Apache orbit right", 4, 1],
 ]
 const BUTTON_NAMES := ["A / Cross", "B / Circle", "X / Square", "Y / Triangle", "Back / Share", "Guide", "Start / Options", "L3", "R3", "LB / L1", "RB / R1", "D-pad up", "D-pad down", "D-pad left", "D-pad right"]

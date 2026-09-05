@@ -23,10 +23,10 @@ func _run() -> void:
 	_assert_axis(&"rudder_right", JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	# The panel's buttons are unreachable with a controller, so their actions
 	# have to exist on the pad.
-	# Y and B are reserved for lock-on. Nothing of OURS may claim them. Godot's
+	# B stays available for menu cancellation. Y opens the tactical map. Nothing of OURS may claim them. Godot's
 	# own ui_* actions bind B to ui_cancel and Y to ui_select by default; those
 	# are the engine's, never fire in flight, and are not what this guards.
-	for button in [JoyButton.JOY_BUTTON_Y, JoyButton.JOY_BUTTON_B]:
+	for button in [JoyButton.JOY_BUTTON_B]:
 		for action in InputMap.get_actions():
 			if String(action).begins_with("ui_"):
 				continue
@@ -36,6 +36,7 @@ func _run() -> void:
 	# X taps to cycle weapons and holds for settings, so the settings action is
 	# no longer bound to a button -- main.gd raises it from the hold, and the
 	# on-screen SETTINGS button still emits it.
+	_assert_button(&"tactical_map", JoyButton.JOY_BUTTON_Y)
 	_assert_button(&"weapon_cycle", JoyButton.JOY_BUTTON_X)
 	_assert_button(&"free_look", JoyButton.JOY_BUTTON_A)
 	_assert_button(&"track_target", JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
