@@ -1,5 +1,14 @@
 extends Node
 
+signal raw_controller_input(event: InputEvent)
+signal bindings_changed
+
+const BINDINGS := preload("res://scripts/input/controller_bindings.gd")
+var bindings := BINDINGS.new()
+var bindings_path := BINDINGS.PATH
+var mapper_active := false
+var _pressed_actions: Dictionary = {}
+
 signal connection_changed(connected: bool, device_id: int, device_name: String)
 signal controller_attention_changed(required: bool, title: String, detail: String)
 signal action_pressed(action: StringName)
@@ -75,20 +84,26 @@ var _vectoring_held := false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	bindings.load_from(bindings_path)
 	_register_input_actions()
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
 	_select_initial_controller()
 
 
 func _process(_delta: float) -> void:
-	if active_device < 0:
+	if active_device < 0 or mapper_active:
+		_hold_started.clear()
+		_pressed_actions.clear()
 		return
 	var now := Time.get_ticks_msec() / 1000.0
 	for action in BUTTON_ACTIONS:
-		if Input.is_action_just_pressed(action):
+		var pressed := binding_strength(action) > 0.5
+		var was_pressed: bool = _pressed_actions.get(action, false)
+		_pressed_actions[action] = pressed
+		if pressed and not was_pressed:
 			_hold_started[action] = now
 			action_pressed.emit(action)
-		elif Input.is_action_just_released(action):
+		elif not pressed and was_pressed:
 			# Missing start means the press predates this poll loop; treating it
 			# as instantaneous makes it a tap, which is the harmless reading.
 			var started: float = _hold_started.get(action, now)
@@ -116,13 +131,21 @@ func set_settings_open(is_open: bool) -> void:
 func get_flight_vector() -> Vector2:
 	if _settings_open or not is_controller_ready():
 		return Vector2.ZERO
-	return apply_response_curve(apply_circular_deadzone(get_raw_flight_vector()))
+	var vector := Vector2(
+		binding_strength(ACTION_FLIGHT_RIGHT) - binding_strength(ACTION_FLIGHT_LEFT),
+		binding_strength(ACTION_FLIGHT_BACK) - binding_strength(ACTION_FLIGHT_FORWARD)
+	)
+	return apply_response_curve(apply_circular_deadzone(vector))
 
 
 func get_aim_vector() -> Vector2:
 	if _settings_open or not is_controller_ready():
 		return Vector2.ZERO
-	return apply_response_curve(apply_circular_deadzone(get_raw_aim_vector()))
+	var vector := Vector2(
+		binding_strength(ACTION_AIM_RIGHT) - binding_strength(ACTION_AIM_LEFT),
+		binding_strength(ACTION_AIM_BACK) - binding_strength(ACTION_AIM_FORWARD)
+	)
+	return apply_response_curve(apply_circular_deadzone(vector))
 
 
 func get_raw_flight_vector() -> Vector2:
@@ -163,10 +186,7 @@ static func route_aim_input_to_flight(aim_input: Vector2, free_look_held: bool) 
 
 
 func is_free_look_held() -> bool:
-	return not _settings_open and is_controller_ready() and Input.is_joy_button_pressed(
-		active_device,
-		JoyButton.JOY_BUTTON_A
-	)
+	return not _settings_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
 
 
 ## A turns right-stick vertical motion into a rate that moves the persistent
@@ -182,11 +202,7 @@ func is_vectoring_held() -> bool:
 	if _settings_open or not is_controller_ready():
 		_vectoring_held = false
 		return false
-	var raw := get_raw_trigger_vector()
-	var pressure := minf(
-		normalized_trigger(raw.x, _left_trigger_rest),
-		normalized_trigger(raw.y, _right_trigger_rest)
-	)
+	var pressure := minf(binding_strength(ACTION_RUDDER_LEFT), binding_strength(ACTION_RUDDER_RIGHT))
 	_vectoring_held = pressure >= (VECTORING_RELEASE if _vectoring_held else VECTORING_PRESS)
 	return _vectoring_held
 
@@ -204,22 +220,22 @@ static func jet_look_vector(aim_input: Vector2, modifier_held: bool) -> Vector2:
 
 
 func is_cannon_firing() -> bool:
-	return not _settings_open and is_controller_ready() and Input.is_action_pressed(ACTION_CANNON)
+	return not _settings_open and is_controller_ready() and binding_strength(ACTION_CANNON) > 0.5
 
 
 func is_rockets_firing() -> bool:
-	return not _settings_open and is_controller_ready() and Input.is_action_pressed(ACTION_ROCKETS)
+	return not _settings_open and is_controller_ready() and binding_strength(ACTION_ROCKETS) > 0.5
 
 
 func is_context_held() -> bool:
-	return not _settings_open and is_controller_ready() and Input.is_action_pressed(ACTION_CONTEXT)
+	return not _settings_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
 
 
 func get_camera_orbit_axis() -> float:
 	if _settings_open or not is_controller_ready():
 		return 0.0
-	var left_strength := Input.get_action_strength(ACTION_CAMERA_ORBIT_LEFT)
-	var right_strength := Input.get_action_strength(ACTION_CAMERA_ORBIT_RIGHT)
+	var left_strength := binding_strength(ACTION_CAMERA_ORBIT_LEFT)
+	var right_strength := binding_strength(ACTION_CAMERA_ORBIT_RIGHT)
 	return clampf(right_strength - left_strength, -1.0, 1.0)
 
 
@@ -227,9 +243,8 @@ func get_camera_orbit_axis() -> float:
 func get_rudder_axis() -> float:
 	if _settings_open or not is_controller_ready():
 		return 0.0
-	var raw := get_raw_trigger_vector()
-	var left_strength := normalized_trigger(raw.x, _left_trigger_rest)
-	var right_strength := normalized_trigger(raw.y, _right_trigger_rest)
+	var left_strength := binding_strength(ACTION_RUDDER_LEFT)
+	var right_strength := binding_strength(ACTION_RUDDER_RIGHT)
 	return clampf(right_strength - left_strength, -1.0, 1.0)
 
 
@@ -365,55 +380,10 @@ func _clear_controller(disconnected_during_play: bool) -> void:
 
 
 func _register_input_actions() -> void:
-	_add_axis_action(ACTION_FLIGHT_LEFT, JoyAxis.JOY_AXIS_LEFT_X, -1.0)
-	_add_axis_action(ACTION_FLIGHT_RIGHT, JoyAxis.JOY_AXIS_LEFT_X, 1.0)
-	_add_axis_action(ACTION_FLIGHT_FORWARD, JoyAxis.JOY_AXIS_LEFT_Y, -1.0)
-	_add_axis_action(ACTION_FLIGHT_BACK, JoyAxis.JOY_AXIS_LEFT_Y, 1.0)
-	_add_axis_action(ACTION_AIM_LEFT, JoyAxis.JOY_AXIS_RIGHT_X, -1.0)
-	_add_axis_action(ACTION_AIM_RIGHT, JoyAxis.JOY_AXIS_RIGHT_X, 1.0)
-	_add_axis_action(ACTION_AIM_FORWARD, JoyAxis.JOY_AXIS_RIGHT_Y, -1.0)
-	_add_axis_action(ACTION_AIM_BACK, JoyAxis.JOY_AXIS_RIGHT_Y, 1.0)
-	_add_axis_action(ACTION_CAMERA_ORBIT_LEFT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
-	_add_axis_action(ACTION_CAMERA_ORBIT_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
-	_add_axis_action(ACTION_RUDDER_LEFT, JoyAxis.JOY_AXIS_TRIGGER_LEFT, 1.0)
-	_add_axis_action(ACTION_RUDDER_RIGHT, JoyAxis.JOY_AXIS_TRIGGER_RIGHT, 1.0)
-	# Y and B are deliberately unbound. Flight mode and switch-aircraft live in
-	# the settings panel now, and both buttons are reserved for the lock-on
-	# controls in the next phase.
-	# X taps to cycle weapons and holds to open settings. The settings action
-	# keeps its constant for main.gd but no longer has a button of its own; the
-	# on-screen SETTINGS button calls the panel directly, so a mistimed hold can
-	# never lock anyone out of it.
-	_add_button_action(ACTION_WEAPON_CYCLE, JoyButton.JOY_BUTTON_X)
-	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_A)
-	_add_button_action(ACTION_TRACK_TARGET, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
-	# L3: the only button reachable without releasing either stick, so the gun
-	# fires while the player is still flying and holding A to aim.
-	_add_button_action(ACTION_CANNON, JoyButton.JOY_BUTTON_LEFT_STICK)
-	_add_button_action(ACTION_ROCKETS, JoyButton.JOY_BUTTON_LEFT_SHOULDER)
-	_add_button_action(ACTION_CAMERA_TRAVEL_TOGGLE, JoyButton.JOY_BUTTON_RIGHT_STICK)
-	# Reserved context action; no active flight handler. A routes manual view
-	# (helicopter) or throttle (jet).
+	bindings.apply_input_map()
+	# Reserved context action is kept for compatibility; manual aim follows
+	# the configurable modifier through is_context_held().
 	_add_button_action(ACTION_CONTEXT, JoyButton.JOY_BUTTON_A)
-	_add_button_action(ACTION_TARGET_PREVIOUS, JoyButton.JOY_BUTTON_DPAD_LEFT)
-	_add_button_action(ACTION_TARGET_NEXT, JoyButton.JOY_BUTTON_DPAD_RIGHT)
-	_add_button_action(ACTION_ZOOM_IN, JoyButton.JOY_BUTTON_DPAD_UP)
-	_add_button_action(ACTION_ZOOM_OUT, JoyButton.JOY_BUTTON_DPAD_DOWN)
-
-
-func _add_axis_action(action: StringName, axis: JoyAxis, axis_value: float) -> void:
-	if not InputMap.has_action(action):
-		InputMap.add_action(action, DEAD_ZONE)
-	else:
-		InputMap.action_set_deadzone(action, DEAD_ZONE)
-	for existing in InputMap.action_get_events(action):
-		if existing is InputEventJoypadMotion and existing.axis == axis and is_equal_approx(existing.axis_value, axis_value):
-			return
-	var event := InputEventJoypadMotion.new()
-	event.device = -1
-	event.axis = axis
-	event.axis_value = axis_value
-	InputMap.action_add_event(action, event)
 
 
 func _add_button_action(action: StringName, button: JoyButton) -> void:
@@ -426,3 +396,76 @@ func _add_button_action(action: StringName, button: JoyButton) -> void:
 	event.device = -1
 	event.button_index = button
 	InputMap.action_add_event(action, event)
+
+
+func _input(event: InputEvent) -> void:
+	if mapper_active and (event is InputEventJoypadButton or event is InputEventJoypadMotion):
+		raw_controller_input.emit(event)
+
+
+func _read_button(index: int) -> bool:
+	return Input.is_joy_button_pressed(active_device, index)
+
+
+func _read_axis(index: int) -> float:
+	if index == JOY_AXIS_LEFT_X:
+		return get_raw_flight_vector().x
+	if index == JOY_AXIS_LEFT_Y:
+		return get_raw_flight_vector().y
+	if index == JOY_AXIS_RIGHT_X:
+		return get_raw_aim_vector().x
+	if index == JOY_AXIS_RIGHT_Y:
+		return get_raw_aim_vector().y
+	if index == JOY_AXIS_TRIGGER_LEFT:
+		return get_raw_trigger_vector().x
+	if index == JOY_AXIS_TRIGGER_RIGHT:
+		return get_raw_trigger_vector().y
+	return Input.get_joy_axis(active_device, index)
+
+
+func binding_strength(action: StringName) -> float:
+	if not is_controller_ready() or not bindings.values.has(String(action)):
+		return 0.0
+	var binding: Dictionary = bindings.values[String(action)]
+	if binding.type == "button":
+		return 1.0 if _read_button(binding.index) else 0.0
+	var raw := _read_axis(binding.index)
+	if binding.index in [JOY_AXIS_TRIGGER_LEFT, JOY_AXIS_TRIGGER_RIGHT]:
+		var rest := _left_trigger_rest if binding.index == JOY_AXIS_TRIGGER_LEFT else _right_trigger_rest
+		var pressure := normalized_trigger(raw, rest)
+		return pressure if binding.sign > 0 else 1.0 - pressure
+	return clampf(raw * float(binding.sign), 0.0, 1.0)
+
+
+func save_binding(action: String, binding: Dictionary) -> Error:
+	if not bindings.values.has(action) or not BINDINGS.valid(binding):
+		return ERR_INVALID_PARAMETER
+	var old: Dictionary = bindings.values[action]
+	bindings.values[action] = binding.duplicate()
+	var error := bindings.save_to(bindings_path)
+	if error != OK:
+		bindings.values[action] = old
+		return error
+	bindings.apply_input_map()
+	_hold_started.clear()
+	_pressed_actions.clear()
+	bindings_changed.emit()
+	return OK
+
+
+func restore_bindings() -> Error:
+	var old := bindings.values.duplicate(true)
+	bindings.reset()
+	var error := bindings.save_to(bindings_path)
+	if error != OK:
+		bindings.values = old
+		return error
+	bindings.apply_input_map()
+	_hold_started.clear()
+	_pressed_actions.clear()
+	bindings_changed.emit()
+	return OK
+
+
+func control_hint(default_text: String) -> String:
+	return default_text if bindings.values == BINDINGS.new().values else "CUSTOM CONTROLS · SETTINGS > CONTROLLER"

@@ -16,8 +16,10 @@ signal open_changed(is_open: bool)
 const ACCENT := Color(0.40, 0.88, 0.79)
 const INK := Color(0.90, 0.94, 0.96)
 const MUTED := Color(0.57, 0.67, 0.73)
-const SECTIONS := ["Flight", "World", "Display", "Storage"]
+const SECTIONS := ["Flight", "World", "Display", "Storage", "Controller"]
 
+var _mapper: Control
+var _navigation: GridContainer
 var _theatre_box: VBoxContainer
 var _mode_button: Button
 var _aircraft_button: Button
@@ -75,15 +77,17 @@ func _ready() -> void:
 	_resume_button.add_theme_stylebox_override("normal", _style(Color(0.08, 0.23, 0.23), ACCENT))
 	header.add_child(_resume_button)
 
-	var navigation := HBoxContainer.new()
-	navigation.add_theme_constant_override("separation", 8)
-	layout.add_child(navigation)
+	_navigation = GridContainer.new()
+	_navigation.columns = 5
+	_navigation.add_theme_constant_override("h_separation", 8)
+	_navigation.add_theme_constant_override("v_separation", 8)
+	layout.add_child(_navigation)
 	for index in range(SECTIONS.size()):
 		var tab := _button(SECTIONS[index], _select_page.bind(index))
 		tab.toggle_mode = true
 		tab.alignment = HORIZONTAL_ALIGNMENT_CENTER
 		tab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		navigation.add_child(tab)
+		_navigation.add_child(tab)
 		_tabs.append(tab)
 
 	_scroll = ScrollContainer.new()
@@ -146,7 +150,10 @@ func _ready() -> void:
 	cache.add_child(_button("Clear map cache", func(): cache_cleared.emit()))
 	var info := _card(_pages[3], "Location & map credits")
 	info.add_child(_label("Foreground location only. Coordinates are not saved.\nMap © OpenStreetMap contributors. Aerial © State of Queensland.", MUTED, 16))
-	_hint = _label("D-pad  Navigate     A  Select     B / X  Resume", MUTED, 15)
+	_mapper = preload("res://scripts/ui/controller_mapper.gd").new()
+	_pages[4].add_child(_mapper)
+	_mapper.focus_layout_changed.connect(_refresh_focus_chain)
+	_hint = _label("D-pad  Navigate     A  Select     B  Resume", MUTED, 15)
 	layout.add_child(_hint)
 	resized.connect(_resize_layout)
 	_resize_layout()
@@ -233,6 +240,9 @@ func _card(parent: Control, heading: String, detail := "") -> VBoxContainer:
 
 func _resize_layout() -> void:
 	var compact := size.x < 760 or size.y < 460
+	_navigation.columns = 3 if size.x < 600 else 5
+	for tab in _tabs:
+		tab.add_theme_font_size_override("font_size", 15 if compact else 20)
 	for side in ["left", "right", "top", "bottom"]:
 		_margin.add_theme_constant_override("margin_%s" % side, 12 if compact else 28)
 	for grid in _grids:
@@ -258,7 +268,7 @@ func _refresh_focus_chain() -> void:
 	var buttons: Array[Control] = [_resume_button]
 	buttons.append_array(_tabs)
 	for child in _pages[_selected_page].find_children("*", "BaseButton", true, false):
-		if not child.disabled:
+		if not child.disabled and child.is_visible_in_tree():
 			buttons.append(child)
 	for index in range(buttons.size()):
 		var button := buttons[index]
@@ -364,5 +374,8 @@ func toggle_panel() -> bool:
 
 func _input(event: InputEvent) -> void:
 	if visible and event.is_action_pressed("ui_cancel"):
+		if _mapper.is_visible_in_tree() and _mapper.cancel_pending():
+			get_viewport().set_input_as_handled()
+			return
 		close_panel()
 		get_viewport().set_input_as_handled()

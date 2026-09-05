@@ -490,7 +490,7 @@ func _on_projectile_expired(round_data: RefCounted) -> void:
 ## one the player meant.
 func _on_gamepad_action_released(action: StringName, held_seconds: float) -> void:
 	if settings_panel != null and settings_panel.visible:
-		if action == GamepadInput.ACTION_WEAPON_CYCLE:
+		if action == GamepadInput.ACTION_WEAPON_CYCLE and not GamepadInput.mapper_active:
 			settings_panel.close_panel()
 		return
 	if action != GamepadInput.ACTION_WEAPON_CYCLE:
@@ -576,7 +576,7 @@ func _switch_aircraft() -> void:
 	_snap_follow_camera()
 	_refresh_aircraft_button()
 	settings_panel.set_flight_mode_text(_flight_mode_text())
-	status_label.text = "F-22 -- A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR" if _flying_jet else "AH-64D APACHE"
+	status_label.text = "F-22 -- " + GamepadInput.control_hint("A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR") if _flying_jet else "AH-64D APACHE"
 
 
 func _bind_cannon_to(vehicle: Node3D) -> void:
@@ -1527,7 +1527,7 @@ func _track_looked_at_target() -> void:
 	_tracking_basis = camera.global_basis
 	_has_target_point = true
 	_target_point = _tracker.locked().position
-	status_label.text = "TRACKING %s -- R1 NEXT IN CLUSTER" % _tracker.locked().get("name", "TARGET")
+	status_label.text = "TRACKING %s -- %s NEXT IN CLUSTER" % [_tracker.locked().get("name", "TARGET"), GamepadInput.BINDINGS.label(GamepadInput.bindings.values.track_target)]
 
 
 func _apply_target_tracking(delta: float) -> void:
@@ -1660,7 +1660,7 @@ func _cycle_view() -> void:
 			status_label.text = "CHASE VIEW: astern, following the nose"
 		View.CHASE:
 			_view = View.ORBIT
-			status_label.text = "ORBIT VIEW: RIGHT STICK LOOK" if _flying_jet else "ORBIT VIEW: L2/R2 SWEEP A LOCKED GROUND POINT"
+			status_label.text = "ORBIT VIEW: " + GamepadInput.control_hint("RIGHT STICK LOOK" if _flying_jet else "L2/R2 SWEEP A LOCKED GROUND POINT")
 		_:
 			_view = View.COCKPIT
 			status_label.text = "COCKPIT VIEW"
@@ -1717,7 +1717,7 @@ func _on_jet_crashed(_point: Vector3) -> void:
 
 
 func _on_jet_respawned() -> void:
-	status_label.text = "AIRBORNE -- A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR"
+	status_label.text = "AIRBORNE -- " + GamepadInput.control_hint("A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR")
 	_snap_follow_camera()
 
 
