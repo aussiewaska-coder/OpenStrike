@@ -9,3 +9,31 @@
 The model and its textures are distributed under that license. OpenStrike
 scales the model, stows its landing gear, and attaches gameplay components at
 runtime.
+
+## F-117 Nighthawk
+
+- Source: Sketchfab (the glTF scene node is named `Sketchfab_model`)
+- Creator: UNKNOWN -- needs filling in before release
+- License: UNKNOWN -- needs filling in before release
+
+Imported 2026-09-05. 107,757 triangles across 36 primitives and 33 materials,
+with 79 separate 1024 px textures. Bounds are 16.00 x 10.43 x 2.92 m against a
+real aircraft of 20.09 m long and 13.20 m span, so the model is about 0.79
+scale and needs roughly 1.26 applied if it is ever flown.
+
+## Boeing E-3A Sentry AWACS
+
+- Source: Sketchfab (the glTF scene node is named `Sketchfab_model`)
+- Creator: UNKNOWN -- needs filling in before release
+- License: UNKNOWN -- needs filling in before release
+
+Imported 2026-09-05. 58,704 triangles across 14 surfaces with 8 textures.
+Bounds are 46.43 x 44.50 x 13.78 m against a real 46.61 m long, 44.42 m span
+and 12.60 m high, so it is true scale and needs none applied. The landing gear
+is modelled down and is not on a separate node, so an airborne one will have
+its wheels out until the gear meshes are identified and hidden.
+
+Both were imported with `compress/mode=2`. Left at Godot's default lossless
+mode they would have held 421 MB and 150 MB of VRAM respectively; as ETC2 they
+hold 52.7 MB and 18.7 MB. See docs/2026-09-05-dusk-lights-and-texture-memory.md
+for what uncompressed textures cost this project once already.
