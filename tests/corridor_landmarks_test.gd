@@ -36,6 +36,8 @@ func _run():
 		assert(absf(model.position.x) < terrain.span * 0.5 and absf(model.position.z) < terrain.span * 0.5)
 		assert(not model.find_children("*", "MeshInstance3D", true, false).is_empty(), "landmark must contain its real geometry")
 	assert(towers.get_node_or_null("Hero_Q1") != null and towers.get_node_or_null("Hero_Soul") != null)
+	for model in towers._instances:
+		_assert_solid(model)
 	towers.populate("au_qld_burleigh", terrain)
 	assert(towers.hero_count() == 0, "switching to an unrelated theatre removes the models")
 	await process_frame
@@ -44,3 +46,34 @@ func _run():
 	terrain.free()
 	print("CORRIDOR_LANDMARKS_TEST_PASS")
 	quit()
+
+
+## A landmark must not be see-through. The models carry no normals, so Godot
+## derives both the lighting and the back-face culling from triangle winding:
+## a face wound the wrong way is culled, and you look straight through the
+## tower. Every wall face must therefore turn its front to the outside.
+func _assert_solid(model: Node3D) -> void:
+	for instance in model.find_children("*", "MeshInstance3D", true, false):
+		var mesh: Mesh = instance.mesh
+		for surface in mesh.get_surface_count():
+			var arrays: Array = mesh.surface_get_arrays(surface)
+			var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var axis := Vector3.ZERO
+			for point in points: axis += point
+			axis /= float(points.size())
+			var outward := 0
+			var inward := 0
+			for triangle in range(0, indices.size(), 3):
+				var a: Vector3 = points[indices[triangle]]
+				var b: Vector3 = points[indices[triangle + 1]]
+				var c: Vector3 = points[indices[triangle + 2]]
+				var normal := (b - a).cross(c - a)
+				var flat := Vector2(normal.x, normal.z)
+				if flat.length() < 1e-6: continue
+				var offset := (a + b + c) / 3.0 - axis
+				if flat.dot(Vector2(offset.x, offset.z)) > 0.0: outward += 1
+				else: inward += 1
+			assert(outward > 0, "%s has no wall faces to judge" % model.name)
+			assert(inward * 20 < outward, "%s is see-through: %d of %d wall faces are wound inward" % [
+				model.name, inward, inward + outward])
