@@ -8,7 +8,7 @@ const ACTIONS := [
 	["aim_left", "Look / yaw left", 2, -1], ["aim_right", "Look / yaw right", 2, 1],
 	["aim_forward", "Look up / collective up", 3, -1], ["aim_back", "Look down / collective down", 3, 1],
 	["rudder_left", "Left rudder", 4, 1], ["rudder_right", "Right rudder", 5, 1],
-	["free_look", "Throttle / manual aim modifier", 0],
+	["free_look", "Apache manual aim modifier", 0],
 	["weapon_cannon", "Fire cannon", 7], ["weapon_rockets", "Fire missile / rockets", 9],
 	["track_target", "Track target", 10], ["camera_travel_toggle", "Recenter / change view", 8],
 	["weapon_cycle", "Cycle weapon / hold for settings", 2],
@@ -16,8 +16,10 @@ const ACTIONS := [
 	["camera_zoom_in", "Zoom in", 11], ["camera_zoom_out", "Zoom out", 12],
 	["tactical_map", "Tactical map / close map", 3],
 	["camera_orbit_left", "Apache orbit left", 5, 1], ["camera_orbit_right", "Apache orbit right", 4, 1],
+	["throttle_up", "Throttle up (Home)", 5],
+	["throttle_down", "Throttle down (Turbo)", -1],
 ]
-const BUTTON_NAMES := ["A / Cross", "B / Circle", "X / Square", "Y / Triangle", "Back / Share", "Guide", "Start / Options", "L3", "R3", "LB / L1", "RB / R1", "D-pad up", "D-pad down", "D-pad left", "D-pad right"]
+const BUTTON_NAMES := ["A / Cross", "B / Circle", "X / Square", "Y / Triangle", "Back / Share", "Home / Guide", "Start / Options", "L3", "R3", "LB / L1", "RB / R1", "D-pad up", "D-pad down", "D-pad left", "D-pad right"]
 const AXIS_NAMES := ["Left stick X", "Left stick Y", "Right stick X", "Right stick Y", "LT / L2", "RT / R2"]
 var values: Dictionary = {}
 
@@ -27,9 +29,14 @@ func _init() -> void:
 func reset() -> void:
 	values.clear()
 	for row in ACTIONS:
+		if row[2] == -1:
+			values[row[0]] = {"type": "unassigned"}
+			continue
 		values[row[0]] = {"type": "axis", "index": row[2], "sign": row[3]} if row.size() == 4 else {"type": "button", "index": row[2]}
 
 static func valid(binding: Variant) -> bool:
+	if binding is Dictionary and binding == {"type": "unassigned"}:
+		return true
 	if not binding is Dictionary or not binding.get("index") is int:
 		return false
 	var index: int = binding.index
@@ -38,6 +45,8 @@ static func valid(binding: Variant) -> bool:
 	return binding.get("type") == "axis" and index >= 0 and index < JOY_AXIS_MAX and binding.get("sign") in [-1, 1]
 
 static func label(binding: Dictionary) -> String:
+	if binding.type == "unassigned":
+		return "Unassigned · Detect button"
 	var index: int = binding.index
 	if binding.type == "button":
 		return BUTTON_NAMES[index] if index < BUTTON_NAMES.size() else "Button %d" % index
@@ -78,6 +87,8 @@ func apply_input_map() -> void:
 			if old is InputEventJoypadButton or old is InputEventJoypadMotion:
 				InputMap.action_erase_event(action, old)
 		var binding: Dictionary = values[action]
+		if binding.type == "unassigned":
+			continue
 		var event: InputEvent
 		if binding.type == "button":
 			event = InputEventJoypadButton.new()

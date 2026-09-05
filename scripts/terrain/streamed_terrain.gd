@@ -38,9 +38,12 @@ const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_lay
 ## 10 MB compressed against 64 MB raw.
 @export var near_detail_texture_px := 4096
 @export var near_detail_chunks := 3
-## Above this ground speed the near tier is skipped. A 4096 px texture is the
-## most expensive to prepare and is already behind the aircraft when it lands.
+## At speed, reserve the expensive near tier for the chunk directly underneath.
+## Low-speed flight can keep the wider patch sharp.
 @export var near_detail_speed_limit := 45.0
+@export var near_detail_altitude_m := 300.0
+var _low_detail_altitude := false
+var _fast_detail_motion := false
 @export var detail_radius_m := 6000.0
 @export var max_detail_chunks := 16
 @export var detail_update_interval_s := 0.6
@@ -446,13 +449,17 @@ func _refresh_detail_chunks() -> void:
 		if distance <= detail_radius_m:
 			ranked.append({"chunk": chunk, "distance": distance})
 	ranked.sort_custom(func(a, b): return a["distance"] < b["distance"])
+	_apply_memory_budget()
 	var wanted := ranked.slice(0, max_detail_chunks)
 	# Rank decides resolution: the nearest few get the high tier, the rest the
 	# standard one, and a chunk that changes tier is re-fetched.
-	_apply_memory_budget()
-	var moving_fast := _focus_speed() > near_detail_speed_limit
+	var agl := _focus.global_position.y - sample_height_world(_focus.global_position.x, _focus.global_position.z)
+	_low_detail_altitude = agl < near_detail_altitude_m + (30.0 if _low_detail_altitude else 0.0)
+	_fast_detail_motion = _focus_speed() > near_detail_speed_limit - (5.0 if _fast_detail_motion else 0.0)
+	var moving_fast := _fast_detail_motion
+	var near_count := mini(near_detail_chunks, 1) if moving_fast else near_detail_chunks
 	for position in range(wanted.size()):
-		var high_tier: bool = position < near_detail_chunks and not moving_fast
+		var high_tier: bool = position < near_count and _low_detail_altitude
 		wanted[position]["tier"] = near_detail_texture_px if high_tier else detail_texture_px
 
 	var keep := {}
@@ -487,7 +494,6 @@ func _request_chunk_detail(chunk: Dictionary, tier_px: int = 0) -> void:
 	var west := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx) / float(chunk_count))
 	var east := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx + 1) / float(chunk_count))
 	var requested_px: int = tier_px if tier_px > 0 else detail_texture_px
-	chunk["tier"] = requested_px
 	var texture: ImageTexture = await TileClient.fetch_aerial(
 		{"north": north, "south": south, "west": west, "east": east}, requested_px
 	)
@@ -497,6 +503,7 @@ func _request_chunk_detail(chunk: Dictionary, tier_px: int = 0) -> void:
 	_set_chunk_texture(chunk, texture, Vector2(float(chunk_count), float(chunk_count)), Vector2(-float(cx), -float(cz)))
 	# Stretch this chunk's slice of the region-wide UV back over 0..1.
 	chunk["detailed"] = true
+	chunk["tier"] = requested_px
 
 
 ## Buildings ship in the APK per chunk, so this needs no network -- it is the

@@ -5,6 +5,7 @@ const BINDINGS := preload("res://scripts/input/controller_bindings.gd")
 const ACCENT := Color(0.40, 0.88, 0.79)
 const BUTTONS := [
 	[9, "L1", Vector2(115, 28)], [10, "R1", Vector2(365, 28)],
+	[5, "Home", Vector2(240, 55)],
 	[4, "Share", Vector2(203, 100)], [6, "Start", Vector2(277, 100)],
 	[3, "Y / △", Vector2(372, 83)], [1, "B / ○", Vector2(407, 117)],
 	[0, "A / ×", Vector2(372, 151)], [2, "X / □", Vector2(337, 117)],

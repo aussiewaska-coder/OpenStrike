@@ -605,7 +605,7 @@ func _switch_aircraft() -> void:
 	_snap_follow_camera()
 	_refresh_aircraft_button()
 	settings_panel.set_flight_mode_text(_flight_mode_text())
-	status_label.text = "F-22 -- " + GamepadInput.control_hint("A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR") if _flying_jet else "AH-64D APACHE"
+	status_label.text = "F-22 -- " + GamepadInput.control_hint("HOME THROTTLE UP · SET TURBO IN CONTROLLER · BOTH TRIGGERS BRAKE / VECTOR") if _flying_jet else "AH-64D APACHE"
 
 
 func _bind_cannon_to(vehicle: Node3D) -> void:
@@ -1184,6 +1184,7 @@ func _telemetry_sample() -> Dictionary:
 		"net_fetches": TileClient.network_fetches,
 		"tile_failures": TileClient.failures,
 	}
+	sample.merge(GamepadInput.controller_input_report(), true)
 	if _flying_jet:
 		var body_rates: Vector3 = jet_anchor.body_rates()
 		sample.merge({
@@ -1500,6 +1501,8 @@ func _speed_fov_offset() -> float:
 
 func _apply_arcade_camera_shake(delta: float) -> void:
 	var rotation_degrees: Vector3 = _arcade_camera_feedback.update(delta)
+	if _flying_jet and _is_cockpit_view():
+		rotation_degrees += jet_anchor.EFFECTS.cockpit_vibration(_cockpit_bob_time, jet_anchor.engine_afterburner_fraction(), jet_anchor.airbrake)
 	if rotation_degrees.is_zero_approx():
 		return
 	camera.global_basis = camera.global_basis * Basis.from_euler(Vector3(
@@ -1765,7 +1768,7 @@ func _on_jet_crashed(_point: Vector3) -> void:
 
 
 func _on_jet_respawned() -> void:
-	status_label.text = "AIRBORNE -- " + GamepadInput.control_hint("A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR")
+	status_label.text = "AIRBORNE -- " + GamepadInput.control_hint("HOME THROTTLE UP · SET TURBO IN CONTROLLER · BOTH TRIGGERS BRAKE / VECTOR")
 	_snap_follow_camera()
 
 

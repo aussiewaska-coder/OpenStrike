@@ -196,9 +196,12 @@ clearance stops the model flying you into a hill.
 | Tap the screen | Pick a ground point to orbit; tap the sky to clear it |
 | L2 / R2 | With a target: fly the aircraft around it, nose held on it. Without one: orbit the camera |
 | Left stick up/down, while orbiting | Close or widen the orbit, down to 100 m |
-| Y | Switch controls: arcade / realistic |
+| Y | Open / close tactical map |
 | R1 | Lock the target nearest the view centre and track it; repeat for the next visible member of that cluster |
-| A (hold) | Helicopter manual view/aim with the right stick; jet throttle with right-stick up/down |
+| A (hold) | Helicopter manual view/aim with the right stick |
+| Home / Guide | Increase jet throttle; release holds the setting |
+| Turbo (assign through Controller → Detect) | Decrease jet throttle; its input code depends on the controller |
+| Both triggers (jet) | Level flight with neutral stick: airbrake. Manoeuvring: thrust vectoring |
 | X | Tap: cycle weapon; hold: settings |
 | L3 | Fire the 30 mm chin cannon |
 | L1 | Fire selected weapon; guided missiles require seeker acquisition and a fresh press |
@@ -306,12 +309,14 @@ Surfers, Burleigh and Tweed theatres, so normal launch selects the 50 km map.
 The smaller entries remain available explicitly from settings.
 
 The jet uses conventional left-stick pitch and roll (pull back for nose up),
-the right stick for camera look, and L2/R2 for left/right rudder. Hold A and
-right-stick up/down moves a persistent throttle relative to its current setting;
-releasing either control holds that setting. Hold **L2 + R2 together** to engage
-thrust vectoring: pull the left stick for stronger pitch response and tighter
-banked turns, with extra speed loss. Equal trigger pressure cancels rudder;
-unequal pressure still adds differential yaw. A only changes throttle routing.
+the right stick for camera look, and L2/R2 for left/right rudder. Home increases
+the persistent throttle; the detected Turbo binding decreases it. Releasing
+keeps the current setting. Hold **L2 + R2 together** in level flight with a neutral
+stick to deploy the airbrake. Moving the stick restores thrust vectoring for
+stronger pitch response and tighter banked turns, with extra speed loss. Equal
+trigger pressure cancels rudder; unequal pressure still adds differential yaw.
+The jet has moving trailing-wing ailerons, spooled afterburner plumes and nozzle
+lighting. Engine/brake vibration is limited to a small cockpit camera offset.
 D-pad left/right cycles cockpit,
 close pursuit, wider tracking, and tactical ground-lock views. D-pad up/down
 zooms. The right stick can continuously orbit through 360 degrees in pursuit
@@ -348,9 +353,11 @@ turns the aircraft back rather than walling it. Running out of speed still
 reduces lift and makes the aircraft sink, but it never suppresses the pilot's
 roll or recovery pitch command.
 
-Known limitation: `streamed_terrain.gd` suppresses near-detail imagery above
-45 m/s, which the jet is always above, so low passes render coarser than the
-helicopter's until the streaming layer is given a fixed-wing budget.
+Below 300 m above terrain, balanced/quality presets request 4096 px imagery:
+one nearest chunk at jet speeds, and the full near-detail budget below 45 m/s.
+Above that altitude, imagery returns to 2048 px. Altitude and speed hysteresis
+prevent repeated refetches near the boundaries. The performance preset and
+uncompressed-device memory caps still apply.
 
 ## Sky, weather and light
 
@@ -380,6 +387,10 @@ python3 tools/read_telemetry.py --count 1          # one JSON sample
 python3 tools/telemetry_cmd.py '{"screenshot": true}' --out shot.png
 python3 tools/telemetry_cmd.py '{"set": {"fog_density": 0.0001, "weather": 3}}'
 ```
+
+`python3 tools/read_controller.py --seconds 60` prints actual button press/release
+events from the new APK, including while Settings is open. It does not infer
+a Turbo mapping from missing events.
 
 `tools/telemetry_cmd.py --help` lists the knobs. The game must be in the
 foreground: no frames are drawn in the background, so a screenshot request

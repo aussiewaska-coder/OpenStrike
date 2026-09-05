@@ -197,10 +197,11 @@ func is_free_look_held() -> bool:
 	return not _settings_open and not _tactical_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
 
 
-## A turns right-stick vertical motion into a rate that moves the persistent
-## throttle from its current position. Stick up opens it; stick down closes it.
+## Dedicated buttons move a persistent throttle; simultaneous presses cancel.
 func get_jet_throttle_axis() -> float:
-	return jet_throttle_axis(get_aim_vector(), is_free_look_held())
+	if _settings_open or _tactical_open or mapper_active:
+		return 0.0
+	return binding_strength(&"throttle_up") - binding_strength(&"throttle_down")
 
 
 ## Squeezing both rudder triggers engages the post-stall pitch envelope.
@@ -216,15 +217,7 @@ func is_vectoring_held() -> bool:
 
 
 func get_jet_look_vector() -> Vector2:
-	return jet_look_vector(get_aim_vector(), is_free_look_held())
-
-
-static func jet_throttle_axis(aim_input: Vector2, modifier_held: bool) -> float:
-	return clampf(-aim_input.y, -1.0, 1.0) if modifier_held else 0.0
-
-
-static func jet_look_vector(aim_input: Vector2, modifier_held: bool) -> Vector2:
-	return Vector2.ZERO if modifier_held else aim_input
+	return get_aim_vector()
 
 
 func is_cannon_firing() -> bool:
@@ -406,7 +399,18 @@ func _add_button_action(action: StringName, button: JoyButton) -> void:
 	InputMap.action_add_event(action, event)
 
 
+var _button_events: Array[Dictionary] = []
+var _button_serial := 0
+
+func controller_input_report() -> Dictionary:
+	return {"controller_button_events": _button_events.duplicate(true)}
+
 func _input(event: InputEvent) -> void:
+	if event is InputEventJoypadButton and event.device == active_device:
+		_button_serial += 1
+		_button_events.append({"serial": _button_serial, "time_ms": Time.get_ticks_msec(), "button": event.button_index, "pressed": event.pressed, "device": event.device})
+		if _button_events.size() > 32:
+			_button_events.pop_front()
 	if mapper_active and (event is InputEventJoypadButton or event is InputEventJoypadMotion):
 		raw_controller_input.emit(event)
 
@@ -435,6 +439,8 @@ func binding_strength(action: StringName) -> float:
 	if not is_controller_ready() or not bindings.values.has(String(action)):
 		return 0.0
 	var binding: Dictionary = bindings.values[String(action)]
+	if binding.type == "unassigned":
+		return 0.0
 	if binding.type == "button":
 		return 1.0 if _read_button(binding.index) else 0.0
 	var raw := _read_axis(binding.index)

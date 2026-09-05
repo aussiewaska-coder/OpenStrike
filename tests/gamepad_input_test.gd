@@ -69,23 +69,8 @@ func _run() -> void:
 		service.route_aim_input_to_flight(Vector2(0.75, -0.5), false).is_equal_approx(Vector2(0.75, -0.5)),
 		"right-stick flight controls must resume when free look is released"
 	)
-	assert(
-		is_equal_approx(service.jet_throttle_axis(Vector2(0.25, -0.75), true), 0.75),
-		"A plus right-stick up must open the persistent jet throttle"
-	)
-	assert(
-		is_equal_approx(service.jet_throttle_axis(Vector2(0.25, 0.6), true), -0.6),
-		"A plus right-stick down must close the persistent jet throttle"
-	)
-	assert(service.jet_throttle_axis(Vector2.UP, false) == 0.0)
-	assert(
-		service.jet_look_vector(Vector2(0.5, -0.75), true) == Vector2.ZERO,
-		"the camera must not move while A routes the stick to throttle"
-	)
-	assert(
-		service.jet_look_vector(Vector2(0.5, -0.75), false).is_equal_approx(Vector2(0.5, -0.75)),
-		"right-stick look resumes when A is released"
-	)
+	_assert_button(&"throttle_up", JoyButton.JOY_BUTTON_GUIDE)
+	assert(InputMap.action_get_events(&"throttle_down").is_empty(), "Turbo needs an observed binding")
 	assert(service.normalized_trigger(0.0, 0.0) == 0.0)
 	assert(service.normalized_trigger(-1.0, -1.0) == 0.0)
 	assert(service.normalized_trigger(1.0, 0.0) == 1.0)

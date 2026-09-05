@@ -30,6 +30,9 @@ const ASSIST := preload("res://scripts/jet/flight_assist.gd")
 const JET_VISUALS := preload("res://scripts/jet/jet_visuals.gd")
 const FIXED_GUN_MOUNT := preload("res://scripts/weapons/fixed_gun_mount.gd")
 
+const EFFECTS := preload("res://scripts/jet/jet_effects.gd")
+var _effects: Node3D
+
 const GRAVITY := 9.80665
 
 signal crashed(point: Vector3)
@@ -62,8 +65,7 @@ signal boundary_warning(urgency: float)
 @export var control_response := 7.0           ## how quickly commanded rates are reached
 
 @export_group("Throttle")
-## Throttle is a position A + right-stick vertical moves, not a spring:
-## releasing either control holds the setting, like a throttle quadrant.
+## Dedicated up/down buttons move the throttle; releasing holds the setting.
 @export var throttle_rate := 0.55
 @export var starting_throttle := 0.62
 ## Past 1.0 is afterburner. The travel above military power is the detent.
@@ -106,6 +108,8 @@ var throttle_input := 0.0
 ## L2 + R2 held: the nozzles own the nose, and the limiter moves out to the
 ## post-stall angle. Public so the HUD can say so.
 var vectoring := false
+var airbrake := 0.0
+var _braking := false
 
 var _terrain: Node
 var _visual: Node3D
@@ -166,6 +170,8 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	rudder_input = 0.0
 	throttle_input = 0.0
 	vectoring = false
+	airbrake = 0.0
+	_braking = false
 	_crashed = false
 	_respawn_timer = 0.0
 	_wings_level_requested = false
@@ -180,6 +186,7 @@ func is_crashed() -> bool:
 
 func _physics_process(delta: float) -> void:
 	if _crashed:
+		_update_visual(delta)
 		_respawn_timer -= delta
 		if _respawn_timer <= 0.0:
 			_respawn()
@@ -197,14 +204,13 @@ func _read_controls(delta: float) -> void:
 	var stick := Vector2.ZERO
 	var rudder_axis := 0.0
 	var throttle_axis := 0.0
+	var boost_held := false
 	var gamepad := get_node_or_null("/root/GamepadInput")
 	if gamepad != null and gamepad.is_controller_ready():
 		stick = gamepad.get_flight_vector()
 		rudder_axis = gamepad.get_rudder_axis()
 		throttle_axis = gamepad.get_jet_throttle_axis()
-		vectoring = gamepad.is_vectoring_held()
-	else:
-		vectoring = false
+		boost_held = gamepad.is_vectoring_held()
 	roll_input = stick.x
 	pitch_input = pitch_input_from_stick(stick.y)
 	rudder_input = rudder_axis
@@ -215,6 +221,10 @@ func _read_controls(delta: float) -> void:
 
 	var speed := velocity.length()
 	bank = bank_angle(basis)
+	var level := absf(bank) < deg_to_rad(15.0 if _braking else 10.0) and absf(velocity.normalized().y) < 0.17
+	_braking = boost_held and level and stick.length() < 0.12 and absf(rudder_axis) < 0.12
+	vectoring = boost_held and not _braking
+	airbrake = move_toward(airbrake, 1.0 if _braking else 0.0, delta * 3.0)
 
 	var commanded_roll := ASSIST.commanded_roll_rate(
 		roll_input,
@@ -333,6 +343,8 @@ func _integrate(delta: float) -> void:
 	var thrust := AERO.thrust_acceleration(dry, wet)
 
 	var acceleration := AERO.flight_acceleration(nose, up, velocity, thrust, alpha, falloff)
+	# Drag opposes travel without pitching the nose or changing the throttle.
+	acceleration -= velocity.normalized() * airbrake * minf(35.0, 18.0 * pow(speed / 175.0, 2.0))
 	velocity += acceleration * delta
 	global_position += velocity * delta
 
@@ -441,6 +453,10 @@ func _find_visual() -> void:
 	_stow_landing_gear()
 	JET_VISUALS.clarify_canopy(_visual)
 	_measure_cockpit()
+	if _effects == null:
+		_effects = EFFECTS.new()
+		add_child(_effects)
+		_effects.build(_visual)
 	_attach_fixed_gun_mount()
 	_attach_hardpoints()
 
@@ -611,8 +627,14 @@ func get_muzzle_transform() -> Transform3D:
 
 ## The airframe follows the physical anchor exactly. High-frequency synthetic
 ## buffet and vibration made both the external model and cockpit camera jitter.
-func _update_visual(_delta: float) -> void:
+func _update_visual(delta: float) -> void:
 	if _visual == null:
 		return
 	_visual.position = Vector3.ZERO
 	_visual.rotation = Vector3.ZERO
+	if _effects != null:
+		_effects.update(delta, roll_input, airbrake, engine_afterburner_fraction())
+
+
+func engine_afterburner_fraction() -> float:
+	return 0.0 if _crashed else clampf((_thrust_setting - 1.0) / maxf(afterburner_travel, 0.001), 0.0, 1.0)

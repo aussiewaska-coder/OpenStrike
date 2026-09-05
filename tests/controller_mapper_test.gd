@@ -87,7 +87,7 @@ func _run() -> void:
 	pad.bindings.values.free_look = {"type": "button", "index": JOY_BUTTON_Y}
 	pad.buttons[JOY_BUTTON_Y] = true
 	pad.axes[JOY_AXIS_RIGHT_Y] = -1.0
-	check(pad.is_free_look_held() and pad.get_jet_throttle_axis() > 0.99 and pad.get_jet_look_vector() == Vector2.ZERO, "custom throttle modifier must replace the hardcoded A button")
+	check(pad.is_free_look_held() and pad.get_jet_throttle_axis() == 0.0 and pad.get_jet_look_vector().y < -0.99, "Apache manual aim must not steal jet look or move throttle")
 	pad.bindings.values.flight_right = {"type": "axis", "index": JOY_AXIS_RIGHT_X, "sign": -1}
 	pad.axes[JOY_AXIS_RIGHT_X] = -1.0
 	check(pad.get_flight_vector().x > 0.99, "flight must use a remapped and inverted stick direction")

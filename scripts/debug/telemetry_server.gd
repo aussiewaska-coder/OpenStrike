@@ -25,6 +25,7 @@ var _inbound: Dictionary = {}
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	var error := _server.listen(PORT, "127.0.0.1")
 	if error != OK:
 		push_warning("Telemetry socket could not listen on %d: %d" % [PORT, error])
