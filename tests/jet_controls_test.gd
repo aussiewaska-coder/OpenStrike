@@ -125,7 +125,7 @@ func _step(
 		flight.beta,
 		SIDESLIP_GAIN,
 		RUDDER_RATE
-	)
+	) * AERO.control_authority(speed)
 
 	var weight := 1.0 - exp(-CONTROL_RESPONSE * STEP)
 	flight.roll_rate = lerpf(flight.roll_rate, commanded_roll, weight)

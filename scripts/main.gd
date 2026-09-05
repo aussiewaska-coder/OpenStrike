@@ -10,6 +10,8 @@ const EXTERNAL_AIM_CURSOR := preload("res://scripts/camera/external_aim_cursor.g
 const ARCADE_CAMERA_FEEDBACK := preload("res://scripts/camera/arcade_camera_feedback.gd")
 const TRAIL_RENDERER := preload("res://scripts/effects/trail_renderer.gd")
 const ROCKET_POD := preload("res://scripts/weapons/rocket_pod.gd")
+const MISSILE_LAUNCHER := preload("res://scripts/weapons/missile_launcher.gd")
+const MISSILE_FX := preload("res://scripts/effects/missile_fx.gd")
 const WEAPON_SELECTION := preload("res://scripts/weapons/weapon_selection.gd")
 const DRONE_FIELD := preload("res://scripts/entities/drone_field.gd")
 const RAID_MISSION := preload("res://scripts/entities/raid_mission.gd")
@@ -25,7 +27,6 @@ const BUILDING_DAMAGE := preload("res://scripts/world/building_damage_system.gd"
 const WORLD_HIT := preload("res://scripts/world/world_hit_result.gd")
 const TARGET_TRACKER := preload("res://scripts/targeting/target_tracker.gd")
 const HELMET_HUD := preload("res://scripts/ui/helmet_hud.gd")
-const TOUCH_CONTROLS := preload("res://scripts/ui/touch_controls.gd")
 
 @export_group("Follow Camera")
 @export var camera_height := 150.0
@@ -56,12 +57,13 @@ const TOUCH_CONTROLS := preload("res://scripts/ui/touch_controls.gd")
 @export var destructive_hit_time_scale := 0.08
 
 @export_group("Manual Aim")
-## Cockpit R1 turns the view directly. External R1 moves a virtual sight first;
+## Cockpit A turns the view directly. External A moves a virtual sight first;
 ## the camera only receives overflow after that sight reaches its aim window.
 @export var free_look_yaw_degrees := 130.0
 @export var free_look_pitch_degrees := 55.0
 @export var free_look_speed := 2.4
 @export var free_look_return_response := 6.0
+@export var view_return_duration := 0.85
 @export var jet_external_orbit_yaw_degrees := 180.0
 ## Near-polar, so the orbit is a sphere rather than a band round the waist.
 @export var jet_external_orbit_pitch_degrees := 85.0
@@ -102,7 +104,6 @@ var _mission_label: Label
 var _settings_button: Button
 var _radar: Control
 var _helmet: Control
-var _touch_controls: Control
 var _tracker := TARGET_TRACKER.new()
 ## Enemy squadrons arrive on a timer while the player is flying the jet.
 var _next_squadron_in := 25.0
@@ -137,6 +138,11 @@ var _arcade_camera_feedback := ARCADE_CAMERA_FEEDBACK.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
+var _view_returning := false
+var _view_return_start := Vector2.ZERO
+var _view_return_elapsed := 0.0
+var _view_return_from_tracking := false
+var _view_return_basis := Basis.IDENTITY
 ## Head bob runs on its own clock so it does not reset when a view changes.
 var _cockpit_bob_time := 0.0
 var _weapons := WEAPON_SELECTION.new()
@@ -144,6 +150,11 @@ var _weapons := WEAPON_SELECTION.new()
 ## properties, and a scene entry would only be two more uids to keep in step.
 var _trail_renderer: MeshInstance3D
 var _rocket_pod: Node3D
+var _missile_launcher: Node3D
+var _missile_fx: Node3D
+var _tracking_basis := Basis.IDENTITY
+var _jet_camera_focus := Vector3.ZERO
+var _weapon_label: Label
 var _external_aim := EXTERNAL_AIM_CURSOR.new()
 var _camera_aim_basis := Basis.IDENTITY
 var _hit_stop_serial := 0
@@ -236,11 +247,13 @@ func _process(delta: float) -> void:
 		_save_shot_and_quit()
 	gamepad_diagnostic.text = "%s\n%s" % [GamepadInput.get_diagnostic_text(), _map_diagnostic_text()]
 	_update_rockets(delta)
-	_update_raid(delta)
 	if _camera_follow_enabled:
 		_update_follow_camera(delta)
 		_camera_aim_basis = camera.global_basis
 		_apply_arcade_camera_shake(delta)
+		_update_raid(delta)
+		if _tracker.tracking_view:
+			_camera_aim_basis = camera.global_basis
 		_update_attack_reticle()
 		_update_target_marker()
 
@@ -256,15 +269,27 @@ func _update_rockets(delta: float) -> void:
 			_rocket_pod.hardpoints = jet_anchor.get_hardpoints()
 		_rocket_pod.carrier = jet_anchor
 		_rocket_pod.update(delta, GamepadInput.is_rockets_firing())
+		_missile_launcher.carrier = jet_anchor
+		_missile_launcher.hardpoints = _rocket_pod.hardpoints
+		_missile_launcher.update(delta, GamepadInput.is_rockets_firing())
 	else:
 		# Releasing the trigger on the helicopter must not leave a salvo running.
 		_rocket_pod.update(delta, false)
+		_missile_launcher.update(delta, false)
 	# Live rockets lay smoke wherever they are now. Shells do not: at 625 RPM
 	# they would swamp the segment cap, and there is nothing to see behind a
 	# 30 mm round anyway.
 	for round_data in projectile_manager.active_rounds:
-		if round_data.weapon_source == "rocket":
-			_trail_renderer.push_point(round_data.sequence, round_data.position)
+		if round_data.weapon_source in ["rocket", "missile"]:
+			var ignited: bool = round_data.flight.is_boosting(round_data.age)
+			if ignited:
+				_trail_renderer.push_point(round_data.sequence, round_data.position)
+			elif round_data.age > 0.5:
+				_trail_renderer.end_trail(round_data.sequence)
+	if _weapon_label != null:
+		_weapon_label.text = _weapons.name_of(_weapons.current)
+		if _weapons.current in [WEAPON_SELECTION.Weapon.HEAT, WEAPON_SELECTION.Weapon.RADAR]:
+			_weapon_label.text += "  " + _missile_launcher.status
 
 
 ## What is left on screen while flying: a status line, the raid line, the
@@ -272,7 +297,7 @@ func _update_rockets(delta: float) -> void:
 ## panel showed is in settings now.
 func _build_hud() -> void:
 	var margin := MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	margin.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	margin.add_theme_constant_override("margin_left", 28)
 	margin.add_theme_constant_override("margin_top", 18)
 	margin.add_theme_constant_override("margin_right", 28)
@@ -298,15 +323,13 @@ func _build_hud() -> void:
 	_settings_button.text = "SETTINGS"
 	_settings_button.pressed.connect(_toggle_settings)
 	row.add_child(_settings_button)
+	_weapon_label = Label.new()
+	_weapon_label.text = _weapons.name_of(_weapons.current)
+	_weapon_label.add_theme_color_override("font_color", Color(0.55, 1.0, 0.7))
+	_weapon_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	column.add_child(_weapon_label)
 
-	# Underneath everything, so the scope, the buttons and the settings row all
-	# take their own presses before the stick sees them.
-	_touch_controls = TOUCH_CONTROLS.new()
-	ui_layer.add_child(_touch_controls)
-	ui_layer.move_child(_touch_controls, 0)
-	_touch_controls.view_pressed.connect(_on_touch_view_pressed)
-	_touch_controls.tap_to_lock.connect(_lock_at_screen)
-	# The visor goes in next so the scope and the tape draw over it.
+	# The visor goes in first so the scope and the tape draw over it.
 	_helmet = HELMET_HUD.new()
 	ui_layer.add_child(_helmet)
 	_radar = RADAR_SCOPE.new()
@@ -347,7 +370,9 @@ func _update_raid(delta: float) -> void:
 	if _drone_field == null or not _camera_follow_enabled:
 		return
 	var vehicle := _vehicle()
-	var nose: Vector3 = vehicle.global_basis.x if _flying_jet else -vehicle.global_basis.z
+	# Both airframes use +X for the nose. Instruments follow the displayed
+	# attitude, matching the camera between physics ticks.
+	var nose: Vector3 = vehicle.get_global_transform_interpolated().basis.x
 	_drone_field.update(delta, vehicle.global_position, nose)
 	# Falling wreckage lays smoke through the phase 1 renderer until it is
 	# below the ground, at which point its trail is left to fade.
@@ -395,6 +420,8 @@ func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: fl
 	# boxes is what the pilot is looking at, which is the point of a helmet.
 	var velocity := _vehicle_velocity()
 	_tracker.update(contacts, camera.global_position, -camera.global_basis.z, velocity)
+	# Apply POV tracking before selecting the HUD's visible contact boxes.
+	_apply_target_tracking(delta)
 	var locked: Dictionary = _tracker.locked()
 	_helmet.set_state(
 		camera,
@@ -406,17 +433,19 @@ func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: fl
 			"speed_mps": velocity.length(),
 			"altitude_m": _focus_position().y,
 			"heading_degrees": rad_to_deg(heading),
-			"g_load": 1.0,
+			"g_load": jet_anchor.load_factor if _flying_jet else 1.0,
 			"mach": velocity.length() / 340.0,
 		}
 	)
-	_radar.set_contacts(vehicle.global_position, heading, _tracker.tracked(), _tracker.locked_handle())
+	_radar.set_contacts(vehicle.get_global_transform_interpolated().origin, heading, _tracker.tracked(), _tracker.locked_handle())
 	# The weapons need no wiring of their own: cannon_weapon.aim already reads
 	# `_orbit_target_point`, which already reads `_target_point`. Keeping those
 	# two in step with the lock is the whole integration.
 	if not locked.is_empty():
 		_target_point = locked["position"]
 		_has_target_point = true
+	else:
+		_has_target_point = false
 
 
 ## jet_controller publishes `velocity`; the helicopter does not, so both are
@@ -449,7 +478,7 @@ func _on_weapon_changed(weapon: int) -> void:
 
 ## A rocket that runs out of fuel and range leaves its smoke behind to fade.
 func _on_projectile_expired(round_data: RefCounted) -> void:
-	if _trail_renderer != null and round_data.weapon_source == "rocket":
+	if _trail_renderer != null and round_data.weapon_source in ["rocket", "missile"]:
 		_trail_renderer.end_trail(round_data.sequence)
 
 
@@ -490,6 +519,7 @@ func _set_vehicle_active(anchor: Node3D, active: bool) -> void:
 ## looking at. The jet needs height and speed to exist at all, so it is launched
 ## rather than simply moved.
 func _switch_aircraft() -> void:
+	_tracker.clear_lock()
 	var leaving := _vehicle()
 	var handover := leaving.global_position
 	var heading := 0.0
@@ -537,7 +567,7 @@ func _switch_aircraft() -> void:
 	_refresh_aircraft_button()
 	settings_panel.set_flight_mode_text(_flight_mode_text())
 	settings_panel.set_flight_mode_text(_flight_mode_text())
-	status_label.text = "F-22 -- R1 + RIGHT STICK THROTTLE, L2/R2 RUDDER, R3 LEVEL" if _flying_jet else "AH-64D APACHE"
+	status_label.text = "F-22 -- A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR" if _flying_jet else "AH-64D APACHE"
 
 
 func _bind_cannon_to(vehicle: Node3D) -> void:
@@ -583,6 +613,7 @@ func _on_region_selected(region: Dictionary) -> void:
 ## Every theatre streams. The map cache is checked before the network, so a
 ## theatre already flown loads from disk and needs no signal.
 func _load_streamed_region(region: Dictionary) -> void:
+	_tracker.clear_lock()
 	launcher_field.clear()
 	_hero_towers.clear()
 	streamed_terrain.visible = true
@@ -631,6 +662,11 @@ func _on_streamed_status_changed(message: String) -> void:
 ## Cockpit aim turns the view. External aim updates the target cursor and its
 ## delayed camera catch-up as separate pieces of state.
 func _update_free_look(delta: float) -> void:
+	var manual_look := GamepadInput.get_jet_look_vector() if _flying_jet else (GamepadInput.get_aim_vector() if GamepadInput.is_free_look_held() else Vector2.ZERO)
+	if _flying_jet and _advance_view_return(delta, manual_look):
+		return
+	if _tracker.tracking_view and manual_look.length() > 0.25:
+		_tracker.stop_view_tracking()
 	if _flying_jet:
 		_external_aim.update(Vector2.ZERO, false, delta)
 		var look := GamepadInput.get_jet_look_vector()
@@ -671,8 +707,56 @@ func _free_look_basis(yaw_degrees := -1.0, pitch_degrees := -1.0) -> Basis:
 		return Basis.IDENTITY
 	var yaw_limit := free_look_yaw_degrees if yaw_degrees < 0.0 else yaw_degrees
 	var pitch_limit := free_look_pitch_degrees if pitch_degrees < 0.0 else pitch_degrees
+	if yaw_degrees < 0.0 and pitch_degrees < 0.0:
+		return JET_CAMERA.cockpit_look_basis(
+			deg_to_rad(_free_look.x * yaw_limit), deg_to_rad(_free_look.y * pitch_limit)
+		)
 	return Basis(Vector3.UP, deg_to_rad(_free_look.x * yaw_limit)) \
 		* Basis(Vector3.RIGHT, deg_to_rad(_free_look.y * pitch_limit))
+
+
+func _view_return_weight() -> float:
+	var t := clampf(_view_return_elapsed / maxf(view_return_duration, 0.001), 0.0, 1.0)
+	# Zero velocity and acceleration at both ends: a deliberate head turn.
+	return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+
+func _begin_view_return() -> void:
+	_view_return_from_tracking = _tracker.tracking_view
+	if _view_return_from_tracking:
+		var reference: Basis
+		if _jet_view == JET_CAMERA.Mode.COCKPIT:
+			var frame: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
+			reference = Basis.looking_at(frame.basis.x, frame.basis.y)
+		else:
+			var frame: Transform3D = jet_anchor.get_interpolated_airframe_transform()
+			reference = Basis.looking_at(_look_target - camera.global_position, JET_CAMERA.camera_up(_jet_view, frame.basis.y))
+		_view_return_basis = reference.inverse() * camera.global_basis
+	_tracker.stop_view_tracking()
+	_view_return_start = _free_look
+	_view_return_elapsed = 0.0
+	_view_returning = true
+
+
+func _advance_view_return(delta: float, manual_look: Vector2) -> bool:
+	if not _view_returning:
+		return false
+	if not manual_look.is_zero_approx():
+		if _view_return_from_tracking and _jet_view == JET_CAMERA.Mode.COCKPIT:
+			var frame: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
+			var local: Vector3 = Basis.looking_at(frame.basis.x, frame.basis.y).inverse() * -camera.global_basis.z
+			_free_look = Vector2(
+				atan2(-local.x, -local.z) / deg_to_rad(free_look_yaw_degrees),
+				asin(clampf(local.y, -1.0, 1.0)) / deg_to_rad(free_look_pitch_degrees)
+			).clamp(Vector2(-1, -1), Vector2.ONE)
+		_view_returning = false
+		return false
+	_view_return_elapsed += delta
+	_free_look = _view_return_start.lerp(Vector2.ZERO, _view_return_weight())
+	if _view_return_elapsed >= view_return_duration:
+		_free_look = Vector2.ZERO
+		_view_returning = false
+	return true
 
 
 func _external_camera_aim_basis() -> Basis:
@@ -745,13 +829,17 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 			speed_fraction
 		)
 		camera.global_position = cockpit.origin
+		var head_basis := _free_look_basis()
+		if _view_returning and _view_return_from_tracking:
+			head_basis = _view_return_basis.slerp(Basis.IDENTITY, _view_return_weight())
 		camera.global_basis = Basis.looking_at(cockpit.basis.x, cockpit.basis.y) \
-			* _free_look_basis() \
+			* head_basis \
 			* Basis.from_euler(Vector3(deg_to_rad(bob.x), 0.0, deg_to_rad(bob.y)))
 		camera.fov = JET_CAMERA.field_of_view(
 			_jet_view, _camera_zoom, speed_fraction, camera_zoom_max
 		)
 		_look_target = cockpit.origin + cockpit.basis.x * 100.0
+		_jet_camera_focus = _focus_position()
 		return
 
 	var focus := _focus_position()
@@ -778,16 +866,16 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		height
 	)
 	if JET_CAMERA.allows_free_look(_jet_view) and not _free_look.is_zero_approx():
+		var orbit_frame := Basis.looking_at(direction, Vector3.UP)
 		desired_position = JET_CAMERA.external_orbit_position(
 			_jet_view,
 			focus,
 			desired_position,
-			_free_look_basis(jet_external_orbit_yaw_degrees, jet_external_orbit_pitch_degrees),
+			orbit_frame * _free_look_basis(jet_external_orbit_yaw_degrees, jet_external_orbit_pitch_degrees) * orbit_frame.inverse(),
 			_free_look
 		)
-	desired_position.y = maxf(
-		desired_position.y,
-		_ground_height_at(desired_position) + camera_ground_clearance
+	desired_position = JET_CAMERA.clear_orbit_position(
+		focus, desired_position, _ground_height_at(desired_position) + camera_ground_clearance
 	)
 	var desired_look := JET_CAMERA.look_target(
 		_jet_view,
@@ -796,9 +884,9 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 		direction,
 		distance
 	)
-	# The aim point keeps its velocity lead all the way round the sphere. Sliding
-	# it onto the aircraft as the player orbited was half of what made the old
-	# 360 feel warped; orbiting should move the camera, not re-frame the shot.
+	# The aircraft is the orbit pivot and stays in frame at every azimuth.
+	if JET_CAMERA.allows_free_look(_jet_view):
+		desired_look = focus
 	var target_fov := JET_CAMERA.field_of_view(
 		_jet_view, _camera_zoom, speed_fraction, camera_zoom_max
 	)
@@ -809,11 +897,24 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 	else:
 		var position_weight := 1.0 - exp(-JET_CAMERA.position_response(_jet_view) * delta)
 		var aim_weight := 1.0 - exp(-JET_CAMERA.aim_response(_jet_view) * delta)
-		camera.global_position = camera.global_position.lerp(desired_position, position_weight)
+		if JET_CAMERA.allows_free_look(_jet_view):
+			camera.global_position = focus + JET_CAMERA.smooth_orbit_offset(
+				camera.global_position - _jet_camera_focus, desired_position - focus, position_weight
+			)
+		else:
+			camera.global_position = camera.global_position.lerp(desired_position, position_weight)
 		_look_target = _look_target.lerp(desired_look, aim_weight)
 		camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-camera_mode_response * delta))
+	_jet_camera_focus = focus
+	if JET_CAMERA.allows_free_look(_jet_view):
+		_look_target = focus
+	camera.global_position = JET_CAMERA.clear_orbit_position(
+		focus, camera.global_position, _ground_height_at(camera.global_position) + camera_ground_clearance
+	)
 	if camera.global_position.distance_squared_to(_look_target) > 0.0001:
 		camera.look_at(_look_target, JET_CAMERA.camera_up(_jet_view, airframe.basis.y))
+		if _view_returning and _view_return_from_tracking:
+			camera.global_basis *= _view_return_basis.slerp(Basis.IDENTITY, _view_return_weight())
 
 
 ## In travel view L2/R2 sweep around a locked ground point instead of steering
@@ -1145,8 +1246,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	_lock_at_screen(screen)
 
 
-## Reached from a bare screen press and from the touch layer's tap, which is the
-## same gesture arriving by a different road.
+## A screen press locks a target independently of the gamepad flight controls.
 func _lock_at_screen(screen: Vector2) -> void:
 	if not _camera_follow_enabled:
 		return
@@ -1162,7 +1262,7 @@ func _lock_at_screen(screen: Vector2) -> void:
 	# lock asks it rather than growing a second opinion about what was struck.
 	if _hit_query != null:
 		var world: RefCounted = _hit_query.query_segment(origin, origin + direction * 12000.0)
-		if world.hit and world.object_type == WORLD_HIT.ObjectKind.BUILDING:
+		if world != null and world.hit and world.object_type == WORLD_HIT.ObjectKind.BUILDING:
 			point = world.position
 			kind = TARGET_TRACKER.Kind.BUILDING
 			target_name = "BUILDING"
@@ -1183,14 +1283,6 @@ func _lock_at_screen(screen: Vector2) -> void:
 	status_label.text = "LOCK %s  %d m" % [HELMET_HUD.kind_label(int(locked["kind"])), range_m]
 
 
-## The VIEW button cycles whichever set of views the current aircraft has.
-func _on_touch_view_pressed() -> void:
-	if _flying_jet:
-		_cycle_jet_view(1)
-	else:
-		_cycle_view()
-
-
 func _update_target_marker() -> void:
 	if not _has_target_point:
 		attack_reticle.clear_target()
@@ -1209,7 +1301,7 @@ func _update_target_marker() -> void:
 ## of the zoom blend, so it fades in exactly as the camera drops low.
 func _update_attack_reticle() -> void:
 	# The cockpit has no panel, so the sight and the instruments are always up.
-	# Held R1 is also always a weapon view: the movable sight marks the manual
+	# Held A is also always a weapon view: the movable sight marks the manual
 	# ray while the pipper shows where the traversing barrel will land.
 	attack_reticle.set_jet_throttle(
 		_flying_jet,
@@ -1275,6 +1367,7 @@ func _is_cockpit_view() -> bool:
 
 
 func _snap_follow_camera() -> void:
+	_view_returning = false
 	_release_orbit_lock()
 	if _flying_jet:
 		_update_jet_camera(0.0, true)
@@ -1304,7 +1397,7 @@ func _apply_follow_camera(delta: float, snap: bool = false) -> void:
 		_ground_height_at(desired_position) + camera_ground_clearance
 	)
 	if not _flying_jet and not _external_aim.camera_offset.is_zero_approx():
-		# External R1 is manual aim: rotate the view ray, not the camera boom.
+		# External A is manual aim: rotate the view ray, not the camera boom.
 		# Recompute from the authored target every frame so a held angle is stable.
 		desired_look = EXTERNAL_FREE_LOOK.look_target(
 			desired_position,
@@ -1367,19 +1460,31 @@ func _apply_arcade_camera_shake(delta: float) -> void:
 
 
 func _on_gamepad_action_pressed(action: StringName) -> void:
-	if action == GamepadInput.ACTION_ZOOM_IN:
+	if action == GamepadInput.ACTION_TRACK_TARGET:
+		_track_looked_at_target()
+	elif action == GamepadInput.ACTION_ZOOM_IN:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, true, camera_zoom_max)
 	elif action == GamepadInput.ACTION_ZOOM_OUT:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
+		if _tracker.tracking_view:
+			if _flying_jet:
+				_begin_view_return()
+			else:
+				_tracker.stop_view_tracking()
+				_free_look = Vector2.ZERO
+			status_label.text = "TRACKING OFF -- WEAPON LOCK RETAINED"
+			return
 		if _flying_jet:
+			if _view_returning:
+				return
 			# R3 straightens whatever is crooked, nearest first. A turned head
 			# is the more urgent of the two -- and you cannot judge a wings-level
 			# recovery while looking at your own tailplane anyway -- so the view
 			# comes back before the aircraft does.
 			if JET_CAMERA.is_look_displaced(_free_look):
-				_free_look = Vector2.ZERO
-				status_label.text = "VIEW CENTRED"
+				_begin_view_return()
+				status_label.text = "RETURNING VIEW FORWARD"
 			else:
 				var accepted: bool = jet_anchor.request_wings_level()
 				status_label.text = "WINGS LEVEL" if accepted else "WINGS LEVEL UNAVAILABLE"
@@ -1392,8 +1497,51 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 	# Settings is no longer a press: it is the hold half of X, handled in
 	# _on_gamepad_action_released. The on-screen SETTINGS button still calls
 	# _toggle_settings directly.
-	elif action == GamepadInput.ACTION_THEATRE_CYCLE:
-		LocationService.cycle_region()
+
+
+func _track_looked_at_target() -> void:
+	if not _camera_follow_enabled:
+		return
+	var visible: Array[int] = []
+	var viewport_rect := camera.get_viewport().get_visible_rect()
+	for c in _tracker.tracked():
+		if not camera.is_position_behind(c.position) and viewport_rect.has_point(camera.unproject_position(c.position)):
+			visible.append(int(c.handle))
+	var handle := _tracker.cycle_view_lock(visible, camera.global_position, -camera.global_basis.z)
+	if handle == -1:
+		status_label.text = "NO TARGET IN VIEW CLUSTER"
+		return
+	_view_returning = false
+	_tracking_basis = camera.global_basis
+	_has_target_point = true
+	_target_point = _tracker.locked().position
+	status_label.text = "TRACKING %s -- R1 NEXT IN CLUSTER" % _tracker.locked().get("name", "TARGET")
+
+
+func _apply_target_tracking(delta: float) -> void:
+	if not _tracker.tracking_view:
+		return
+	var c := _tracker.locked()
+	if c.is_empty():
+		_tracker.stop_view_tracking()
+		return
+	var offset: Vector3 = c.position - camera.global_position
+	if offset.length_squared() < 0.01:
+		return
+	var reference := Basis.IDENTITY
+	var cockpit_view := _is_cockpit_view()
+	if cockpit_view and _vehicle() != null:
+		if _flying_jet:
+			var frame: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
+			reference = Basis.looking_at(frame.basis.x, frame.basis.y)
+		else:
+			var vehicle := _vehicle()
+			var frame: Transform3D = vehicle.get_cockpit_transform() if vehicle.has_method("get_cockpit_transform") else vehicle.global_transform
+			reference = Basis.looking_at(frame.basis.x, frame.basis.y)
+	var wanted := JET_CAMERA.tracking_basis(offset, reference, _tracking_basis, cockpit_view)
+	_tracking_basis = _tracking_basis.slerp(wanted, 1.0 - exp(-12.0 * delta)).orthonormalized()
+	camera.global_basis = _tracking_basis
+	_tracker.update_view(camera.global_position, -camera.global_basis.z, _vehicle_velocity())
 
 
 ## Arcade is pick-up-and-fly: the stick sets a speed and the aircraft holds its
@@ -1503,6 +1651,7 @@ func _cycle_view() -> void:
 
 
 func _cycle_jet_view(direction: int) -> void:
+	_tracker.stop_view_tracking()
 	var count := JET_CAMERA.Mode.size()
 	_jet_view = posmod(_jet_view + direction, count)
 	_free_look = Vector2.ZERO
@@ -1542,11 +1691,12 @@ func _on_controller_attention_changed(required: bool, title: String, detail: Str
 
 
 func _on_jet_crashed(_point: Vector3) -> void:
+	_tracker.clear_lock()
 	status_label.text = "IMPACT -- RECOVERING"
 
 
 func _on_jet_respawned() -> void:
-	status_label.text = "AIRBORNE -- R1 + RIGHT STICK THROTTLE, L2/R2 RUDDER"
+	status_label.text = "AIRBORNE -- A THROTTLE, R1 TRACK, L2/R2 RUDDER, BOTH VECTOR"
 	_snap_follow_camera()
 
 
@@ -1570,6 +1720,7 @@ func _wire_cannon_systems() -> void:
 	add_child(_drone_field)
 	_drone_field.projectile_manager = projectile_manager
 	_hit_query.secondary_entity_index = _drone_field
+	_hit_query.additional_entity_indices.append(enemy_squadron)
 	_building_damage = BUILDING_DAMAGE.new()
 	_building_damage.building_index = _building_hit_index
 	_drone_field.building_index = _building_hit_index
@@ -1607,6 +1758,16 @@ func _wire_cannon_systems() -> void:
 	_rocket_pod.selection = _weapons
 	_rocket_pod.rocket_fired.connect(_on_rocket_fired)
 	_rocket_pod.magazine_changed.connect(_on_magazine_changed)
+	_missile_launcher = MISSILE_LAUNCHER.new()
+	_missile_launcher.name = "MissileLauncher"
+	add_child(_missile_launcher)
+	_missile_launcher.projectile_manager = projectile_manager
+	_missile_launcher.selection = _weapons
+	_missile_launcher.tracker = _tracker
+	_missile_launcher.missile_fired.connect(_on_rocket_fired)
+	_missile_fx = MISSILE_FX.new()
+	_missile_fx.projectile_manager = projectile_manager
+	add_child(_missile_fx)
 	_weapons.changed.connect(_on_weapon_changed)
 	projectile_manager.projectile_expired.connect(_on_projectile_expired)
 
@@ -1628,23 +1789,21 @@ func _on_chunk_buildings_released(chunk_key: int) -> void:
 		_building_hit_index.remove_chunk(chunk_key)
 
 
-## A selected orbit point remains the automatic gun target whenever direct R1
-## aim is not held. CannonAim gives the manual look provider priority.
+## The tracker owns weapon lock for both tap and R1 selection. Reading the
+## vehicle's orbit point instead leaves the turret aiming at a moving target's
+## old tap position. CannonAim still gives held A manual aim priority.
 func _orbit_target_point() -> Variant:
-	var vehicle := _vehicle()
-	if vehicle != null and "has_orbit_target" in vehicle and vehicle.has_orbit_target:
-		return vehicle.orbit_target
-	return null
+	return _tracker.locked_position()
 
 
-## While R1 is held the gun chases the manual sight ray. Returns null otherwise,
+## While A is held the gun chases the manual sight ray. Returns null otherwise,
 ## allowing the selected orbit target or forward aim to resume.
 func _free_look_aim_point() -> Variant:
 	if _flying_jet or camera == null or not GamepadInput.is_free_look_held():
 		return null
 	var origin := camera.global_position
 	# Camera shake is presentation only. Aim through the stable basis captured
-	# before shake so recoil cannot walk the player's held R1 aim off target.
+	# before shake so recoil cannot walk the player's held A aim off target.
 	var forward := -_camera_aim_basis.z.normalized()
 	if _view != View.COCKPIT:
 		var viewport_size := camera.get_viewport().get_visible_rect().size
@@ -1685,10 +1844,12 @@ func _play_destructive_hit_stop() -> void:
 
 
 func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> void:
-	if _trail_renderer != null and round_data.weapon_source == "rocket":
+	if _trail_renderer != null and round_data.weapon_source in ["rocket", "missile"]:
 		_trail_renderer.end_trail(round_data.sequence)
 	if impact_fx != null:
 		impact_fx.spawn_impact(hit_result, round_data)
+		if round_data.weapon_source == "missile" and hit_result.object_type != WORLD_HIT.ObjectKind.ENTITY:
+			impact_fx.spawn_explosion(hit_result.position)
 	var destructive: bool = hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY
 	attack_reticle.show_hit_confirm(destructive)
 	_arcade_camera_feedback.add_impact(camera.global_position.distance_to(hit_result.position), destructive)
@@ -1696,11 +1857,15 @@ func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> 
 	if hit_result.object_type == WORLD_HIT.ObjectKind.BUILDING and _building_damage != null:
 		_building_damage.apply_hit(hit_result, round_data)
 	elif hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY:
-		# The two fields have disjoint id spaces, so whichever claims the id
+		# The fields have disjoint id spaces, so whichever claims the id
 		# is the one that was hit. A bomb striking its own drone is refused
 		# by weapon_source, or drones would shoot themselves down.
 		var explosion_position: Variant = null
-		if hit_result.object_id >= DRONE_FIELD.FIRST_ID:
+		if hit_result.object_id >= enemy_squadron.FIRST_ID:
+			var destroyed = enemy_squadron.destroy_jet(hit_result.object_id)
+			if destroyed != null:
+				explosion_position = destroyed.position
+		elif hit_result.object_id >= DRONE_FIELD.FIRST_ID:
 			if round_data.weapon_source != "bomb":
 				explosion_position = _drone_field.destroy_drone(hit_result.object_id)
 				if explosion_position is Vector3:
@@ -1710,5 +1875,8 @@ func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> 
 		else:
 			explosion_position = launcher_field.destroy_launcher(hit_result.object_id)
 		if explosion_position is Vector3:
+			_tracker.remove_contact(hit_result.object_id)
+			if _tracker.locked().is_empty():
+				_has_target_point = false
 			impact_fx.spawn_explosion(explosion_position)
 			_play_destructive_hit_stop()

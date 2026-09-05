@@ -168,7 +168,7 @@ func _begin_evasion(player_position: Vector3, player_nose: Vector3) -> void:
 	# sign of the cross product of nose and approach says which side of the
 	# nose the drone is already on; going further that way is "away".
 	var approach := position - player_position
-	var cross_y := player_nose.x * approach.z - player_nose.z * approach.x
+	var cross_y := player_nose.z * approach.x - player_nose.x * approach.z
 	break_sign = 1.0 if cross_y >= 0.0 else -1.0
 
 

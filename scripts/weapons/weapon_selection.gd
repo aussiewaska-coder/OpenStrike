@@ -1,15 +1,13 @@
 extends RefCounted
 
-## Which weapon the trigger belongs to. Deliberately ignorant of the weapons
-## themselves: adding phase 3's guided missiles means adding one enum entry.
+## Which secondary weapon L1 fires. L3 remains the cannon in every selection.
 ##
-## Selection gates rather than rebinds. The cannon keeps L3 and the rockets keep
-## L1, and the selector decides which one is live, so a wrong selection shows up
-## as a weapon that will not fire rather than as a trigger that does nothing.
+## Selection gates rather than rebinds: missile and rocket launchers each
+## consult the same state, so one press cannot launch both.
 
 signal changed(weapon: int)
 
-enum Weapon {CANNON, ROCKETS}
+enum Weapon {CANNON, ROCKETS, HEAT, RADAR}
 
 var current: int = Weapon.CANNON
 
@@ -26,4 +24,8 @@ func name_of(weapon: int) -> String:
 			return "20MM"
 		Weapon.ROCKETS:
 			return "ROCKETS"
+		Weapon.HEAT:
+			return "HEAT SEEKER"
+		Weapon.RADAR:
+			return "RADAR MISSILE"
 	return "UNKNOWN"

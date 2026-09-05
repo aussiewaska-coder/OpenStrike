@@ -10,6 +10,8 @@ signal action_released(action: StringName, held_seconds: float)
 const DEAD_ZONE := 0.18
 const RESPONSE_EXPONENT := 1.0
 const TRIGGER_DEAD_ZONE := 0.04
+const VECTORING_PRESS := 0.55
+const VECTORING_RELEASE := 0.40
 
 const ACTION_FLIGHT_LEFT := &"flight_left"
 const ACTION_FLIGHT_RIGHT := &"flight_right"
@@ -38,9 +40,10 @@ const ACTION_WEAPON_CYCLE := &"weapon_cycle"
 const SETTINGS_HOLD_SECONDS := 0.45
 ## B is the only face button the existing scheme leaves free.
 const ACTION_SWITCH_AIRCRAFT := &"switch_aircraft"
-## On the helicopter R1 retains manual aim. On the F-22 it modifies the right
+## On the helicopter A retains manual aim. On the F-22 it modifies the right
 ## stick into a persistent throttle control.
 const ACTION_FREE_LOOK := &"free_look"
+const ACTION_TRACK_TARGET := &"track_target"
 const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
 const ACTION_RUDDER_LEFT := &"rudder_left"
@@ -54,14 +57,8 @@ const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_ZOOM_IN,
 	ACTION_ZOOM_OUT,
 	ACTION_WEAPON_CYCLE,
+	ACTION_TRACK_TARGET,
 ]
-
-## The on-screen stick standing in for a gamepad. The flight and camera code
-## never learn about touch: they ask the same questions and get answers in the
-## same units, with the same signs, through the same two raw vectors.
-var touch_mode := false
-var virtual_flight := Vector2.ZERO
-var virtual_aim := Vector2.ZERO
 
 var active_device := -1
 var active_device_name := ""
@@ -72,6 +69,7 @@ var _paused_for_controller := false
 var _hold_started: Dictionary = {}
 var _left_trigger_rest := 0.0
 var _right_trigger_rest := 0.0
+var _vectoring_held := false
 
 
 func _ready() -> void:
@@ -104,30 +102,7 @@ static func is_hold(held_seconds: float) -> bool:
 
 
 func is_controller_ready() -> bool:
-	return touch_mode or has_real_controller()
-
-
-## Deliberately distinct from `is_controller_ready`: the disconnect overlay and
-## the on-screen stick both need to know whether real hardware is attached, and
-## touch mode must never masquerade as hardware.
-func has_real_controller() -> bool:
 	return active_device >= 0 and active_device in Input.get_connected_joypads()
-
-
-## Turning touch mode on lifts the "connect a controller" pause, which would
-## otherwise freeze the game before a thumb could reach the screen.
-func set_touch_mode(enabled: bool) -> void:
-	if touch_mode == enabled:
-		return
-	touch_mode = enabled
-	if not enabled:
-		return
-	virtual_flight = Vector2.ZERO
-	virtual_aim = Vector2.ZERO
-	if _paused_for_controller:
-		get_tree().paused = false
-		_paused_for_controller = false
-	controller_attention_changed.emit(false, "", "")
 
 
 func get_flight_vector() -> Vector2:
@@ -143,8 +118,8 @@ func get_aim_vector() -> Vector2:
 
 
 func get_raw_flight_vector() -> Vector2:
-	if not has_real_controller():
-		return virtual_flight if touch_mode else Vector2.ZERO
+	if not is_controller_ready():
+		return Vector2.ZERO
 	return Vector2(
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_LEFT_X),
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_LEFT_Y)
@@ -152,8 +127,8 @@ func get_raw_flight_vector() -> Vector2:
 
 
 func get_raw_aim_vector() -> Vector2:
-	if not has_real_controller():
-		return virtual_aim if touch_mode else Vector2.ZERO
+	if not is_controller_ready():
+		return Vector2.ZERO
 	return Vector2(
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_RIGHT_X),
 		Input.get_joy_axis(active_device, JoyAxis.JOY_AXIS_RIGHT_Y)
@@ -182,22 +157,30 @@ static func route_aim_input_to_flight(aim_input: Vector2, free_look_held: bool) 
 func is_free_look_held() -> bool:
 	return is_controller_ready() and Input.is_joy_button_pressed(
 		active_device,
-		JoyButton.JOY_BUTTON_RIGHT_SHOULDER
+		JoyButton.JOY_BUTTON_A
 	)
 
 
-## R1 turns right-stick vertical motion into a rate that moves the persistent
+## A turns right-stick vertical motion into a rate that moves the persistent
 ## throttle from its current position. Stick up opens it; stick down closes it.
 func get_jet_throttle_axis() -> float:
 	return jet_throttle_axis(get_aim_vector(), is_free_look_held())
 
 
-## The same R1 that claims the right stick for throttle also hands the nose to
-## the vectoring nozzles on the LEFT stick. The two never collide because they
-## read different sticks, which is why this is the same button rather than one
-## of the none that were left.
+## Squeezing both rudder triggers engages the post-stall pitch envelope.
+## Separate press/release thresholds prevent noisy trigger readings flickering
+## the limiter. Unequal pressure still supplies differential rudder.
 func is_vectoring_held() -> bool:
-	return is_free_look_held()
+	if not is_controller_ready():
+		_vectoring_held = false
+		return false
+	var raw := get_raw_trigger_vector()
+	var pressure := minf(
+		normalized_trigger(raw.x, _left_trigger_rest),
+		normalized_trigger(raw.y, _right_trigger_rest)
+	)
+	_vectoring_held = pressure >= (VECTORING_RELEASE if _vectoring_held else VECTORING_PRESS)
+	return _vectoring_held
 
 
 func get_jet_look_vector() -> Vector2:
@@ -339,6 +322,7 @@ func _on_joy_connection_changed(device: int, connected: bool) -> void:
 
 
 func _set_active_controller(device: int) -> void:
+	_vectoring_held = false
 	active_device = device
 	active_device_name = Input.get_joy_name(device)
 	active_device_guid = Input.get_joy_guid(device)
@@ -353,21 +337,12 @@ func _set_active_controller(device: int) -> void:
 
 
 func _clear_controller(disconnected_during_play: bool) -> void:
+	_vectoring_held = false
 	active_device = -1
 	active_device_name = ""
 	active_device_guid = ""
 	connection_changed.emit(false, -1, "")
-	# Never had a pad at all: fall back to the on-screen stick rather than
-	# demanding hardware. This decision belongs HERE and not in the touch layer,
-	# because pausing freezes the very node that would have turned touch on --
-	# a paused tree stops `_process` and `_gui_input`, so the game could not
-	# rescue itself and the overlay stayed up forever.
-	if not disconnected_during_play and not _had_controller:
-		set_touch_mode(true)
-		return
-	# A pad that WAS there and went away still pauses, which is the behaviour
-	# the disconnect overlay exists for -- unless a thumb is already flying it.
-	var must_pause := not touch_mode
+	var must_pause := OS.get_name() == "Android" or disconnected_during_play or _had_controller
 	if must_pause:
 		_paused_for_controller = true
 		get_tree().paused = true
@@ -402,15 +377,15 @@ func _register_input_actions() -> void:
 	# on-screen SETTINGS button calls the panel directly, so a mistimed hold can
 	# never lock anyone out of it.
 	_add_button_action(ACTION_WEAPON_CYCLE, JoyButton.JOY_BUTTON_X)
-	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
-	# The cannon moves off R1, which is now free look. Nothing fires yet, so
-	# this costs nothing today.
+	_add_button_action(ACTION_FREE_LOOK, JoyButton.JOY_BUTTON_A)
+	_add_button_action(ACTION_TRACK_TARGET, JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	# L3: the only button reachable without releasing either stick, so the gun
-	# fires while the player is still flying and holding R1 to aim.
+	# fires while the player is still flying and holding A to aim.
 	_add_button_action(ACTION_CANNON, JoyButton.JOY_BUTTON_LEFT_STICK)
 	_add_button_action(ACTION_ROCKETS, JoyButton.JOY_BUTTON_LEFT_SHOULDER)
 	_add_button_action(ACTION_CAMERA_TRAVEL_TOGGLE, JoyButton.JOY_BUTTON_RIGHT_STICK)
-	# Displaced from L3 by the cannon; A is the slot the cannon vacated.
+	# Reserved context action; no active flight handler. A routes manual view
+	# (helicopter) or throttle (jet).
 	_add_button_action(ACTION_CONTEXT, JoyButton.JOY_BUTTON_A)
 	_add_button_action(ACTION_TARGET_PREVIOUS, JoyButton.JOY_BUTTON_DPAD_LEFT)
 	_add_button_action(ACTION_TARGET_NEXT, JoyButton.JOY_BUTTON_DPAD_RIGHT)

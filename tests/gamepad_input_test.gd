@@ -37,7 +37,8 @@ func _run() -> void:
 	# no longer bound to a button -- main.gd raises it from the hold, and the
 	# on-screen SETTINGS button still emits it.
 	_assert_button(&"weapon_cycle", JoyButton.JOY_BUTTON_X)
-	_assert_button(&"free_look", JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
+	_assert_button(&"free_look", JoyButton.JOY_BUTTON_A)
+	_assert_button(&"track_target", JoyButton.JOY_BUTTON_RIGHT_SHOULDER)
 	_assert_button(&"weapon_cannon", JoyButton.JOY_BUTTON_LEFT_STICK)
 	_assert_button(&"weapon_rockets", JoyButton.JOY_BUTTON_LEFT_SHOULDER)
 	_assert_button(&"camera_travel_toggle", JoyButton.JOY_BUTTON_RIGHT_STICK)
@@ -69,20 +70,20 @@ func _run() -> void:
 	)
 	assert(
 		is_equal_approx(service.jet_throttle_axis(Vector2(0.25, -0.75), true), 0.75),
-		"R1 plus right-stick up must open the persistent jet throttle"
+		"A plus right-stick up must open the persistent jet throttle"
 	)
 	assert(
 		is_equal_approx(service.jet_throttle_axis(Vector2(0.25, 0.6), true), -0.6),
-		"R1 plus right-stick down must close the persistent jet throttle"
+		"A plus right-stick down must close the persistent jet throttle"
 	)
 	assert(service.jet_throttle_axis(Vector2.UP, false) == 0.0)
 	assert(
 		service.jet_look_vector(Vector2(0.5, -0.75), true) == Vector2.ZERO,
-		"the camera must not move while R1 routes the stick to throttle"
+		"the camera must not move while A routes the stick to throttle"
 	)
 	assert(
 		service.jet_look_vector(Vector2(0.5, -0.75), false).is_equal_approx(Vector2(0.5, -0.75)),
-		"right-stick look resumes when R1 is released"
+		"right-stick look resumes when A is released"
 	)
 	assert(service.normalized_trigger(0.0, 0.0) == 0.0)
 	assert(service.normalized_trigger(-1.0, -1.0) == 0.0)

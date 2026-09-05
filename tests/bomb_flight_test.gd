@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## A bomb is a shell with no muzzle: it leaves at the carrier's speed and falls.
 ## Nothing here thrusts, which is the whole difference from a rocket.
 
@@ -18,7 +20,7 @@ func _init() -> void:
 	var after: Vector3 = stepped[1]
 	if after.y >= 0.0:
 		_fail("a bomb must fall, got vy %f" % after.y)
-	if after.z > carried.z + 0.001:
+	if after.dot(carried.normalized()) > carried.length() + 0.001:
 		_fail("a bomb must not accelerate forward, got vz %f" % after.z)
 	if absf(after.z) > absf(carried.z) + 0.001:
 		_fail("drag must not add speed")
@@ -34,10 +36,13 @@ func _init() -> void:
 	if float(profile.structural_damage) >= 420.0:
 		_fail("a facade strike alone must NOT reach the smoke threshold, or every bomb smokes")
 
+	if _test_failed:
+		return
 	print("BOMB_FLIGHT_TEST_PASS")
 	quit()
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)

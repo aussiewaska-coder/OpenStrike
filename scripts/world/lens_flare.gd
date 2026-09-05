@@ -24,7 +24,7 @@ func _ready() -> void:
 	_rect = ColorRect.new()
 	_rect.name = "LensFlareRect"
 	_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_material = ShaderMaterial.new()
 	_material.shader = FLARE_SHADER
 	_rect.material = _material
@@ -39,7 +39,8 @@ func _process(_delta: float) -> void:
 	if _camera == null or _sun == null:
 		_material.set_shader_parameter("strength", 0.0)
 		return
-	var towards_sun := -_sun.global_transform.basis.z
+	# A directional light shines along -Z; its source is in the +Z direction.
+	var towards_sun := _sun.global_transform.basis.z
 	var strength := 0.0
 	var sun_uv := Vector2(0.5, 0.5)
 	if towards_sun.y > 0.0:

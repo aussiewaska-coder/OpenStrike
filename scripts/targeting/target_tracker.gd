@@ -28,6 +28,10 @@ var _origin_velocity := Vector3.ZERO
 var _forward := Vector3.FORWARD
 var _locked_handle := -1
 var _locked_fallback := {}
+var tracking_view := false
+var _view_cluster: Array[int] = []
+const CLUSTER_ANGLE := 14.0
+const CLUSTER_SPACING_M := 3500.0
 
 
 static func contact(
@@ -57,13 +61,17 @@ func range_m() -> float:
 ## The contact set is replaced wholesale each frame: the sources are the truth,
 ## and a contact that stopped being reported has stopped existing.
 func update(contacts: Array, origin: Vector3, forward: Vector3, origin_velocity: Vector3) -> void:
-	_origin = origin
-	_origin_velocity = origin_velocity
-	_forward = forward.normalized() if forward.length_squared() > 1e-9 else Vector3.FORWARD
+	update_view(origin, forward, origin_velocity)
 	_contacts.clear()
 	for c in contacts:
 		_contacts[int(c["handle"])] = c
 	_refresh_lock()
+
+
+func update_view(origin: Vector3, forward: Vector3, origin_velocity: Vector3) -> void:
+	_origin = origin
+	_origin_velocity = origin_velocity
+	_forward = forward.normalized() if forward.length_squared() > 1e-9 else Vector3.FORWARD
 
 
 ## All-aspect, nearest first. What the scope draws.
@@ -123,6 +131,7 @@ func locked_position():
 
 
 func clear_lock() -> void:
+	stop_view_tracking()
 	_locked_handle = -1
 	_locked_fallback = {}
 
@@ -137,6 +146,7 @@ func lock_at(
 	fallback_kind: int,
 	fallback_name: String
 ) -> int:
+	stop_view_tracking()
 	var direction := ray_direction.normalized()
 	var best := -1
 	var best_angle := deg_to_rad(LOCK_TOLERANCE_DEGREES)
@@ -164,6 +174,7 @@ func lock_at(
 
 ## For the controller, which has no screen to press.
 func cycle_lock() -> int:
+	stop_view_tracking()
 	var list := tracked()
 	if list.is_empty():
 		clear_lock()
@@ -176,6 +187,65 @@ func cycle_lock() -> int:
 	_locked_fallback = {}
 	_locked_handle = int(list[(index + 1) % list.size()]["handle"])
 	return _locked_handle
+
+
+func contact_for(handle: int) -> Dictionary:
+	return _contacts.get(handle, {})
+
+
+## Damage can land between contact refreshes. Retire it before another camera
+## or seeker update can consume the last live snapshot.
+func remove_contact(handle: int) -> void:
+	_contacts.erase(handle)
+	_view_cluster.erase(handle)
+	if _locked_handle == handle:
+		clear_lock()
+
+
+func stop_view_tracking() -> void:
+	tracking_view = false
+	_view_cluster.clear()
+
+
+## visible_handles comes from the actual camera frustum. Capture a squadron
+## around the first looked-at contact so repeated presses cannot walk around
+## the entire world as the tracking camera turns.
+func cycle_view_lock(visible_handles: Array, origin: Vector3, forward: Vector3) -> int:
+	var visible: Array = []
+	for handle in visible_handles:
+		var c := contact_for(int(handle))
+		if not c.is_empty() and forward.dot((c.position as Vector3) - origin) > 0.0:
+			visible.append(c)
+	if visible.is_empty():
+		return -1
+	if not tracking_view:
+		visible.sort_custom(func(a, b): return forward.angle_to(a.position - origin) < forward.angle_to(b.position - origin))
+		var seed: Dictionary = visible[0]
+		_view_cluster.clear()
+		for c in visible:
+			var nearby: bool = (c.position as Vector3).distance_to(seed.position) <= CLUSTER_SPACING_M
+			var same_patch: bool = (seed.position - origin).angle_to(c.position - origin) <= deg_to_rad(CLUSTER_ANGLE)
+			if int(c.handle) == int(seed.handle) or (is_airborne(seed) and is_airborne(c) and nearby and same_patch):
+				_view_cluster.append(int(c.handle))
+		_locked_handle = int(seed.handle)
+	else:
+		var start := _view_cluster.find(_locked_handle)
+		var next := -1
+		for offset in range(1, _view_cluster.size() + 1):
+			var handle := _view_cluster[(start + offset) % _view_cluster.size()]
+			if handle in visible_handles and _contacts.has(handle):
+				next = handle
+				break
+		if next == -1:
+			return -1
+		_locked_handle = next
+	_locked_fallback = {}
+	tracking_view = true
+	return _locked_handle
+
+
+static func is_airborne(c: Dictionary) -> bool:
+	return int(c.get("kind", -1)) in [Kind.AIR_JET, Kind.AIR_DRONE]
 
 
 ## Metres per second along the line of sight, positive closing. Our own motion

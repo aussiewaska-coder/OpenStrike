@@ -1,4 +1,5 @@
 extends Node3D
+const MATERIALS := preload("res://scripts/effects/effect_materials.gd")
 
 # Material-driven impact presentation. The cannon reports an event; this decides
 # what it looks like (spec section 26). Everything is pooled - nothing is
@@ -117,14 +118,14 @@ func spawn_impact(hit_result: RefCounted, round_data: RefCounted) -> void:
 
 func spawn_explosion(position: Vector3) -> void:
 	var fire := {
-		"primary": Color(1.0, 0.28, 0.04), "count": 58, "speed": 34.0,
-		"spread": 180.0, "life": 1.15, "gravity": 0.22,
-		"scale_min": 1.8, "scale_max": 5.2,
+		"primary": Color(1.0, 0.55, 0.12), "count": 48, "speed": 18.0,
+		"spread": 180.0, "life": 0.9, "gravity": 0.05,
+		"scale_min": 8.0, "scale_max": 18.0, "glow": true,
 	}
 	var smoke := {
-		"primary": Color(0.16, 0.15, 0.14), "count": 36, "speed": 15.0,
+		"primary": Color(0.26, 0.25, 0.24), "count": 36, "speed": 9.0,
 		"spread": 150.0, "life": 2.7, "gravity": -0.08,
-		"scale_min": 2.4, "scale_max": 7.0,
+		"scale_min": 9.0, "scale_max": 22.0,
 	}
 	_emit_burst(position, Vector3.UP, fire)
 	_emit_burst(position, Vector3.UP, smoke)
@@ -163,7 +164,7 @@ func _emit_burst(position: Vector3, direction: Vector3, settings: Dictionary) ->
 	var emitter := _bursts[_burst_cursor]
 	_burst_cursor = (_burst_cursor + 1) % _bursts.size()
 	emitter.global_position = position
-	emitter.look_at_from_position(position, position + direction, Vector3.UP)
+	emitter.look_at_from_position(position, position + direction, Vector3.RIGHT if absf(direction.normalized().y) > 0.98 else Vector3.UP)
 	emitter.amount = maxi(int(int(settings["count"]) * _particle_scale()), 3)
 	emitter.lifetime = float(settings["life"])
 	emitter.initial_velocity_min = float(settings["speed"]) * 0.35
@@ -171,6 +172,19 @@ func _emit_burst(position: Vector3, direction: Vector3, settings: Dictionary) ->
 	emitter.spread = float(settings["spread"])
 	emitter.gravity = Vector3.DOWN * 9.80665 * float(settings["gravity"])
 	emitter.color = settings["primary"]
+	var material: StandardMaterial3D = emitter.material_override
+	material.emission_enabled = bool(settings.get("glow", false))
+	material.emission = Color(1.0, 0.38, 0.04)
+	material.emission_energy_multiplier = 1.3
+	var tint: Color = settings["primary"]
+	var ramp := Gradient.new()
+	ramp.offsets = PackedFloat32Array([0.0, 0.12, 0.65, 1.0])
+	ramp.colors = PackedColorArray([Color(tint, 0.0), Color(tint, 0.9), Color(tint.darkened(0.2), 0.45), Color(tint, 0.0)])
+	emitter.color_ramp = ramp
+	var growth := Curve.new()
+	growth.add_point(Vector2(0, 0.35))
+	growth.add_point(Vector2(1, 1))
+	emitter.scale_amount_curve = growth
 	emitter.scale_amount_min = float(settings.get("scale_min", 0.22))
 	emitter.scale_amount_max = float(settings.get("scale_max", 0.75))
 	emitter.restart()
@@ -191,7 +205,7 @@ func _emit_sparks(position: Vector3, direction: Vector3, settings: Dictionary) -
 	var emitter := _sparks[_spark_cursor]
 	_spark_cursor = (_spark_cursor + 1) % _sparks.size()
 	emitter.global_position = position
-	emitter.look_at_from_position(position, position + direction, Vector3.UP)
+	emitter.look_at_from_position(position, position + direction, Vector3.RIGHT if absf(direction.normalized().y) > 0.98 else Vector3.UP)
 	emitter.amount = maxi(int(int(settings["sparks"]) * _particle_scale()), 1)
 	emitter.lifetime = 0.42
 	emitter.initial_velocity_min = 18.0
@@ -253,8 +267,10 @@ func _make_emitter(is_spark: bool) -> CPUParticles3D:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.vertex_color_use_as_albedo = true
+	material.albedo_texture = MATERIALS.soft_disc()
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.billboard_keep_scale = true
 	if is_spark:
 		material.emission_enabled = true
 		material.emission = Color(1.0, 0.72, 0.34)

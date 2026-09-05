@@ -88,14 +88,21 @@ func _advance_round(round_data: RefCounted, fixed_step: float) -> bool:
 	var next_position: Vector3 = stepped[0]
 	round_data.previous_position = round_data.position
 	round_data.velocity = stepped[1]
+	var result: RefCounted = null
 	if hit_query != null:
 		# Continuous segment intersection, so an 805 m/s round cannot tunnel
 		# through a 16 m thick facade between steps.
-		var result: RefCounted = hit_query.query_segment(round_data.position, next_position)
-		if result != null and result.hit:
-			round_data.position = result.position
-			projectile_impacted.emit(result, round_data)
-			return false
+		result = hit_query.query_segment(round_data.position, next_position)
+		if result != null and not result.hit:
+			result = null
+	if flight.has_method("proximity_hit"):
+		var proximity: RefCounted = flight.proximity_hit(round_data.position, next_position, round_data.age)
+		if proximity != null and (result == null or proximity.t < result.t):
+			result = proximity
+	if result != null:
+		round_data.position = result.position
+		projectile_impacted.emit(result, round_data)
+		return false
 	round_data.distance += round_data.position.distance_to(next_position)
 	round_data.position = next_position
 	round_data.age += fixed_step

@@ -53,7 +53,7 @@ const COORDINATION_OFF_RATE := 1.10          ## rad/s of roll where it is fully 
 ## on an angle in radians reaches 1.5 rad/s during a hard roll -- twenty times
 ## the coordination term it is added to -- which swings the nose the wrong way
 ## and departs the aircraft. This is the clamp that stops that.
-const MAX_SIDESLIP_RATE := 0.20
+const MAX_SIDESLIP_RATE := 0.12
 
 ## Dihedral effect: a slipping aircraft rolls away from the slip, because the
 ## into-wind wing meets the air at a higher angle and lifts. This is the real
@@ -65,7 +65,7 @@ const DIHEDRAL_ROLL_GAIN := 0.35
 ## Rudder-driven roll is a secondary control and must never overrun the stick.
 const MAX_DIHEDRAL_ROLL_RATE := 0.45
 
-## What the nozzles are worth on the rate axes while R1 is held. Deliberately
+## What the nozzles are worth on the rate axes while L2 + R2 are held. Deliberately
 ## short of double: the point of vectoring is where the nose can be pointed,
 ## not how fast it snaps there.
 const VECTORED_RATE_GAIN := 1.7
@@ -155,7 +155,7 @@ static func turn_rate(bank_radians: float, speed_mps: float) -> float:
 ## refused at it, and past it the assist pushes regardless of the stick. Nose
 ## down is never limited: unloading is always the way out.
 ## The ceiling is a parameter rather than the stall angle itself, because
-## holding R1 hands the nose to the nozzles and raises it into the post-stall
+## holding both rudder triggers hands the nose to the nozzles in the post-stall
 ## range. Everything below is unchanged; only where the wall sits moves.
 static func alpha_limited_pitch_rate(
 	commanded: float,
@@ -173,7 +173,7 @@ static func alpha_limited_pitch_rate(
 	return commanded * clampf(margin / band, 0.0, 1.0)
 
 
-## Where the limiter holds the nose. R1 trades the wing's limit for the
+## Where the limiter holds the nose. Vectoring trades the wing's limit for the
 ## nozzles': the aircraft will point far off its flight path, and pay for it in
 ## separation drag rather than in a departure.
 static func alpha_ceiling(vectoring: bool) -> float:
@@ -192,6 +192,8 @@ static func sideslip_damping(beta_radians: float, gain: float) -> float:
 ## Rudder creates a yawing moment and therefore sideslip. Directional stability
 ## then opposes that slip, so held rudder settles at an offset instead of
 ## rotating the aircraft like a flat-steering vehicle.
+## On release the bounded wash-out lets the path catch up to the nose instead
+## of snapping the aircraft back toward its old track.
 static func rudder_yaw_rate(
 	input: float,
 	maximum_sideslip_radians: float,
@@ -200,6 +202,8 @@ static func rudder_yaw_rate(
 	maximum_rate: float
 ) -> float:
 	var shaped_input := rudder_input_response(input)
+	if is_zero_approx(shaped_input):
+		return sideslip_damping(beta_radians, damping_gain)
 	var target_beta := -shaped_input * maximum_sideslip_radians
 	return clampf(
 		(beta_radians - target_beta) * damping_gain,

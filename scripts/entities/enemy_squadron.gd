@@ -42,6 +42,11 @@ func jet_count() -> int:
 	return alive
 
 
+func _ready() -> void:
+	# update() places the models at render-frame positions shared with the HUD.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+
+
 func clear() -> void:
 	for id in _visuals:
 		var node: Node3D = _visuals[id]

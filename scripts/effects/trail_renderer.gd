@@ -26,6 +26,7 @@ const MAX_TRAIL_SEGMENTS := 2400
 var _mesh: ImmediateMesh
 var _trails: Dictionary = {}
 var _now := 0.0
+var _surface_started := false
 
 
 func _ready() -> void:
@@ -37,19 +38,9 @@ func _ready() -> void:
 	global_transform = Transform3D.IDENTITY
 
 
-func _make_material() -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.vertex_color_use_as_albedo = true
-	# The geometry already faces the camera; billboarding it again would fight
-	# the strip maths and spin every quad about its own centre.
-	material.billboard_mode = BaseMaterial3D.BILLBOARD_DISABLED
-	# Depth-write off is the usual soft-smoke trade: trails blend with each
-	# other instead of one occluding the next, which is what you want for smoke
-	# and would be wrong for solid geometry.
-	material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+func _make_material() -> ShaderMaterial:
+	var material := ShaderMaterial.new()
+	material.shader = preload("res://shaders/smoke_trail.gdshader")
 	return material
 
 
@@ -132,15 +123,11 @@ func _rebuild() -> void:
 	if camera == null:
 		return
 	var eye := camera.global_position
-	var wrote_any := false
-	_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	_surface_started = false
 	for trail in _trails.values():
-		if _write_trail(trail, eye):
-			wrote_any = true
-	_mesh.surface_end()
-	# An empty surface is still a surface; drop it rather than submit nothing.
-	if not wrote_any:
-		_mesh.clear_surfaces()
+		_write_trail(trail, eye)
+	if _surface_started:
+		_mesh.surface_end()
 
 
 func _write_trail(trail, eye: Vector3) -> bool:
@@ -179,22 +166,33 @@ func _quad(
 	near_colour: Color,
 	far_colour: Color
 ) -> void:
+	# Empty trails and end-on segments have no vertices. Begin the surface only
+	# when a real quad is emitted; ending an empty surface is a renderer error.
+	if not _surface_started:
+		_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+		_surface_started = true
 	var a := near_point - near_side
 	var b := near_point + near_side
 	var c := far_point + far_side
 	var d := far_point - far_side
 	_mesh.surface_set_color(near_colour)
+	_mesh.surface_set_uv(Vector2(0.0, 0.0))
 	_mesh.surface_add_vertex(a)
 	_mesh.surface_set_color(near_colour)
+	_mesh.surface_set_uv(Vector2(0.0, 1.0))
 	_mesh.surface_add_vertex(b)
 	_mesh.surface_set_color(far_colour)
+	_mesh.surface_set_uv(Vector2(1.0, 1.0))
 	_mesh.surface_add_vertex(c)
 
 	_mesh.surface_set_color(near_colour)
+	_mesh.surface_set_uv(Vector2(0.0, 0.0))
 	_mesh.surface_add_vertex(a)
 	_mesh.surface_set_color(far_colour)
+	_mesh.surface_set_uv(Vector2(1.0, 1.0))
 	_mesh.surface_add_vertex(c)
 	_mesh.surface_set_color(far_colour)
+	_mesh.surface_set_uv(Vector2(1.0, 0.0))
 	_mesh.surface_add_vertex(d)
 
 

@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## The constants in aero_model.gd are derived from the envelope rather than
 ## chosen, and these are the derivations, asserted. If a coefficient is retuned
 ## and one of these fails, the retune broke a relationship the flight model
@@ -17,6 +19,8 @@ func _init() -> void:
 	_thrust()
 	_turn_limits()
 	_envelope()
+	if _test_failed:
+		return
 	print("AERO_MODEL_TEST_PASS")
 	quit()
 
@@ -41,7 +45,7 @@ func _lift_curve() -> void:
 
 	# Past the stall it must fall away, or the model cannot express a stall at
 	# all and the limiter is guarding nothing.
-	if AERO.lift_coefficient(deg_to_rad(32.0)) >= AERO.CL_MAX:
+	if AERO.lift_coefficient(stall + deg_to_rad(5.0)) >= AERO.CL_MAX:
 		_fail("lift must fall away past the stall angle")
 
 	# Symmetric: pushing must work the same as pulling.
@@ -217,5 +221,6 @@ func _assert_approx(actual: float, expected: float, label: String) -> void:
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)

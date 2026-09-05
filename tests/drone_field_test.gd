@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## The field is what makes drones real to the rest of the game: an AABB that
 ## follows each one so rounds can hit it, a target picked off the building
 ## index, a bomb fired through the projectile manager. The visuals are not
@@ -16,12 +18,18 @@ const STEP := 1.0 / 60.0
 
 
 func _init() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
 	_spawns_at_the_edge_with_unique_ids()
 	_bounds_follow_the_drone()
 	_a_segment_through_a_drone_hits_it()
 	_destroy_removes_it_from_the_index()
 	_picks_a_target_and_bombs_it()
 	_the_hit_query_sees_both_fields()
+	if _test_failed:
+		return
 	print("DRONE_FIELD_TEST_PASS")
 	quit()
 
@@ -30,6 +38,7 @@ func _build() -> Node3D:
 	var field = FIELD.new()
 	root.add_child(field)
 	var manager = PROJECTILE_MANAGER.new()
+	field.add_child(manager)
 	manager.ballistics = BALLISTICS.new()
 	field.projectile_manager = manager
 	field.building_index = BUILDING_INDEX.new()
@@ -152,5 +161,6 @@ func _the_hit_query_sees_both_fields() -> void:
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)

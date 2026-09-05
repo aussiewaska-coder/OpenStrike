@@ -98,6 +98,7 @@ func _lightning(delta: float) -> void:
 ## GPU particles draw nothing on the Compatibility renderer.
 func _build_rain() -> void:
 	_rain = CPUParticles3D.new()
+	_rain.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_rain.name = "Rain"
 	_rain.emitting = false
 	_rain.amount = 700

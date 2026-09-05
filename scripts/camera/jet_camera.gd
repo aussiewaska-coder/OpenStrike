@@ -100,6 +100,61 @@ static func external_orbit_position(
 	return focus + look_basis * (camera_position - focus)
 
 
+## Smooth around the sphere, carrying its centre with the displayed aircraft.
+## Interpolating world positions cuts chords and adds aircraft travel to zoom.
+static func smooth_orbit_offset(current: Vector3, wanted: Vector3, weight: float) -> Vector3:
+	if current.length_squared() < 0.0001 or wanted.length_squared() < 0.0001:
+		return current.lerp(wanted, weight)
+	var radius := lerpf(current.length(), wanted.length(), weight)
+	return current.normalized().slerp(wanted.normalized(), weight).normalized() * radius
+
+
+## Keep a usable horizon and lift the orbit over terrain without stretching
+## its radius, except when the entire sphere is below the clearance height.
+static func clear_orbit_position(focus: Vector3, position: Vector3, floor_y: float) -> Vector3:
+	var offset := position - focus
+	var radius := offset.length()
+	if radius < 0.001:
+		return Vector3(position.x, maxf(position.y, floor_y), position.z)
+	var limit := radius * sin(deg_to_rad(85.0))
+	var height := maxf(clampf(offset.y, -limit, limit), floor_y - focus.y)
+	var horizontal := Vector3(offset.x, 0.0, offset.z)
+	if horizontal.length_squared() < 0.000001:
+		horizontal = Vector3.BACK
+	return focus + horizontal.normalized() * sqrt(maxf(radius * radius - height * height, 0.0)) + Vector3.UP * height
+
+
+## A small neck roll follows a sideways glance, with no tilt looking forward.
+static func head_tilt(yaw: float) -> float:
+	return -sin(yaw) * deg_to_rad(6.0)
+
+
+static func cockpit_look_basis(yaw: float, pitch: float) -> Basis:
+	return Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch) \
+		* Basis(Vector3.BACK, head_tilt(yaw))
+
+
+static func tracking_basis(direction: Vector3, reference: Basis, previous: Basis, cockpit: bool) -> Basis:
+	var forward := direction.normalized()
+	var up := reference.y
+	if absf(forward.dot(up)) > 0.98:
+		# Remove the previous neck roll before reusing its up vector, so a
+		# stationary target overhead cannot accumulate tilt every frame.
+		var neutral_previous := previous
+		if cockpit:
+			var previous_local := reference.inverse() * -previous.z
+			neutral_previous *= Basis(Vector3.BACK, -head_tilt(atan2(-previous_local.x, -previous_local.z)))
+		up = neutral_previous.y
+		if absf(forward.dot(up)) > 0.98:
+			up = neutral_previous.x
+	var result := Basis.looking_at(forward, up)
+	if cockpit:
+		var local := reference.inverse() * forward
+		var yaw := atan2(-local.x, -local.z)
+		result *= Basis(Vector3.BACK, head_tilt(yaw))
+	return result
+
+
 static func flight_direction(
 	velocity: Vector3,
 	nose: Vector3,

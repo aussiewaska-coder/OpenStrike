@@ -8,9 +8,9 @@ extends RefCounted
 ## gravity and thrust do the rest.
 ##
 ## The consequence, and the point of the whole thing: the aircraft has no way to
-## turn except by banking, because the horizontal component of the lift vector
-## is the only sideways force there is. Heading is a result of attitude, never
-## a commanded value.
+## make its main turns by banking: tilted lift bends the flight path. Side
+## force resists sideslip, letting rudder change the track as well as the nose.
+## Heading is a result of attitude and forces, never a commanded value.
 ##
 ## Everything here divides through by mass, so 0.5 * air density * wing area /
 ## mass folds into the single AERO_AUTHORITY below. That leaves one number to
@@ -66,6 +66,10 @@ const CD_STALL_FULL_DEGREES := 70.0
 ## 0.5 * air density * wing area / mass, folded. Derived, not chosen: it is the
 ## value that puts the crossing of the two turn limits exactly at corner speed.
 const AERO_AUTHORITY := 0.00190657
+## Side area resists cross-body airflow. This changes the flight path while
+## the nose is yawed, so directional stability settles onto a new track after
+## rudder release. A game-tuned coefficient, not measured F-22 derivatives.
+const SIDE_FORCE_COEFFICIENT := 0.75
 
 ## Thrust as a multiple of gravity. Close to the real aircraft's thrust to
 ## weight, which is the one place the compression was not needed.
@@ -81,7 +85,7 @@ const LOAD_LIMIT_G := 9.0
 ## crossing is what corner speed means. Derived from AERO_AUTHORITY and CL_MAX
 ## rather than chosen: it is where aerodynamic_load_limit() reaches 9 G, so
 ## raising the stall angle moves it down here automatically.
-const CORNER_SPEED_MPS := 134.0
+const CORNER_SPEED_MPS := sqrt(LOAD_LIMIT_G * GRAVITY / (AERO_AUTHORITY * CL_MAX))
 
 ## Control authority. Aerodynamic surfaces make moments proportional to dynamic
 ## pressure, so a slow aircraft has slack controls -- and that, not any limiter,
@@ -244,7 +248,8 @@ static func lift_direction(body_up: Vector3, velocity: Vector3) -> Vector3:
 ## The whole force balance, as one acceleration in world space.
 ##
 ## This is the model: thrust along the nose, lift normal to airflow toward the
-## body's upper side, drag back along the velocity, and gravity. Nothing here
+## body's upper side, drag back along the velocity, side force opposing slip,
+## and gravity. Nothing here
 ## knows what a turn is. Turning happens because banking tilts the wing and with
 ## it the lift vector.
 static func flight_acceleration(
@@ -265,6 +270,9 @@ static func flight_acceleration(
 	)
 	if speed > 0.01:
 		acceleration -= velocity.normalized() * drag
+		var right := nose.cross(up).normalized()
+		var side_speed := velocity.dot(right)
+		acceleration -= right * (AERO_AUTHORITY * SIDE_FORCE_COEFFICIENT * speed * side_speed * falloff)
 	return acceleration
 
 

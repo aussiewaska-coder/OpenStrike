@@ -67,8 +67,8 @@ model, and the controller only integrates them.
 
 `helicopter_controller.gd` keeps only `rotation.y` on the anchor and applies
 pitch and roll to the visual as decoration. The jet cannot do this. Bank has to
-be real, because tilting the lift vector is the only thing that turns the
-aircraft. `jet_controller.gd` therefore owns a full three-axis `Basis` on the
+be real, because tilted lift supplies the main turning force.
+`jet_controller.gd` therefore owns a full three-axis `Basis` on the
 anchor.
 
 ## Flight model
@@ -86,6 +86,7 @@ lift_dir = normalize(up - v_hat * dot(up, v_hat)) # normal to airflow
 accel  = nose * thrust                           # spooled, never instant
        + lift_dir * lift_authority * v^2 * Cl(alpha)
        - v_hat * (Cd0 + k * Cl^2) * v^2 * drag_authority
+       - right * side_authority * v * dot(velocity, right)
        + Vector3.DOWN * GRAVITY
 ```
 
@@ -166,12 +167,16 @@ corridor crossing takes two to four minutes and the coastline stays readable.
   Fading on bank was measurably wrong — coordination was down to a quarter at
   75 degrees and gone at 80, making the hardest turns the only uncoordinated
   ones in the aircraft's range.
-- **Rudder** on L2/R2 creates yaw and sideslip rather than flat turning, and
+- **Rudder** on L2/R2 creates yaw and sideslip, and
   the aircraft rolls through **dihedral effect** — roll proportional to the
   sideslip the rudder has actually produced, not to the trigger position. That
   indirection is the point: aileron sets the bank, rudder adds slip, and slip
   rolls the aircraft further in, so the two together reach a steeper bank than
-  either alone. Directional stability recentres the slip after release.
+  either alone. Side force opposes cross-body airflow and bends the flight
+  path. Bounded directional-stability damping recentres the slip after release
+  while allowing the path to catch up with the nose. Rudder authority falls
+  with airspeed. See the [September 5 sweep](../../2026-09-05-bug-sweep.md)
+  for measured pulse-and-release behaviour.
 
 ## Boundaries
 
@@ -196,18 +201,20 @@ Bindings are per-vehicle. The helicopter's mapping is untouched.
 | L2 / R2 | Left / right rudder | Camera orbit sweep |
 | D-pad up / down | Camera zoom in / out | Camera zoom in / out |
 | D-pad left / right | Cycle view | Cycle target |
-| R1 held | Throttle on right stick, **thrust vectoring on left** | Free look, held |
+| R1 held | Throttle on right stick | Free look, held |
+| L2 + R2 held together | Thrust vectoring on left stick | Opposing camera orbit inputs cancel |
 | R3 | Centre the view, else wings level | Cycle view |
 | L3 | Fixed-forward internal cannon | Traversing chin cannon |
 | L1 | Rockets | unchanged |
 
-R1 carries two things without collision because they read different sticks: the
-right stick becomes the throttle, and the left stick gets the nozzles. Held, it
-raises the angle-of-attack limiter from the wing's 32 degrees to the nozzles'
-55 and adds 70 percent to the commanded rates.
+L2 + R2 together engage the expanded manoeuvre envelope independently of R1
+throttle adjustment. Equal pressure cancels differential rudder. Held, the
+combination raises the angle-of-attack limiter from 32 to 55 degrees and boosts
+commanded rates. Trigger hysteresis prevents small pressure changes flickering
+the limiter.
 
 Vectoring is a low-speed instrument, and the load limiter makes that true
-without a special case: at 175 m/s the 9 G cap binds first and R1 buys almost
+without a special case: at 175 m/s the 9 G cap binds first and vectoring buys almost
 nothing (21.6 to 26.5 degrees of alpha). At 130 m/s it takes the nose from 22.9
 to 41.1 degrees and nearly doubles what the nose sweeps in four seconds — for
 36 m/s of speed against 24.5. Point and shoot, then pay for it.

@@ -47,6 +47,7 @@ var _bomb_profile: Resource
 
 
 func _ready() -> void:
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_rng.randomize()
 	_bomb_profile = BOMB_PROFILE.new()
 

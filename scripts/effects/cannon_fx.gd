@@ -1,4 +1,5 @@
 extends Node3D
+const MATERIALS := preload("res://scripts/effects/effect_materials.gd")
 
 # Muzzle flash, muzzle smoke and the tracer stream. Every tracer is a real
 # simulated round - this only draws the ones flagged by tracer_interval, along
@@ -26,6 +27,7 @@ var _camera: Camera3D
 
 
 func _ready() -> void:
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	for index in range(tracer_pool_size):
 		_tracers.append(_make_tracer())
 	for index in range(flash_pool_size):
@@ -116,13 +118,16 @@ func _update_smoke() -> void:
 		return
 	var muzzle: Transform3D = gun_mount.get_muzzle_transform()
 	_muzzle_smoke.global_position = muzzle.origin + muzzle.basis.x * 0.8
+	_muzzle_smoke.direction = muzzle.basis.x
 	# Rate-dependent: a two-round tap emits almost nothing, a long burst builds
 	# a visible haze under the nose that then dissipates on its own.
 	var firing: bool = weapon.is_firing
 	_muzzle_smoke.emitting = firing
 	if firing:
 		var build: float = clampf(weapon.continuous_fire_time / 2.4, 0.0, 1.0)
-		_muzzle_smoke.amount_ratio = lerpf(0.12, 1.0, build)
+		# CPUParticles3D has no amount_ratio (unlike GPU particles). Keep the
+		# fixed pool stable and build opacity without restarting live smoke.
+		_muzzle_smoke.material_override.albedo_color = Color(1, 1, 1, lerpf(0.12, 1.0, build))
 
 
 func firing_intensity() -> float:
@@ -159,12 +164,14 @@ func _make_flash() -> MeshInstance3D:
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.albedo_color = Color(1.0, 0.83, 0.45, 0.9)
+	material.albedo_texture = MATERIALS.soft_disc()
 	material.emission_enabled = true
 	material.emission = Color(1.0, 0.78, 0.36)
 	material.emission_energy_multiplier = 6.0
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.billboard_keep_scale = true
 	flash.material_override = material
 	flash.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	flash.visible = false
@@ -175,7 +182,7 @@ func _make_flash() -> MeshInstance3D:
 func _make_smoke() -> CPUParticles3D:
 	var smoke := CPUParticles3D.new()
 	smoke.emitting = false
-	smoke.amount = 40
+	smoke.amount = 64
 	smoke.lifetime = 1.9
 	smoke.local_coords = false
 	smoke.spread = 16.0
@@ -185,14 +192,22 @@ func _make_smoke() -> CPUParticles3D:
 	smoke.scale_amount_min = 0.6
 	smoke.scale_amount_max = 2.4
 	smoke.color = Color(0.55, 0.53, 0.5, 0.32)
+	smoke.color_ramp = MATERIALS.smoke_ramp()
+	var growth := Curve.new()
+	growth.add_point(Vector2(0.0, 0.2))
+	growth.add_point(Vector2(0.35, 0.65))
+	growth.add_point(Vector2(1.0, 1.0))
+	smoke.scale_amount_curve = growth
 	var mesh := QuadMesh.new()
 	mesh.size = Vector2.ONE
 	smoke.mesh = mesh
 	var material := StandardMaterial3D.new()
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.vertex_color_use_as_albedo = true
+	material.albedo_texture = MATERIALS.soft_disc()
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	material.billboard_keep_scale = true
 	smoke.material_override = material
 	add_child(smoke)
 	return smoke

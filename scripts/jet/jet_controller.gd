@@ -4,7 +4,7 @@ extends Node3D
 ##
 ## The aircraft has no direct control over its heading. The stick commands a
 ## roll rate and a pitch rate; rolling tilts the lift vector; the horizontal
-## component of tilted lift is the only thing that turns the aircraft. Throttle
+## component of tilted lift supplies the main turning force. Throttle
 ## commands a target thrust, and airspeed is whatever thrust and drag settle on.
 ##
 ## That chain -- stick, roll, bank, lift tilt, turn, ease off, assist holds the
@@ -13,8 +13,8 @@ extends Node3D
 ##
 ## The rudder joins that chain rather than bypassing it. It commands sideslip,
 ## and the aircraft rolls through the dihedral effect of the slip it produced,
-## so stick and rudder together reach a steeper bank than either alone. Nothing
-## here steers.
+## so stick and rudder together reach a steeper bank than either alone. Side
+## force also bends the velocity toward the nose while retaining momentum.
 ##
 ## The structural difference from helicopter_controller.gd: that one keeps only
 ## rotation.y on the anchor and puts pitch and roll on the visual as decoration.
@@ -62,7 +62,7 @@ signal boundary_warning(urgency: float)
 @export var control_response := 7.0           ## how quickly commanded rates are reached
 
 @export_group("Throttle")
-## Throttle is a position R1 + right-stick vertical moves, not a spring:
+## Throttle is a position A + right-stick vertical moves, not a spring:
 ## releasing either control holds the setting, like a throttle quadrant.
 @export var throttle_rate := 0.55
 @export var starting_throttle := 0.62
@@ -103,7 +103,7 @@ var roll_input := 0.0
 var pitch_input := 0.0
 var rudder_input := 0.0
 var throttle_input := 0.0
-## R1 held: the nozzles own the nose, and the limiter moves out to the
+## L2 + R2 held: the nozzles own the nose, and the limiter moves out to the
 ## post-stall angle. Public so the HUD can say so.
 var vectoring := false
 
@@ -254,7 +254,7 @@ func _read_controls(delta: float) -> void:
 		beta,
 		sideslip_damping_gain,
 		maximum_rudder_yaw_rate
-	)
+	) * AERO.control_authority(speed)
 
 	# Control surfaces move quickly but not instantly, which is what stops the
 	# aircraft snapping between attitudes.

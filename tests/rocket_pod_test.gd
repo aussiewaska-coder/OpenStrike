@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## A salvo is a ripple, not a burst: rockets leave one at a time, alternating
 ## sides. Emptying the pod in a single frame gives one puff of smoke and no
 ## sense of a salvo at all.
@@ -11,10 +13,16 @@ const BALLISTICS := preload("res://scripts/weapons/ballistics.gd")
 
 
 func _init() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
 	_ripples_rather_than_bursts()
 	_alternates_hardpoints()
 	_empties_and_reloads()
 	_stays_silent_when_the_gun_is_selected()
+	if _test_failed:
+		return
 	print("ROCKET_POD_TEST_PASS")
 	quit()
 
@@ -23,6 +31,8 @@ func _build() -> Node3D:
 	var manager = PROJECTILE_MANAGER.new()
 	manager.ballistics = BALLISTICS.new()
 	var pod = POD.new()
+	root.add_child(pod)
+	pod.add_child(manager)
 	pod.projectile_manager = manager
 	pod.selection = SELECTION.new()
 	pod.selection.current = SELECTION.Weapon.ROCKETS
@@ -100,5 +110,6 @@ func _stays_silent_when_the_gun_is_selected() -> void:
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)

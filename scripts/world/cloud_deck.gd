@@ -13,6 +13,8 @@ var _camera: Camera3D
 
 
 func _ready() -> void:
+	# This sheet follows the rendered camera in _process, not a physics tick.
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	_camera = get_node_or_null(camera_path) as Camera3D
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(size_m, size_m)

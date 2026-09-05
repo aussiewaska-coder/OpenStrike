@@ -105,7 +105,21 @@ with no signal shows the overview imagery rather than detail.
 
 ## 30 mm chin cannon
 
-Hold R1 and the chin turret slews to wherever the camera centre is pointing,
+R1 locks the visible target nearest the view centre and keeps the camera on it.
+Further presses cycle only visible members of the original nearby air-target
+cluster, never unrelated targets behind you. Tap a target for weapon lock
+without camera tracking. R3 or manual look releases tracking but keeps the lock.
+
+On the jet, X cycles cannon, rockets, heat-seeking missiles and radar missiles.
+Heat seekers acquire in 0.45 seconds and are fire-and-forget within 6.5 km;
+radar missiles acquire in 0.85 seconds, reach 18 km and need the same selected
+target lock throughout flight. L1 launches one acquired missile per press.
+Each missile keeps its original target: changing locks does not retarget a
+missile already airborne. Radar shots loft at long range; both types accelerate,
+lead moving targets, turn within limits and coast after motor burnout. These
+are gameplay-tuned seekers, not a weapons-system simulation.
+
+Hold A and the chin turret slews to wherever the camera centre is pointing,
 within its articulation limits; L3 fires. A selected orbit target outranks the
 view, and with neither the gun eases back to the nose. The turret aims at a
 world point rather than a direction, so it corrects itself as the airframe
@@ -143,7 +157,10 @@ enabled. The AAR files are already packaged under
 `addons/OpenStrikeLocation/bin`.
 
 Pair the Bluetooth controller in Android system settings before starting the
-game. OpenStrike uses Godot's standard Android joypad path, so it does not need
+game. Flight and camera controls require a gamepad; there are no on-screen
+sticks or touch-flight fallback. Screen taps still select and lock targets,
+and the radar and settings remain interactive.
+OpenStrike uses Godot's standard Android joypad path, so it does not need
 Bluetooth scanning permissions. The in-game diagnostic panel shows the detected
 controller name, both stick vectors, and L1/R1/L3 state.
 
@@ -174,12 +191,12 @@ clearance stops the model flying you into a hill.
 | L2 / R2 | With a target: fly the aircraft around it, nose held on it. Without one: orbit the camera |
 | Left stick up/down, while orbiting | Close or widen the orbit, down to 100 m |
 | Y | Switch controls: arcade / realistic |
-| R1 (hold) | Free look: the right stick aims the camera, and the view holds until released |
-| X | Settings |
+| R1 | Lock the target nearest the view centre and track it; repeat for the next visible member of that cluster |
+| A (hold) | Helicopter manual view/aim with the right stick; jet throttle with right-stick up/down |
+| X | Tap: cycle weapon; hold: settings |
 | L3 | Fire the 30 mm chin cannon |
-| L1 | Rockets |
-| R3 | Cycle cockpit / chase / orbit view |
-| A | Context/extraction |
+| L1 | Fire selected weapon; guided missiles require seeker acquisition and a fresh press |
+| R3 | Release camera tracking (keep weapon lock); otherwise normal view/recovery action |
 | D-pad left/right | Previous/next target |
 | D-pad up/down | Camera zoom in/out, continuing into the attack close-up |
 
@@ -255,25 +272,23 @@ sweep's final heading back to the follow camera.
 
 A second playable aircraft over the same theatre, which is what proves the
 world carries both low-altitude rotor combat and high-speed fixed-wing flight
-without a second map. Switch with **B**, or from the settings panel.
+without a second map. Switch aircraft from the settings panel.
 
 The F-22 model is by bohmerang and licensed CC BY-NC-SA 4.0; full source and
 license details are recorded in [`3dassets/ATTRIBUTION.md`](3dassets/ATTRIBUTION.md).
 
 The flight model is an assisted arcade one: a lift curve and a drag polar, with
-a fly-by-wire layer between the stick and the aerodynamics. Nothing in it turns
-the aircraft. The stick commands a roll rate, the aircraft banks, the lift
-vector tilts, and its horizontal component is the only sideways force there is.
-Ease off and the assist holds the bank rather than rolling upright, which is the
-difference between an aircraft and a spaceship.
+a fly-by-wire layer between the stick and the aerodynamics. The stick commands
+a roll rate; banking tilts lift and bends the flight path. Side force resists
+sideslip, so rudder changes the path as well as the nose. Ease off and the
+assist holds the bank; rudder release gradually settles onto the changed track.
 
 Three behaviours fall out of single terms rather than being scripted. Induced
 drag goes as the square of the lift coefficient, so hard turns bleed speed. The
 load limiter caps pitch rate at `n = v * omega / g`, so fast turns are wider.
-Pilot roll and pitch-rate commands stay responsive at low speed; available lift
-still falls with dynamic pressure, so an energy-starved aircraft cannot hold a
-steep level turn. Corner speed is where the wing and airframe limits cross, at
-155 m/s.
+Roll and rudder authority fall with airspeed; pitch retains thrust-dependent
+authority. An energy-starved aircraft cannot hold a steep level turn. Corner
+speed is derived from the wing and airframe limits, at about 134 m/s.
 
 The envelope is deliberately compressed to roughly 90-260 m/s. At true Raptor
 speed the 50 km corridor is a short dash and the terrain cannot stream
@@ -285,25 +300,36 @@ Surfers, Burleigh and Tweed theatres, so normal launch selects the 50 km map.
 The smaller entries remain available explicitly from settings.
 
 The jet uses conventional left-stick pitch and roll (pull back for nose up),
-the right stick for camera look, and L2/R2 for left/right rudder. Hold R1 and
+the right stick for camera look, and L2/R2 for left/right rudder. Hold A and
 right-stick up/down moves a persistent throttle relative to its current setting;
-releasing either control holds that setting. D-pad left/right cycles cockpit,
+releasing either control holds that setting. Hold **L2 + R2 together** to engage
+thrust vectoring: pull the left stick for stronger pitch response and tighter
+banked turns, with extra speed loss. Equal trigger pressure cancels rudder;
+unequal pressure still adds differential yaw. A only changes throttle routing.
+D-pad left/right cycles cockpit,
 close pursuit, wider tracking, and tactical ground-lock views. D-pad up/down
 zooms. The right stick can continuously orbit through 360 degrees in pursuit
-and tracking views; releasing it holds the current angle. Pursuit expands from
-its close chase framing into a wider aircraft-centred inspection orbit.
+and tracking views; releasing it holds the current angle. Both orbit the
+displayed aircraft at a steady radius for the current speed and zoom, keeping
+it centred throughout the sweep. Terrain clearance can lift the orbit.
 Stick axes are sampled only from the selected physical controller with one
 circular deadzone; Android virtual devices cannot contribute duplicate input.
 Roll is unrestricted through knife-edge and inverted flight, so holding lateral
-stick completes a 360-degree roll. Upright turn coordination fades out before
-knife-edge instead of fighting the manoeuvre. Rudder yaws the nose into a
-sideslip and adds a smaller same-direction roll moment; releasing it lets
-directional stability align the nose with the flight path again.
+stick completes a 360-degree roll. Turn coordination fades during a fast roll.
+Rudder yaws the nose into a sideslip and produces a smaller roll response;
+momentum makes the flight path lag the nose, while side force and bounded yaw
+damping settle the aircraft onto the new track after release.
 R3 requests a wings-level recovery when the aircraft has enough aerodynamic
-authority; deliberate roll input cancels it. Cockpit uses a fixed 70-71.5 degree
+authority; deliberate roll input cancels it. When looking away or tracking a
+target, R3 first eases the view forward over 0.85 seconds. Fresh right-stick
+input takes over the return. Changing camera views stops camera tracking and
+returns to the selected view's default angle while retaining weapon lock.
+Cockpit uses a fixed 70-71.5 degree
 lens from a raised, forward pilot position, with a neutral low-opacity canopy,
-and inherits full airframe roll. External views use limited roll feedback, a
-bounded flight-path lead, and separate camera and aim damping. Streamed
+and inherits full airframe roll. Sideways glances add up to six degrees of
+natural neck tilt, including while tracking a target. Destruction immediately
+releases that target's camera and weapon lock. External views use limited roll
+feedback and smooth orbit angles independently of distance. Streamed
 elevation is exaggerated 1.8x for
 arcade-readable relief while terrain sampling and collisions remain aligned.
 The HUD keeps throttle and afterburner visible. L3 fires an
@@ -366,6 +392,9 @@ GALLIUM_DRIVER=softpipe DISPLAY=:7 godot --display-driver x11 --rendering-driver
 one that works, at about ten seconds a frame.
 
 ## Tests
+
+Run the full suite with `tools/run_tests.sh`, or set `GODOT_BIN` to the engine
+executable. The runner rejects engine errors even when a test exits with zero.
 
 Head-less `SceneTree` scripts, run one at a time:
 

@@ -30,6 +30,8 @@ var emitting := true
 
 var _last_point := Vector3.ZERO
 var _has_last := false
+var _last_time := 0.0
+var _distance_since_point := 0.0
 
 
 ## Lays a breadcrumb if the source has travelled far enough since the last one.
@@ -40,15 +42,26 @@ func push(point: Vector3, now: float) -> bool:
 	if not _has_last:
 		_has_last = true
 		_last_point = point
+		_last_time = now
 		points.append(point)
 		birth_times.append(now)
 		return true
-	if _last_point.distance_to(point) < SEGMENT_METRES:
-		return false
+	var distance := _last_point.distance_to(point)
+	var travelled := 0.0
+	var next_spacing := SEGMENT_METRES - _distance_since_point
+	var laid := false
+	while distance > 0.000001 and travelled + next_spacing <= distance + 0.000001:
+		travelled += next_spacing
+		var fraction := clampf(travelled / distance, 0.0, 1.0)
+		points.append(_last_point.lerp(point, fraction))
+		birth_times.append(lerpf(_last_time, now, fraction))
+		_distance_since_point = 0.0
+		next_spacing = SEGMENT_METRES
+		laid = true
+	_distance_since_point += maxf(distance - travelled, 0.0)
 	_last_point = point
-	points.append(point)
-	birth_times.append(now)
-	return true
+	_last_time = now
+	return laid
 
 
 ## Retires everything older than the lifetime. Breadcrumbs are laid in order, so

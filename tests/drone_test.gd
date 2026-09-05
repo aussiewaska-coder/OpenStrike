@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## Evasion is what makes a drone worth chasing. These pin the rules: it breaks
 ## AWAY from the player's nose and never toward it, it dashes, it jinks, and it
 ## aborts an attack run rather than pressing through the guns.
@@ -18,6 +20,8 @@ func _init() -> void:
 	_aborts_the_run_when_threatened()
 	_resumes_after_the_threat_clears()
 	_releases_a_bomb_at_range()
+	if _test_failed:
+		return
 	print("DRONE_TEST_PASS")
 	quit()
 
@@ -163,5 +167,6 @@ func _releases_a_bomb_at_range() -> void:
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)

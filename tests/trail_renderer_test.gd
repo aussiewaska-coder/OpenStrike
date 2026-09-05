@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## The renderer's own logic: the camera-facing side vector, the global segment
 ## cap, and reclaiming finished trails. The ImmediateMesh itself is not asserted
 ## -- headless has no camera, and a vertex buffer proves nothing about whether
@@ -10,12 +12,41 @@ const TRAIL := preload("res://scripts/effects/trail_buffer.gd")
 
 
 func _init() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
 	_side_faces_the_camera()
 	_degenerate_segments_make_no_geometry()
 	_the_cap_holds()
 	_finished_trails_are_reclaimed()
+	_empty_and_end_on_trails_make_no_surface()
+	if _test_failed:
+		return
 	print("TRAIL_RENDERER_TEST_PASS")
 	quit()
+
+
+func _empty_and_end_on_trails_make_no_surface() -> void:
+	var camera := Camera3D.new()
+	root.add_child(camera)
+	camera.position = Vector3(0.0, 0.0, 10.0)
+	camera.current = true
+	var renderer := RENDERER.new()
+	root.add_child(renderer)
+	renderer.set_process(false)
+	renderer._rebuild()
+	assert(renderer.mesh.get_surface_count() == 0, "no smoke must leave no mesh surface")
+	renderer.begin_trail(1)
+	renderer.push_point(1, Vector3.ZERO)
+	renderer.push_point(1, Vector3(0.0, 0.0, 5.0))
+	renderer._rebuild()
+	assert(renderer.mesh.get_surface_count() == 0, "end-on smoke must leave no mesh surface")
+	camera.position.x = 10.0
+	renderer._rebuild()
+	assert(renderer.mesh.get_surface_count() == 1, "visible smoke must produce one surface")
+	renderer.free()
+	camera.free()
 
 
 ## The ribbon must present its face to the viewer, so the side vector is
@@ -78,5 +109,6 @@ func _finished_trails_are_reclaimed() -> void:
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)

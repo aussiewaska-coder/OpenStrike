@@ -11,12 +11,17 @@ var _failed := false
 
 
 func _init() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
 	_spawns_the_requested_number()
 	_spreads_them_out_from_a_lead()
 	_spawns_them_far_enough_away_to_be_seen_coming()
 	_reports_every_jet_as_a_contact()
 	_ids_do_not_collide_with_the_drones()
 	_destroying_a_jet_removes_it()
+	_world_query_includes_enemy_jets()
 	if _failed:
 		return
 	print("ENEMY_SQUADRON_TEST_PASS")
@@ -101,3 +106,17 @@ func _fail(message: String) -> void:
 	_failed = true
 	push_error(message)
 	quit(1)
+
+func _world_query_includes_enemy_jets() -> void:
+	var squadron := _squadron()
+	squadron.spawn(1, Vector3.ZERO)
+	var jet = squadron.jets()[0]
+	var query = load("res://scripts/world/world_hit_query.gd").new()
+	query.additional_entity_indices.append(squadron)
+	var hit = query.query_segment(jet.position - Vector3(100,0,0), jet.position + Vector3(100,0,0))
+	if hit == null or hit.object_id != jet.id:
+		_fail("the production world query must include enemy jet hulls")
+	squadron.destroy_jet(jet.id)
+	if query.query_segment(jet.position - Vector3(100,0,0), jet.position + Vector3(100,0,0)) != null:
+		_fail("destroyed enemy hulls must leave the world hit query")
+	squadron.free()

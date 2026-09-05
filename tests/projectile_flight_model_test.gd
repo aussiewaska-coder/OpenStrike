@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## A round advances through the flight model it carries, and is retired by that
 ## model's envelope rather than the gun's. Without the second half, a rocket
 ## would die at the 30 mm shell's 4 km no matter what its motor could do.
@@ -32,6 +34,8 @@ func _init() -> void:
 	_ballistics_keeps_its_shape()
 	_round_uses_its_own_flight()
 	_round_expires_on_its_own_envelope()
+	if _test_failed:
+		return
 	print("PROJECTILE_FLIGHT_MODEL_TEST_PASS")
 	quit()
 
@@ -65,6 +69,7 @@ func _round_uses_its_own_flight() -> void:
 		_fail("the stub flight marches +X, so the round must have moved, got %f" % round_data.position.x)
 	if flight.last_age < 0.0:
 		_fail("the flight model must receive the round's age")
+	manager.free()
 
 
 func _round_expires_on_its_own_envelope() -> void:
@@ -79,8 +84,10 @@ func _round_expires_on_its_own_envelope() -> void:
 		manager.step(0.02)
 	if not manager.active_rounds.is_empty():
 		_fail("the round must retire on its own 0.25 s envelope, not the gun's 20 s")
+	manager.free()
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)

@@ -36,7 +36,7 @@ func set_look_provider(provider: Callable) -> void:
 
 
 func resolve_desired_point() -> Variant:
-	# Held R1 is direct manual aim and must override an old selected target.
+	# Held A is direct manual aim and must override an old selected target.
 	if _look_provider.is_valid():
 		var look: Variant = _look_provider.call()
 		if look is Vector3:

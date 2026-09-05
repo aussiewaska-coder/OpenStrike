@@ -1,5 +1,7 @@
 extends SceneTree
 
+var _test_failed := false
+
 ## Breadcrumbs are laid by DISTANCE, never per frame. Laying them per frame
 ## makes trail density a function of framerate, so a hitching phone draws a
 ## gap-toothed trail and a fast one wastes vertices on a dense stub.
@@ -12,6 +14,8 @@ func _init() -> void:
 	_width_grows_and_alpha_fades()
 	_old_segments_retire()
 	_finishes_after_the_last_breadcrumb_dies()
+	if _test_failed:
+		return
 	print("TRAIL_BUFFER_TEST_PASS")
 	quit()
 
@@ -39,6 +43,11 @@ func _spacing_is_by_distance() -> void:
 		_fail("trail density must not depend on framerate, got %d against %d" % [
 			fine.segment_count(), coarse.segment_count()
 		])
+	for index in range(mini(fine.points.size(), coarse.points.size())):
+		if not fine.points[index].is_equal_approx(coarse.points[index]):
+			_fail("the same path must lay breadcrumbs in the same positions")
+		if not is_equal_approx(fine.birth_times[index], coarse.birth_times[index]):
+			_fail("coarse frames must interpolate smoke age, not birth every segment together")
 
 
 func _width_grows_and_alpha_fades() -> void:
@@ -79,5 +88,6 @@ func _finishes_after_the_last_breadcrumb_dies() -> void:
 
 
 func _fail(message: String) -> void:
+	_test_failed = true
 	push_error(message)
 	quit(1)
