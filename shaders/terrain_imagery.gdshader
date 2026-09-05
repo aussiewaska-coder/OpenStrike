@@ -35,6 +35,7 @@ float hash12(vec2 p) {
 
 void fragment() {
 	vec3 col = has_imagery ? texture(imagery, UV * uv_scale + uv_offset).rgb : vec3(0.36, 0.38, 0.34);
+	vec3 photo = col;
 
 	float sea = 1.0 - smoothstep(sea_level_m, sea_level_m + 0.6, world_pos.y);
 
@@ -55,13 +56,22 @@ void fragment() {
 	col *= os_terrain_tint;
 	col *= 1.0 - os_cloud_shadow * os_cloud_density(world_pos.xz);
 
-	// City lights: scattered warm points on land, only after dark.
-	if (os_night > 0.01 && sea < 0.5) {
+	// City lights: scattered warm points after dark, but only where the
+	// photograph looks built. The height grid samples every hundred metres or
+	// so, far too coarse to tell a canal from its bank, which is why the sea
+	// test alone left lights floating on the water. The imagery knows: roofs,
+	// roads and carparks are bright and grey, bush and cane are green, and
+	// water is dark. That one test keeps the lights off the Broadwater and out
+	// of the hinterland at the same time.
+	float lum = dot(photo, vec3(0.299, 0.587, 0.114));
+	float green = photo.g - max(photo.r, photo.b);
+	float built = smoothstep(0.10, 0.24, lum) * (1.0 - smoothstep(0.02, 0.10, green)) * float(has_imagery);
+	if (os_night > 0.01 && sea < 0.5 && built > 0.0) {
 		vec2 cell = floor(world_pos.xz / 14.0);
 		float on = step(1.0 - lights_density, hash12(cell));
 		vec2 in_cell = fract(world_pos.xz / 14.0) - 0.5;
 		float point = 1.0 - smoothstep(0.08, 0.28, length(in_cell));
-		col += vec3(1.0, 0.78, 0.5) * on * point * os_night * 1.1;
+		col += vec3(1.0, 0.78, 0.5) * on * point * os_night * built * 1.1;
 	}
 
 	ALBEDO = col;

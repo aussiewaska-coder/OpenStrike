@@ -3,9 +3,10 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bwwh28r7fvh4p"
-path="res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-dd1a1742f9da70efda441376f73e25d7.ctex"
+path.etc2="res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-dd1a1742f9da70efda441376f73e25d7.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["etc2_astc"],
+"vram_texture": true
 }
 generator_parameters={
 "md5": "cf9ba8fa6ec5ecbabff27aa374a44b40"
@@ -14,11 +15,11 @@ generator_parameters={
 [deps]
 
 source_file="res://3dassets/f-22_raptor_-_fighter_jet_-_free_2.png"
-dest_files=["res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-dd1a1742f9da70efda441376f73e25d7.ctex"]
+dest_files=["res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-dd1a1742f9da70efda441376f73e25d7.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

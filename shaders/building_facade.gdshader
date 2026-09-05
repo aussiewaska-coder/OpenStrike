@@ -77,7 +77,13 @@ void fragment() {
 	float h = clamp(world_pos.y / 30.0, 0.0, 1.0);
 	col *= mix(1.0 - weathering, 1.0, h);
 
-	ALBEDO = col * os_terrain_tint;
+	// os_terrain_tint stands in for lighting on the terrain, which is
+	// unshaded -- that is how night is made there. This surface is lit for
+	// real, so multiplying by the tint whole darkens it a second time and
+	// leaves the city a row of black slabs at dusk against lit ground.
+	// Take the tint's colour and leave its brightness to the light.
+	vec3 cast = os_terrain_tint / max(max(os_terrain_tint.r, max(os_terrain_tint.g, os_terrain_tint.b)), 0.001);
+	ALBEDO = col * cast;
 
 	// glass pixels are the darker blue-ish ones; cheap luminance-based gloss
 	float glassiness = smoothstep(0.35, 0.15, dot(tex.rgb, vec3(0.333)));
