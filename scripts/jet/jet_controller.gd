@@ -480,11 +480,21 @@ func _find_visual() -> void:
 ## The GLB is ten times real scale. Measure the wingspan and scale to the real
 ## one, so swapping the asset cannot silently change the aircraft's size.
 func _scale_to_reference() -> void:
-	var bounds := _measure_bounds()
+	var bounds := _oriented_bounds()
 	if bounds.size.z <= 0.001:
 		return
-	var factor := reference_wingspan_m / bounds.size.z
-	_visual.scale = Vector3.ONE * factor
+	var factor: float = airframe.reference_wingspan_m / bounds.size.z
+	_visual.transform = Transform3D(
+		airframe.model_basis.scaled(Vector3.ONE * factor), _visual.position
+	)
+
+
+## The model's own bounds, turned into the engine's convention: length on X,
+## up on Y, span on Z. The Raptor's GLB already arrives that way and its basis
+## is identity; the Nighthawk's does not, and measuring it raw would read its
+## 2.92 m height as its wingspan.
+func _oriented_bounds() -> AABB:
+	return Transform3D(airframe.model_basis, Vector3.ZERO) * _measure_bounds()
 
 
 ## The model carries both a gear-up and a gear-down assembly, and renders them
@@ -567,11 +577,15 @@ func _measure_cockpit() -> void:
 	var bounds := _mesh_bounds(tub) if tub != null else _measure_bounds()
 	if bounds.size.is_zero_approx():
 		return
-	_cockpit_local = Vector3(
-		bounds.position.x + bounds.size.x * cockpit_seat_fraction,
-		bounds.position.y + bounds.size.y * cockpit_eye_height_fraction,
-		bounds.get_center().z
+	var oriented: AABB = Transform3D(airframe.model_basis, Vector3.ZERO) * bounds
+	var seat := Vector3(
+		oriented.position.x + oriented.size.x * cockpit_seat_fraction,
+		oriented.position.y + oriented.size.y * cockpit_eye_height_fraction,
+		oriented.get_center().z
 	)
+	# _visual carries the corrective rotation now, and this is multiplied by
+	# it, so hand back a point in the model's own frame.
+	_cockpit_local = airframe.model_basis.inverse() * seat
 
 
 ## One node's bounds, in the visual's own units.
@@ -602,7 +616,7 @@ func get_cockpit_transform() -> Transform3D:
 	if _visual == null:
 		return global_transform
 	var frame := _visual.global_transform
-	var orientation := frame.basis.orthonormalized()
+	var orientation := global_transform.basis.orthonormalized()
 	# Tilt down about the right wing so the panel is in frame under the HUD.
 	orientation = orientation.rotated(orientation.z, deg_to_rad(cockpit_pitch_degrees))
 	return Transform3D(orientation, frame * _cockpit_local)
@@ -612,7 +626,7 @@ func get_interpolated_cockpit_transform() -> Transform3D:
 	if _visual == null or not _visual.is_inside_tree():
 		return get_cockpit_transform()
 	var frame := _visual.get_global_transform_interpolated()
-	var orientation := frame.basis.orthonormalized()
+	var orientation := get_global_transform_interpolated().basis.orthonormalized()
 	orientation = orientation.rotated(orientation.z, deg_to_rad(cockpit_pitch_degrees))
 	return Transform3D(orientation, frame * _cockpit_local)
 

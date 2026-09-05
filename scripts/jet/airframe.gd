@@ -39,6 +39,17 @@ var thrust_idle_g := 0.05
 var control_authority_floor := 0.10
 var thrust_vector_authority := 0.38
 
+# Rigging
+var scene_path := "res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb"
+## Applied to the visual root before anything is measured, so every aircraft
+## presents its length on X, its up on Y and its span on Z -- the convention
+## aero_model.alpha_beta() documents and _scale_to_reference() depends on.
+## The Raptor's GLB already arrives that way, so its basis is identity and it
+## is what defines the convention.
+var model_basis := Basis.IDENTITY
+var reference_wingspan_m := 13.56
+var hull_clearance_m := 2.5
+
 
 ## Peak lift coefficient, at the stall angle. aero_model.gd wrote this as
 ## CL_SLOPE * 0.55850536, the radian value of 32 degrees spelled out.
@@ -103,4 +114,14 @@ static func nighthawk() -> Airframe:
 
 	# No vectoring nozzles. Both triggers stays an airbrake and nothing more.
 	f.thrust_vector_authority = 0.0
+
+	f.scene_path = "res://3dassets/f117_nighthawk.glb"
+	# The GLB arrives span on X, length on Y and up on Z, so it needs turning
+	# onto the Raptor's convention: length on X, up on Y, span on Z. Found by
+	# trying every proper rotation and keeping the one that measures 20.24 m
+	# long and 3.70 m tall against a real 20.09 by 3.78, rather than by
+	# reasoning about which way round Basis takes its arguments.
+	f.model_basis = Basis(Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3(0, 0, 1).cross(Vector3(0, 1, 0)))
+	f.reference_wingspan_m = 13.20
+	f.hull_clearance_m = 1.6
 	return f
