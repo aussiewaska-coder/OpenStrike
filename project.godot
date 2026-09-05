@@ -1,5 +1,6 @@
 ; Engine configuration file.
-; OpenStrike location-aware proof-of-concept.
+; OpenStrike prototype flight simulator.
+; Author: DashOps <chris@dashops.au>.
 
 config_version=5
 
