@@ -34,8 +34,8 @@
 ```
 [shader_globals]
 
-os_cloud_noise={"type": "sampler2D", "value": "res://textures/cloud_noise.tres"}
-os_water_normal={"type": "sampler2D", "value": "res://textures/water_normal.tres"}
+os_cloud_noise={"type": "sampler2D", "value": "res://assets/textures/cloud_noise.tres"}
+os_water_normal={"type": "sampler2D", "value": "res://assets/textures/water_normal.tres"}
 os_cloud_wind={"type": "vec2", "value": Vector2(0, 0)}
 os_cloud_coverage={"type": "float", "value": 0.45}
 os_cloud_shadow={"type": "float", "value": 0.35}

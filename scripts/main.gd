@@ -1,7 +1,7 @@
 extends Node3D
 
-const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
-const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const HELICOPTER_SCENE := preload("res://assets/models/ah-64d_apache_longbow_usa.glb")
+const JET_SCENE := preload("res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb")
 const JET_CAMERA := preload("res://scripts/camera/jet_camera.gd")
 const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")

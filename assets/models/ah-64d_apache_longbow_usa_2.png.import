@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cpa6jccrkndmw"
-path="res://.godot/imported/ocean_tower_0.png-46931a95b8190a4bbb29aea5d57aca32.ctex"
+uid="uid://sdxmgbv8ncd4"
+path="res://.godot/imported/ah-64d_apache_longbow_usa_2.png-6c13b3a6cf1382feaf33ed32d2c5df89.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "e320f40c9e95a2331ba9c38902148569"
+"md5": "fcd6bcb56c1689fcef28b57c22475bad"
 }
 
 [deps]
 
-source_file="res://3dassets/ocean_tower_0.png"
-dest_files=["res://.godot/imported/ocean_tower_0.png-46931a95b8190a4bbb29aea5d57aca32.ctex"]
+source_file="res://assets/models/ah-64d_apache_longbow_usa_2.png"
+dest_files=["res://.godot/imported/ah-64d_apache_longbow_usa_2.png-6c13b3a6cf1382feaf33ed32d2c5df89.ctex"]
 
 [params]
 

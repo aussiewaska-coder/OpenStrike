@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://dhqc62n8cjdho"
-path="res://.godot/imported/soul_tower.glb-81ce2ae636dc75be27fed7430e273de6.scn"
+uid="uid://b3a6eriplybwt"
+path="res://.godot/imported/q1_tower.glb-b2b923b5fa4102c51bcb4f561e03c7d5.scn"
 
 [deps]
 
-source_file="res://3dassets/soul_tower.glb"
-dest_files=["res://.godot/imported/soul_tower.glb-81ce2ae636dc75be27fed7430e273de6.scn"]
+source_file="res://assets/models/q1_tower.glb"
+dest_files=["res://.godot/imported/q1_tower.glb-b2b923b5fa4102c51bcb4f561e03c7d5.scn"]
 
 [params]
 

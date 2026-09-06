@@ -16,7 +16,7 @@ const DRONE := preload("res://scripts/entities/drone.gd")
 const ENTITY_HIT_INDEX := preload("res://scripts/entities/entity_hit_index.gd")
 const BOMB_FLIGHT := preload("res://scripts/weapons/bomb_flight.gd")
 const BOMB_PROFILE := preload("res://scripts/weapons/bomb_damage_profile.gd")
-const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const JET_SCENE := preload("res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb")
 
 signal bomb_released(round_data: RefCounted)
 

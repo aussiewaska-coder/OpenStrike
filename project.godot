@@ -47,11 +47,11 @@ common/physics_interpolation=true
 
 os_cloud_noise={
 "type": "sampler2D",
-"value": "res://textures/cloud_noise.tres"
+"value": "res://assets/textures/cloud_noise.tres"
 }
 os_water_normal={
 "type": "sampler2D",
-"value": "res://textures/water_normal.tres"
+"value": "res://assets/textures/water_normal.tres"
 }
 os_cloud_wind={
 "type": "vec2",

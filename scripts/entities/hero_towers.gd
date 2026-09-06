@@ -29,12 +29,12 @@ static func layout_for(region_id: String) -> Array:
 	if region_id != SURFERS_REGION:
 		return []
 	return [
-		{"name": "Q1", "lat": -28.0067, "lon": 153.4300, "scene": "res://3dassets/q1_tower.glb", "yaw_degrees": 0.0},
+		{"name": "Q1", "lat": -28.0067, "lon": 153.4300, "scene": "res://assets/models/q1_tower.glb", "yaw_degrees": 0.0},
 		# Soul's sail crown crests over one corner and the README says to turn
 		# it so the peak faces the ocean, which is +X here. Which corner the
 		# model puts the peak on is a device check; start square.
-		{"name": "Soul", "lat": -28.00117, "lon": 153.43049, "scene": "res://3dassets/soul_tower.glb", "yaw_degrees": 0.0},
-		{"name": "Ocean", "lat": -27.9961, "lon": 153.4297, "scene": "res://3dassets/ocean_tower.glb", "yaw_degrees": 0.0},
+		{"name": "Soul", "lat": -28.00117, "lon": 153.43049, "scene": "res://assets/models/soul_tower.glb", "yaw_degrees": 0.0},
+		{"name": "Ocean", "lat": -27.9961, "lon": 153.4297, "scene": "res://assets/models/ocean_tower.glb", "yaw_degrees": 0.0},
 	]
 
 

@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dckhd2usfqy5e"
-path="res://.godot/imported/soul_tower_0.png-79ac4e980b8dc312553f1408dcd5dcee.ctex"
+uid="uid://5swlrb275dcc"
+path="res://.godot/imported/q1_tower_0.png-f013ade3d844a1bc6f0686beb7a80c8e.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "1fa7b9f702b5976ce439766aca69d63d"
+"md5": "aa25bae70dac1846c694a32d0084d1aa"
 }
 
 [deps]
 
-source_file="res://3dassets/soul_tower_0.png"
-dest_files=["res://.godot/imported/soul_tower_0.png-79ac4e980b8dc312553f1408dcd5dcee.ctex"]
+source_file="res://assets/models/q1_tower_0.png"
+dest_files=["res://.godot/imported/q1_tower_0.png-f013ade3d844a1bc6f0686beb7a80c8e.ctex"]
 
 [params]
 

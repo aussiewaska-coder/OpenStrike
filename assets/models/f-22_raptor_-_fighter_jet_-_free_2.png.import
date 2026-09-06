@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://5swlrb275dcc"
-path="res://.godot/imported/q1_tower_0.png-652a06faa55bfe572c66703258eb21c1.ctex"
+uid="uid://bwwh28r7fvh4p"
+path="res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-02f361349f704b569f421d4c3af9b3aa.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "aa25bae70dac1846c694a32d0084d1aa"
+"md5": "cf9ba8fa6ec5ecbabff27aa374a44b40"
 }
 
 [deps]
 
-source_file="res://3dassets/q1_tower_0.png"
-dest_files=["res://.godot/imported/q1_tower_0.png-652a06faa55bfe572c66703258eb21c1.ctex"]
+source_file="res://assets/models/f-22_raptor_-_fighter_jet_-_free_2.png"
+dest_files=["res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-02f361349f704b569f421d4c3af9b3aa.ctex"]
 
 [params]
 

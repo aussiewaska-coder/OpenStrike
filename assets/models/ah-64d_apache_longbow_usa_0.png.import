@@ -2,19 +2,19 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bwwh28r7fvh4p"
-path="res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-dd1a1742f9da70efda441376f73e25d7.ctex"
+uid="uid://e55ecus6rbut"
+path="res://.godot/imported/ah-64d_apache_longbow_usa_0.png-bbc341794af765f0d5d3942d6c07a7ef.ctex"
 metadata={
 "vram_texture": false
 }
 generator_parameters={
-"md5": "cf9ba8fa6ec5ecbabff27aa374a44b40"
+"md5": "c99a74c555371a433d121f551d6c6398"
 }
 
 [deps]
 
-source_file="res://3dassets/f-22_raptor_-_fighter_jet_-_free_2.png"
-dest_files=["res://.godot/imported/f-22_raptor_-_fighter_jet_-_free_2.png-dd1a1742f9da70efda441376f73e25d7.ctex"]
+source_file="res://assets/models/ah-64d_apache_longbow_usa_0.png"
+dest_files=["res://.godot/imported/ah-64d_apache_longbow_usa_0.png-bbc341794af765f0d5d3942d6c07a7ef.ctex"]
 
 [params]
 

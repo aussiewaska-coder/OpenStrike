@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://bd1k0i25vdpfk"
-path="res://.godot/imported/ah-64d_apache_longbow_usa.glb-023c12b92f84c6136df58b79bc3124e6.scn"
+uid="uid://ckr2yoaq6blg8"
+path="res://.godot/imported/f-22_raptor_-_fighter_jet_-_free.glb-6cf3f0a6c806452917fda6cf29a1178c.scn"
 
 [deps]
 
-source_file="res://ah-64d_apache_longbow_usa.glb"
-dest_files=["res://.godot/imported/ah-64d_apache_longbow_usa.glb-023c12b92f84c6136df58b79bc3124e6.scn"]
+source_file="res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb"
+dest_files=["res://.godot/imported/f-22_raptor_-_fighter_jet_-_free.glb-6cf3f0a6c806452917fda6cf29a1178c.scn"]
 
 [params]
 
@@ -24,7 +24,7 @@ nodes/import_as_skeleton_bones=false
 nodes/use_name_suffixes=true
 nodes/use_node_type_suffixes=true
 meshes/ensure_tangents=true
-meshes/generate_lods=false
+meshes/generate_lods=true
 meshes/create_shadow_meshes=true
 meshes/light_baking=1
 meshes/lightmap_texel_size=0.2

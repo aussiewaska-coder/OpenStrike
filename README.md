@@ -1,3 +1,5 @@
+![OpenStrike Air Show placard — F-22 over Surfers Paradise](docs/media/openstrike-placard.png)
+
 # OpenStrike
 
 **A realism-focused combat flight prototype by DashOps, set over Australia's Gold Coast.**
@@ -105,6 +107,22 @@ Bindings can be changed in Settings. Labels below show Xbox / PlayStation equiva
 
 Tap a world target to select it. Use Settings to choose an aircraft and adjust the controller layout before flying.
 
+## Repository layout
+
+| Location | Contents |
+| --- | --- |
+| `assets/models/` | Aircraft, ground units, landmark models, their textures, and model credits |
+| `assets/textures/` | Shared terrain/building textures and procedural noise resources |
+| `assets/audio/` | Engine audio and source notes |
+| `scenes/`, `scripts/`, `shaders/` | Game scenes, systems, and rendering code |
+| `data/` | Regional terrain data and geographic attribution |
+| `docs/` | Development notes, design plans, and project artwork |
+| `docs/specs/` | [Original Android MVP specification](docs/specs/STRIKE_Android_MVP_Game_Spec.docx) |
+| `tests/`, `tools/` | Automated checks, asset utilities, and development tools |
+| `addons/`, `android/` | Godot plugins and Android platform integration |
+
+`project.godot` and `export_presets.cfg` stay at the root so Godot can open and export the project. Generated imports and local builds are ignored by Git.
+
 ## Running from source
 
 The project uses **Godot 4.7** with the **Compatibility** renderer. Development builds currently use Godot 4.7.2. Open `project.godot` in the editor, allow assets to import, connect a controller, and run the project.
@@ -138,7 +156,7 @@ This is an actively developed single-player prototype. Flight tuning, aircraft p
 
 Created by **DashOps**. Third-party aircraft models, audio, imagery, and geographic data have their own source and attribution notes:
 
-- [Aircraft models and asset credits](3dassets/ATTRIBUTION.md)
+- [Aircraft models and asset credits](assets/models/ATTRIBUTION.md)
 - [Terrain, imagery, and OpenStreetMap attribution](data/regions/ATTRIBUTION.md)
 - [Engine audio source notes](assets/audio/README.md)
 

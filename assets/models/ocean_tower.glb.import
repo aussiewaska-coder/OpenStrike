@@ -4,12 +4,12 @@ importer="scene"
 importer_version=1
 type="PackedScene"
 uid="uid://cqbred7ou7u85"
-path="res://.godot/imported/ocean_tower.glb-921a3e869d87de23319acd80726a7dfe.scn"
+path="res://.godot/imported/ocean_tower.glb-b0910f5b3c7e695fe615d273398d1b5d.scn"
 
 [deps]
 
-source_file="res://3dassets/ocean_tower.glb"
-dest_files=["res://.godot/imported/ocean_tower.glb-921a3e869d87de23319acd80726a7dfe.scn"]
+source_file="res://assets/models/ocean_tower.glb"
+dest_files=["res://.godot/imported/ocean_tower.glb-b0910f5b3c7e695fe615d273398d1b5d.scn"]
 
 [params]
 

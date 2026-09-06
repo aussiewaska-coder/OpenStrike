@@ -147,5 +147,5 @@ static func emit_building(
 static func make_material() -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://shaders/building_facade.gdshader") as Shader
-	mat.set_shader_parameter("facades", load("res://textures/facade_array_strip.png"))
+	mat.set_shader_parameter("facades", load("res://assets/textures/facade_array_strip.png"))
 	return mat
