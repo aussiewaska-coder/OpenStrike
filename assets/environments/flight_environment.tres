@@ -28,4 +28,3 @@ fog_light_color = Color(0.78, 0.88, 0.96, 1)
 fog_density = 0.0001
 fog_aerial_perspective = 0.6
 fog_sky_affect = 0.25
-
