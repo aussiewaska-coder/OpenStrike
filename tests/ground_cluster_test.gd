@@ -28,8 +28,8 @@ func _run() -> void:
 			check(target.position.y >= 15, "target bounds sit above the sampled terrain")
 		check(names.size() == 6, "each theatre has city and hinterland clusters")
 		for count in names.values():
-			check(count == 4, "clusters contain four independently targetable sites")
-		check(field.hit_index.entity_count() == 24, "repopulation must replace old collision entries")
+			check(count == 1, "reduced enemy density keeps one independently targetable site per cluster")
+		check(field.hit_index.entity_count() == 6, "repopulation must replace old collision entries")
 	var coords := []
 	var clusters := LAYOUT.clusters_for("au_gold_coast_tweed_corridor", 25000.0, func(lat, lon):
 		coords.append(Vector2(lat, lon))

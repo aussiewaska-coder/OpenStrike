@@ -45,17 +45,16 @@ func _run() -> void:
 	cloud.set_process(false)
 	Engine.physics_ticks_per_second = 10
 	Engine.max_fps = 60
-	cloud.get_global_transform_interpolated()
-	cloud.reset_physics_interpolation()
+	check(not cloud.is_physics_interpolated(), "render-frame cloud positioning must disable physics interpolation")
 	var stale_frames := 0
 	for frame in range(18):
 		await process_frame
 		camera.position.x += 1.0
 		cloud._process(1.0 / 60.0)
-		if not cloud.get_global_transform_interpolated().origin.is_equal_approx(cloud.global_position):
+		if not cloud.global_position.is_equal_approx(camera.global_position):
 			stale_frames += 1
 	print("LIGHTING_SWEEP stale cloud frames=%d" % stale_frames)
-	check(stale_frames == 0, "a cloud sheet moved every render frame must not also receive physics interpolation")
+	check(stale_frames == 0, "the fullscreen cloud pass must follow the active camera every render frame")
 	stage.free()
 	if not failed:
 		print("LIGHTING_WIRING_TEST_PASS")

@@ -127,8 +127,7 @@ func _run() -> void:
 	for frame in range(240):
 		held_basis = CAMERA.tracking_basis(overhead, reference, held_basis, true)
 	check(held_basis.is_finite() and held_basis.y.dot(overhead_basis.y) > 0.9999, "holding an overhead target must not accumulate neck roll")
-	# A deliberate view change must own the next camera update. The retained
-	# weapon target must not turn the new view back toward the old contact.
+	# Switching camera mounts must keep an actively tracked contact centred.
 	for from_mode in range(CAMERA.Mode.size()):
 		for step in [-1, 1]:
 			main._jet_view = from_mode
@@ -137,16 +136,13 @@ func _run() -> void:
 			tracker.cycle_view_lock([123], camera.position, target_direction)
 			check(tracker.tracking_view, "view-change fixture must begin tracking")
 			main._cycle_jet_view(step)
-			check(not tracker.tracking_view, "switching camera views must release camera tracking")
+			check(tracker.tracking_view, "switching camera views must preserve active tracking")
 			check(tracker.locked_handle() == 123, "switching views must retain weapon selection")
 			check(main._free_look.is_zero_approx(), "switching views must clear the previous look angle")
-			var selected_basis: Basis = camera.basis
 			for frame in range(60):
 				main._update_jet_camera(1.0 / 60.0)
 				main._apply_target_tracking(1.0 / 60.0)
-			check((-camera.basis.z).dot(-selected_basis.z) > 0.9999, "old target must not pull the new camera view away")
-			if main._jet_view == CAMERA.Mode.COCKPIT:
-				check((-camera.basis.z).dot(jet.basis.x) > 0.9999, "returning to FPV must look straight down the nose")
+			check((-camera.basis.z).dot((Vector3(tracker.locked().position) - camera.position).normalized()) > 0.9999, "each camera mount must keep the tracked contact centred")
 	for mode in [CAMERA.Mode.COCKPIT, CAMERA.Mode.PURSUIT, CAMERA.Mode.TRACK]:
 		main._jet_view = mode
 		tracker.stop_view_tracking()
