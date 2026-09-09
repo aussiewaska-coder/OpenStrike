@@ -1,6 +1,5 @@
-// The one cloud field. The sky draws it overhead, the terrain darkens under
-// it, the deck quad shows it up close: all three sample this, so clouds,
-// their shadows and the deck line up. World XZ in metres.
+// Shared weather coverage map for volumetric cloud bodies and terrain shadows.
+// World XZ in metres; the volume adds height shaping and 3D erosion.
 
 global uniform sampler2D os_cloud_noise;
 global uniform vec2 os_cloud_wind;      // metres of drift so far
@@ -13,6 +12,16 @@ float os_cloud_density(vec2 world_xz) {
 	float n = texture(os_cloud_noise, uv).r * 0.7
 		+ texture(os_cloud_noise, uv * 3.1 + vec2(0.37, 0.11)).r * 0.3;
 	// Coverage slides the threshold: at 0 nothing passes, at 1 nearly all.
+	float threshold = mix(0.78, 0.28, os_cloud_coverage);
+	return smoothstep(threshold, threshold + 0.22, n);
+}
+
+// Ray marching has divergent control flow and jittered positions: implicit
+// screen derivatives select unstable mip levels. Use an explicit footprint.
+float os_cloud_density_lod(vec2 world_xz, float mip) {
+	vec2 uv = (world_xz + os_cloud_wind) / OS_CLOUD_SCALE_M;
+	float n = textureLod(os_cloud_noise, uv, mip).r * 0.7
+		+ textureLod(os_cloud_noise, uv * 3.1 + vec2(0.37, 0.11), mip).r * 0.3;
 	float threshold = mix(0.78, 0.28, os_cloud_coverage);
 	return smoothstep(threshold, threshold + 0.22, n);
 }

@@ -59,6 +59,12 @@ const COORDINATION_OFF_RATE := 1.10          ## rad/s of roll where it is fully 
 ## and departs the aircraft. This is the clamp that stops that.
 const MAX_SIDESLIP_RATE := 0.12
 
+## Gameplay path stabilisation. The aerodynamic side force alone left over
+## 30 degrees of sideways travel after release at 55 m/s. Turn the travel
+## direction back toward the nose promptly, preserving speed and body-vertical
+## motion. Deliberate rudder fades this assistance so pedals can still slip.
+const FORWARD_FLIGHT_RESPONSE := 8.0
+
 ## Dihedral effect: a slipping aircraft rolls away from the slip, because the
 ## into-wind wing meets the air at a higher angle and lifts. This is the real
 ## mechanism by which rudder rolls an aeroplane, and the model had none of it --
@@ -86,6 +92,17 @@ const WINGS_LEVEL_GAIN := 2.4
 ## wall: a hard clamp at 260 m/s stops the aircraft dead and reads as a bug.
 const TURN_BACK_RAMP_M := 900.0
 const MAX_TURN_BACK_BANK_DEGREES := 55.0
+
+
+func forward_flight_velocity(velocity: Vector3, attitude: Basis, rudder: float, delta: float) -> Vector3:
+	var local := attitude.inverse() * velocity
+	var forward_speed := Vector2(local.x, local.z).length()
+	var slip := atan2(local.z, local.x)
+	var assistance := 1.0 - clampf(absf(rudder), 0.0, 1.0)
+	slip *= exp(-FORWARD_FLIGHT_RESPONSE * assistance * delta)
+	local.x = forward_speed * cos(slip)
+	local.z = forward_speed * sin(slip)
+	return attitude * local
 
 
 ## The steepest bank whose level turn the wing can actually hold at this speed.
@@ -121,7 +138,8 @@ func coordination_weight(roll_rate: float) -> float:
 func level_turn_pitch_rate(
 	bank_radians: float,
 	speed_mps: float,
-	roll_rate := 0.0
+	roll_rate := 0.0,
+	nose_pitch := 0.0
 ) -> float:
 	if speed_mps < 1.0:
 		return 0.0
@@ -129,7 +147,7 @@ func level_turn_pitch_rate(
 	var bank := clampf(bank_radians, -limit, limit)
 	var cosine := maxf(cos(bank), 0.01)
 	return (GRAVITY / speed_mps) * (sin(bank) * sin(bank)) / cosine \
-		* coordination_weight(roll_rate)
+		* coordination_weight(roll_rate) * cos(nose_pitch)
 
 
 ## Body yaw rate that keeps the turn coordinated, so the aircraft turns with the
@@ -137,13 +155,28 @@ func level_turn_pitch_rate(
 func level_turn_yaw_rate(
 	bank_radians: float,
 	speed_mps: float,
-	roll_rate := 0.0
+	roll_rate := 0.0,
+	nose_pitch := 0.0
 ) -> float:
 	if speed_mps < 1.0:
 		return 0.0
 	var limit := sustainable_bank(speed_mps)
 	var bank := clampf(bank_radians, -limit, limit)
-	return (GRAVITY / speed_mps) * sin(bank) * coordination_weight(roll_rate)
+	return (GRAVITY / speed_mps) * sin(bank) * coordination_weight(roll_rate) * cos(nose_pitch)
+
+
+## Resolve the automatic heading turn into all three body axes. In a climb
+## or descent, a turn about world-up includes a body roll component. Omitting
+## it deepened a neutral 30-degree bank to 39 degrees in ten seconds. Together
+## with the pitch/yaw cosine terms this holds the selected bank and pitch;
+## sin/cos also stay finite through vertical flight.
+func level_turn_roll_rate(
+	bank_radians: float,
+	speed_mps: float,
+	nose_pitch: float,
+	roll_rate := 0.0
+) -> float:
+	return -turn_rate(bank_radians, speed_mps) * sin(nose_pitch) * coordination_weight(roll_rate)
 
 
 ## Rate the aircraft's heading actually sweeps at a given bank.
@@ -324,9 +357,10 @@ func commanded_pitch_rate(
 	alpha_radians: float,
 	roll_rate := 0.0,
 	thrust_fraction := 1.0,
-	vectoring := false
+	vectoring := false,
+	nose_pitch := 0.0
 ) -> float:
-	var hold := level_turn_pitch_rate(bank_radians, speed_mps, roll_rate)
+	var hold := level_turn_pitch_rate(bank_radians, speed_mps, roll_rate, nose_pitch)
 	var boost := VECTORED_RATE_GAIN if vectoring else 1.0
 	var pilot := stick * maximum_rate \
 		* aero.pitch_authority(speed_mps, thrust_fraction) * boost

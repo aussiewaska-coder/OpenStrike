@@ -7,11 +7,15 @@ uniform bool has_elevation = false;
 uniform int map_style = 1;
 uniform vec2 centre_uv = vec2(0.5);
 uniform vec2 span_uv = vec2(1.0);
+uniform float map_heading = 0.0;
 uniform vec2 elevation_texel = vec2(0.002);
 uniform float elevation_min = 0.0;
 uniform float elevation_max = 1000.0;
 void fragment() {
-	vec2 uv = centre_uv + (UV - 0.5) * span_uv;
+	vec2 offset = (UV - 0.5) * span_uv;
+	float c = cos(map_heading);
+	float s = sin(map_heading);
+	vec2 uv = centre_uv + vec2(c * offset.x - s * offset.y, s * offset.x + c * offset.y);
 	bool inside = all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
 	vec3 colour = vec3(0.025, 0.07, 0.075);
 	if (inside && has_elevation) {

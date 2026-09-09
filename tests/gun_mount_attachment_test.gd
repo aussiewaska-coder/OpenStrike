@@ -1,6 +1,6 @@
 extends SceneTree
 
-const AIRFRAME := preload("res://ah-64d_apache_longbow_usa.glb")
+const AIRFRAME := preload("res://assets/models/ah-64d_apache_longbow_usa.glb")
 const GUN_MOUNT := preload("res://scripts/weapons/gun_mount.gd")
 
 

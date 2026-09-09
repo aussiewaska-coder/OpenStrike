@@ -1,4 +1,5 @@
 extends Node3D
+const WAVE_SHADER := preload("res://shaders/blast_wave.gdshader")
 const MATERIALS := preload("res://scripts/effects/effect_materials.gd")
 
 # Material-driven impact presentation. The cannon reports an event; this decides
@@ -82,6 +83,8 @@ var _decal_cells: Dictionary = {}
 var _decal_lifetime := 22.0
 var _explosion_lights: Array[OmniLight3D] = []
 var _explosion_light_cursor := 0
+var _waves: Array[Dictionary] = []
+var _wave_cursor := 0
 
 
 func _ready() -> void:
@@ -94,11 +97,26 @@ func _ready() -> void:
 	for index in range(4):
 		var light := OmniLight3D.new()
 		light.light_color = Color(1.0, 0.48, 0.12)
-		light.omni_range = 42.0
+		light.omni_range = 110.0
 		light.shadow_enabled = false
 		light.visible = false
 		add_child(light)
 		_explosion_lights.append(light)
+	for index in 8:
+		var wave := MeshInstance3D.new()
+		var sphere := SphereMesh.new()
+		sphere.radius = 1.0
+		sphere.height = 2.0
+		sphere.radial_segments = 32
+		sphere.rings = 12
+		wave.mesh = sphere
+		var material := ShaderMaterial.new()
+		material.shader = WAVE_SHADER
+		wave.material_override = material
+		wave.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		wave.visible = false
+		add_child(wave)
+		_waves.append({"mesh": wave, "age": 2.0})
 
 
 func spawn_impact(hit_result: RefCounted, round_data: RefCounted) -> void:
@@ -118,20 +136,38 @@ func spawn_impact(hit_result: RefCounted, round_data: RefCounted) -> void:
 
 func spawn_explosion(position: Vector3) -> void:
 	var fire := {
-		"primary": Color(1.0, 0.55, 0.12), "count": 48, "speed": 18.0,
-		"spread": 180.0, "life": 0.9, "gravity": 0.05,
-		"scale_min": 8.0, "scale_max": 18.0, "glow": true,
+		"primary": Color(1.0, 0.55, 0.12), "count": 48, "speed": 44.0,
+		"spread": 180.0, "life": 1.25, "gravity": 0.05,
+		"scale_min": 22.0, "scale_max": 48.0, "glow": true,
 	}
 	var smoke := {
-		"primary": Color(0.26, 0.25, 0.24), "count": 36, "speed": 9.0,
+		"primary": Color(0.26, 0.25, 0.24), "count": 36, "speed": 20.0,
 		"spread": 150.0, "life": 2.7, "gravity": -0.08,
-		"scale_min": 9.0, "scale_max": 22.0,
+		"scale_min": 20.0, "scale_max": 45.0,
 	}
 	_emit_burst(position, Vector3.UP, fire)
 	_emit_burst(position, Vector3.UP, smoke)
 	if quality != Quality.PERFORMANCE:
 		_emit_sparks(position, Vector3.UP, {"sparks": 32, "speed": 44.0, "spread": 180.0, "secondary": Color(1.0, 0.75, 0.28)})
 	_flash_explosion(position)
+	var wave := _waves[_wave_cursor]
+	_wave_cursor = (_wave_cursor + 1) % _waves.size()
+	wave.age = 0.0
+	wave.mesh.global_position = position + Vector3.UP
+	wave.mesh.scale = Vector3.ONE
+	wave.mesh.visible = true
+	wave.mesh.material_override.set_shader_parameter("opacity", 0.5)
+
+
+func _process(delta: float) -> void:
+	for wave in _waves:
+		if not wave.mesh.visible:
+			continue
+		wave.age += delta
+		var progress := clampf(wave.age / 1.4, 0.0, 1.0)
+		wave.mesh.scale = Vector3.ONE * lerpf(1.0, 180.0, 1.0 - pow(1.0 - progress, 2.0))
+		wave.mesh.material_override.set_shader_parameter("opacity", (1.0 - progress) * 0.5)
+		wave.mesh.visible = progress < 1.0
 
 
 func _apply_quality() -> void:

@@ -1,0 +1,45 @@
+extends SceneTree
+const JET = preload("res://scripts/jet/jet_controller.gd")
+const AIRFRAME = preload("res://scripts/jet/airframe.gd")
+const TRACKER = preload("res://scripts/targeting/target_tracker.gd")
+func _init(): call_deferred("run")
+func run():
+	var jet = JET.new()
+	jet.airframe = AIRFRAME.lightning()
+	var model = load(jet.airframe.scene_path).instantiate()
+	model.name = "HeroJet"
+	jet.add_child(model)
+	root.add_child(jet)
+	jet.set_physics_process(false)
+	await process_frame
+	var display = jet.cockpit_mfd
+	assert(is_instance_valid(display), "F-35 must mount a live display in its cockpit")
+	assert(String(display.get_parent().get_parent().name) == "F-35-cockpit_2", "display must move with the authored panel")
+	assert(display.viewport.size == Vector2i(512, 416), "MFD must retain its crisp bounded render target")
+	assert(display.screen.material_override.albedo_texture == display.viewport.get_texture(), "physical screen must show the live scope")
+	var contact = TRACKER.contact(9, TRACKER.Kind.AIR_JET, Vector3(1000, 0, 0), Vector3.ZERO, "BANDIT")
+	for heading in [0.0, PI * 0.5, PI, PI * 1.5]:
+		display.set_state(Vector3.ZERO, heading, [contact], 9, 4000.0)
+		assert(is_equal_approx(display.scope._map_material.get_shader_parameter("map_heading"), heading), "terrain must rotate with aircraft heading")
+		assert(display.scope._heading == heading and display.scope._locked_handle == 9, "map and live contacts must share heading and lock")
+		var nose := Vector3(sin(heading), 0, -cos(heading)) * 1000
+		var at: Vector2 = display.scope.blip_offset(nose, heading, 4000, 90)
+		assert(absf(at.x) < 0.001 and at.y < 0, "ahead must remain upward at every heading")
+	display.set_active(true)
+	assert(display.is_processing() and display.scope.is_processing(), "cockpit view must animate the sweep")
+	var camera := Camera3D.new()
+	root.add_child(camera)
+	var seat: Transform3D = jet.get_cockpit_transform()
+	camera.position = seat.origin
+	camera.look_at(seat.origin + seat.basis.x, seat.basis.y)
+	var centre: Vector3 = display.screen.global_transform * display.screen.get_aabb().get_center()
+	assert(display.contains_screen_point(camera, camera.unproject_position(centre)), "tapping the physical MFD must retain radar range control")
+	assert(not display.contains_screen_point(camera, Vector2(-1000, -1000)), "the MFD must not intercept target taps elsewhere")
+	camera.free()
+	display.set_active(false)
+	assert(not display.is_processing() and not display.scope.is_processing(), "external views must stop MFD work")
+	assert(display.viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED, "hidden MFD must stop rendering")
+	assert(not AIRFRAME.nighthawk().has_live_mfd and not AIRFRAME.raptor().has_live_mfd, "F-35 panel coordinates must not be applied to another aircraft")
+	jet.free()
+	print("COCKPIT_MFD_TEST_PASS")
+	quit()

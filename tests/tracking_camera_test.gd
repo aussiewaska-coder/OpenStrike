@@ -55,10 +55,37 @@ func _run() -> void:
 	main._flying_jet = true
 	main._track_looked_at_target()
 	main._lock_at_screen(camera.unproject_position(contacts[1].position))
-	assert(main._tracker.locked_handle() == 2 and not main._tracker.tracking_view)
+	assert(main._tracker.locked_handle() == 2 and main._tracker.tracking_view, "a screen tap must lock and begin the same POV tracking as R1")
 	contacts[1].position += Vector3(50,0,0)
 	main._tracker.update(contacts, camera.position, Vector3.FORWARD, Vector3.ZERO)
-	assert(main._orbit_target_point() == contacts[1].position, "weapon aim must follow the live contact after a tap, without camera tracking")
+	assert(main._orbit_target_point() == contacts[1].position, "weapons and camera must share the tapped live contact")
+	# Exercise the actual phone-touch route with a centre contact and a
+	# separate off-centre contact beneath the finger.
+	main._flying_jet = false
+	main.helicopter_anchor = carrier
+	camera.basis = Basis.IDENTITY
+	contacts[0].position = Vector3(0, 100, -3000)
+	contacts[1].position = Vector3(900, 100, -3000)
+	main._tracker.update(contacts, camera.position, Vector3.FORWARD, Vector3.ZERO)
+	var tap := InputEventScreenTouch.new()
+	tap.pressed = true
+	tap.position = camera.unproject_position(contacts[1].position)
+	main._unhandled_input(tap)
+	assert(main._tracker.locked_handle() == 2 and main._tracker.tracking_view, "touch must select under the finger rather than the centre reticle")
+	for frame in 120:
+		main._apply_target_tracking(1.0 / 60.0)
+	assert((-camera.global_basis.z).dot((contacts[1].position - camera.position).normalized()) > 0.999, "POV must converge on the target selected by touch")
+	main._begin_manual_view()
+	camera.basis = Basis(Vector3.UP, PI)
+	contacts[1].position += Vector3(100, 50, 0)
+	main._tracker.update(contacts, camera.position, -camera.basis.z, Vector3.ZERO)
+	main._on_gamepad_action_pressed(&"camera_travel_toggle")
+	assert(main._tracker.tracking_view and main._tracker.locked_handle() == 2 and not main._manual_view_active, "R3 must restore the tapped target even when it is now behind the camera")
+	for frame in 120:
+		main._apply_target_tracking(1.0 / 60.0)
+	assert((-camera.basis.z).dot((contacts[1].position - camera.position).normalized()) > 0.999, "resumed touch tracking follows the live position, not the original tap point")
+	main._on_gamepad_action_pressed(&"camera_travel_toggle")
+	assert(not main._tracker.tracking_view and main._tracker.locked_handle() == 2, "recenter must stop touch tracking while preserving weapon lock")
 	main._tracker.clear_lock()
 	assert(main._orbit_target_point() == null, "released locks must not leave a stale turret target")
 	carrier.free()

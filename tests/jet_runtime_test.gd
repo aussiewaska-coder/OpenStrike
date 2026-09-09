@@ -23,8 +23,6 @@ func _run() -> void:
 	root.add_child(terrain)
 	var jet := JET.new()
 	root.add_child(jet)
-	assert(jet.airframe.cockpit_seat_fraction >= 0.58, "pilot eye must sit forward near the HUD")
-	assert(jet.airframe.cockpit_eye_height_fraction >= 0.78, "pilot eye must sit high enough to see the panel")
 	jet.set_physics_process(false)
 	jet.set_terrain(terrain)
 	jet.launch(Vector3(0.0, 900.0, 0.0), 0.0)

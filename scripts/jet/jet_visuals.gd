@@ -37,6 +37,35 @@ static func clarified_canopy_material(material: BaseMaterial3D) -> BaseMaterial3
 	return glass
 
 
+## Keep the authored paint/normal/metal maps under a restrained satin coat.
+## The 6.5 km world shadow map produces unstable self-shadow patches on a
+## close aircraft. Exterior paint receives direct/ambient light without that
+## map; the geometry still casts shadows into the world. The cockpit shares
+## the imported material, so overrides must be per exterior instance only.
+static func satin_exterior(root: Node3D) -> int:
+	var finishes: Dictionary = {}
+	var changed := 0
+	for node in root.find_children("*", "MeshInstance3D", true, false):
+		var part := String(node.get_parent().name).to_lower()
+		if not (part.contains("airframe") or part.contains("landingoff")):
+			continue
+		for surface in node.mesh.get_surface_count():
+			var original := node.get_active_material(surface) as BaseMaterial3D
+			if original == null:
+				continue
+			if not finishes.has(original):
+				var finish := original.duplicate() as BaseMaterial3D
+				finish.clearcoat_enabled = true
+				finish.clearcoat = 0.35
+				finish.clearcoat_roughness = 0.28
+				finish.roughness = original.roughness * 0.9
+				finish.disable_receive_shadows = true
+				finishes[original] = finish
+			node.set_surface_override_material(surface, finishes[original])
+			changed += 1
+	return changed
+
+
 ## The imported aircraft carry their landing gear modelled down on nodes with
 ## no useful names -- the Nighthawk's are all Object_N -- so the gear is found
 ## by where it sits rather than what it is called: anything hanging entirely
@@ -108,6 +137,6 @@ static func _oriented_boxes(root: Node3D, basis: Basis) -> Array:
 		var instance := child as MeshInstance3D
 		if instance.mesh == null:
 			continue
-		var local: AABB = into_root * (instance.global_transform * instance.get_aabb())
-		boxes.append({"node": instance, "box": turn * local})
+		var local: AABB = (turn * into_root * instance.global_transform) * instance.get_aabb()
+		boxes.append({"node": instance, "box": local})
 	return boxes

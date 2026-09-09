@@ -29,7 +29,7 @@ budget.
 
 ## Aircraft
 
-`3dassets/f-22_raptor_-_fighter_jet_-_free.glb`.
+`assets/models/f-22_raptor_-_fighter_jet_-_free.glb`.
 
 The model is exactly ten times real scale: at `scale = 0.1` the wingspan
 measures 13.561 m against the real 13.56 m, and the length 18.995 m against
@@ -250,7 +250,7 @@ Rather than a broad refactor, it gains a single `_active_vehicle` accessor that
 change that lets two vehicles exist; it is not an invitation to restructure
 `main.gd`.
 
-The Grumman F-14D in `3dassets/` is out of scope. The selection layer would
+The Grumman F-14D in `assets/models/` is out of scope. The selection layer would
 carry it as a third entry without further structural work.
 
 ## HUD

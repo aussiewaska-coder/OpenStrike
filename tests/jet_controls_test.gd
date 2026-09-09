@@ -1,15 +1,11 @@
 extends SceneTree
 
-## Flies the aircraft, rather than checking its coefficients.
-##
-## Every step below goes through the same statics the controller uses --
-## aero.flight_acceleration for the forces and JET.rotate_body for the
-## attitude -- so this is the real flight model, not a copy of it that can
-## silently drift out of agreement.
-##
-## What it is really asserting is that nothing here contains a turn. The
-## aircraft turns because banking tilts the lift vector, and if that chain ever
-## breaks these fail even though every individual coefficient still passes.
+## Aerodynamic component simulation using the shared force and attitude
+## functions. This isolates how lift bends the path and how manoeuvres cost
+## energy. It is not the production input/integration path: physical-axis
+## routing and forward-path stabilisation are covered by
+## jet_forward_flight_test.gd, and production rudder/vectoring by
+## flight_sweep_test.gd.
 ##
 ## Every one of these caught a real departure while the model was being built,
 ## which is why they check emergent behaviour over seconds of flight rather
@@ -61,8 +57,8 @@ class Flight:
 func _init() -> void:
 	assist = ASSIST.new()
 	aero = assist.aero
-	assert(JET.pitch_input_from_stick(-1.0) < 0.0, "pushing the left stick up must lower the nose")
-	assert(JET.pitch_input_from_stick(1.0) > 0.0, "pulling the left stick down must raise the nose")
+	assert(JET.pitch_input_from_stick(-1.0) < 0.0, "pushing the left stick forward must lower the nose")
+	assert(JET.pitch_input_from_stick(1.0) > 0.0, "pulling the left stick back must raise the nose")
 	_pitch_responds()
 	_level_flight_stays_level()
 	_full_roll_is_available()
@@ -110,7 +106,7 @@ func _start(speed: float) -> Flight:
 	return flight
 
 
-## One physics step, mirroring jet_controller._read_controls and ._integrate.
+## One step of the isolated aerodynamic simulation, using logical roll/pitch.
 func _step(
 	flight: Flight,
 	roll_stick: float,

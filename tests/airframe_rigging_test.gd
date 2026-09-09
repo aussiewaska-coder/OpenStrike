@@ -15,7 +15,7 @@ const AIRFRAME := preload("res://scripts/jet/airframe.gd")
 func _init(): call_deferred("_run")
 
 func _run():
-	for profile in [AIRFRAME.raptor(), AIRFRAME.nighthawk()]:
+	for profile in [AIRFRAME.raptor(), AIRFRAME.nighthawk(), AIRFRAME.super_hornet(), AIRFRAME.lightning()]:
 		var scene = load(profile.scene_path)
 		assert(scene != null, "%s must load: %s" % [profile.display_name, profile.scene_path])
 		var model: Node3D = scene.instantiate()

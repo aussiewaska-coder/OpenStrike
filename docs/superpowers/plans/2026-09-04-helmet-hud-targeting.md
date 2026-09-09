@@ -2058,7 +2058,7 @@ extends Node3D
 const ENEMY := preload("res://scripts/entities/enemy_jet.gd")
 const ENTITY_HIT_INDEX := preload("res://scripts/entities/entity_hit_index.gd")
 const TRACKER := preload("res://scripts/targeting/target_tracker.gd")
-const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const JET_SCENE := preload("res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb")
 
 ## Above drone_field.FIRST_ID (100000) so the two never share an entity id.
 const FIRST_ID := 200000

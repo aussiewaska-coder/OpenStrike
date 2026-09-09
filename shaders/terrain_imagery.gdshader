@@ -13,6 +13,7 @@ global uniform vec3 os_terrain_tint;    // white by day, dim blue by night
 global uniform vec3 os_sky_horizon;     // what the sea reflects
 global uniform vec3 os_sun_dir;         // unit vector toward the sun
 global uniform vec3 os_sun_color;       // colour times energy
+global uniform float os_lightning;
 
 uniform sampler2D imagery : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform vec2 uv_scale = vec2(1.0);
@@ -74,5 +75,5 @@ void fragment() {
 		col += vec3(1.0, 0.78, 0.5) * on * point * os_night * built * 1.1;
 	}
 
-	ALBEDO = col;
+	ALBEDO = col + photo * vec3(0.3, 0.4, 0.6) * os_lightning;
 }

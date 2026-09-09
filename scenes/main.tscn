@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/helicopter/helicopter_controller.gd" id="3_helicopter"]
@@ -13,43 +13,16 @@
 [ext_resource type="Script" path="res://scripts/entities/launcher_field.gd" id="94_launchers"]
 [ext_resource type="Script" path="res://scripts/entities/enemy_squadron.gd" id="95_squadron"]
 [ext_resource type="Script" path="res://scripts/world/day_cycle.gd" id="5_day_cycle"]
-[ext_resource type="Shader" path="res://shaders/atmosphere_sky.gdshader" id="6_sky_shader"]
+[ext_resource type="Environment" path="res://assets/environments/flight_environment.tres" id="6_environment"]
 [ext_resource type="Script" path="res://scripts/world/cloud_deck.gd" id="7_cloud_deck"]
 [ext_resource type="Script" path="res://scripts/world/weather.gd" id="8_weather"]
 [ext_resource type="Script" path="res://scripts/world/lens_flare.gd" id="9_lens_flare"]
-
-[sub_resource type="ShaderMaterial" id="SkyShader_day"]
-shader = ExtResource("6_sky_shader")
-
-[sub_resource type="Sky" id="Sky_day"]
-sky_material = SubResource("SkyShader_day")
-process_mode = 2
-radiance_size = 1
-
-[sub_resource type="Environment" id="Environment_main"]
-background_mode = 2
-sky = SubResource("Sky_day")
-ambient_light_source = 2
-ambient_light_color = Color(1, 1, 1, 1)
-ambient_light_energy = 0.24
-reflected_light_source = 1
-glow_enabled = true
-glow_intensity = 0.5
-glow_hdr_threshold = 0.98
-adjustment_enabled = true
-adjustment_contrast = 1.08
-adjustment_saturation = 1.05
-fog_enabled = true
-fog_light_color = Color(0.78, 0.88, 0.96, 1)
-fog_density = 0.0001
-fog_aerial_perspective = 0.6
-fog_sky_affect = 0.25
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
-environment = SubResource("Environment_main")
+environment = ExtResource("6_environment")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation_degrees = Vector3(-52, -38, 0)

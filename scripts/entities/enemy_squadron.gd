@@ -4,14 +4,15 @@ extends Node3D
 ##
 ## Deliberately shaped like `drone_field.gd`, and for the same reasons: one hit
 ## index, one visual pool, one destruction path. The only real differences are
-## that these are jets rather than drones, that they carry no weapons in this
-## phase, and that they report themselves as `TargetTracker` contacts so the
+## that these are jets rather than drones, with weapons owned by EnemyCombat,
+## and that they report themselves as `TargetTracker` contacts so the
 ## visor and the scope can see them without knowing what a squadron is.
 
 const ENEMY := preload("res://scripts/entities/enemy_jet.gd")
 const ENTITY_HIT_INDEX := preload("res://scripts/entities/entity_hit_index.gd")
 const TRACKER := preload("res://scripts/targeting/target_tracker.gd")
-const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const JET_SCENE := preload("res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb")
+const VAPOR := preload("res://scripts/jet/wing_vapor.gd")
 
 ## Above drone_field.FIRST_ID (100000) so the two never share an entity id.
 const FIRST_ID := 200000
@@ -22,12 +23,18 @@ const SPAWN_RANGE_M := 16000.0
 const SPAWN_ALTITUDE_MIN_M := 2000.0
 const SPAWN_ALTITUDE_MAX_M := 6000.0
 const FORMATION_SPACING_M := 300.0
+const FIRST_ENCOUNTER_SECONDS := 20.0
+const MISSILE_WARNING_RANGE_M := 4500.0
 
 var hit_index := ENTITY_HIT_INDEX.new()
 
 var _jets: Array = []
 var _visuals := {}
 var _next_id := FIRST_ID
+var _next_encounter_in := FIRST_ENCOUNTER_SECONDS
+var kills := 0
+var waves := 0
+var ground_height := Callable()
 
 
 func jets() -> Array:
@@ -55,27 +62,48 @@ func clear() -> void:
 	_visuals.clear()
 	_jets.clear()
 	hit_index.clear()
+	_next_encounter_in = FIRST_ENCOUNTER_SECONDS
+	kills = 0
+	waves = 0
 
 
-## `around` is the player. The squadron arrives on a random bearing at
-## SPAWN_RANGE_M, which is outside the default scope range on purpose: it must
-## be seen coming.
-func spawn(count: int, around: Vector3) -> void:
+## Give the pilot time to settle, then keep a small fight within radar range.
+## Countdown only between waves, so a quick kill still earns a short breather.
+func advance_encounters(delta: float, around: Vector3, forward: Vector3) -> void:
+	if jet_count() > 0:
+		return
+	_next_encounter_in -= delta
+	if _next_encounter_in <= 0.0:
+		spawn(randi_range(1, 2), around, forward)
+		waves += 1
+		_next_encounter_in = randf_range(30.0, 45.0)
+
+
+## A forward direction requests a nearby dogfight encounter. Without one,
+## retain the distant, all-bearing formation spawn used by scenario tools.
+func spawn(count: int, around: Vector3, forward := Vector3.ZERO) -> void:
 	var bearing := randf() * TAU
-	var lead := around + Vector3(sin(bearing), 0.0, -cos(bearing)) * SPAWN_RANGE_M
+	var distance := SPAWN_RANGE_M
+	if not forward.is_zero_approx():
+		bearing = atan2(forward.x, -forward.z) + randf_range(-0.9, 0.9)
+		distance = randf_range(4500.0, 6500.0)
+	var lead := around + Vector3(sin(bearing), 0.0, -cos(bearing)) * distance
 	lead.y = randf_range(SPAWN_ALTITUDE_MIN_M, SPAWN_ALTITUDE_MAX_M)
+	if not forward.is_zero_approx():
+		lead.y = maxf(around.y + randf_range(-300.0, 600.0), ENEMY.MIN_ALTITUDE_M)
 	# Across the line of approach, so the formation is line abreast to the
 	# player rather than nose to tail.
 	var across := Vector3(cos(bearing), 0.0, sin(bearing))
 	for i in range(count):
 		var jet = ENEMY.new()
+		jet.configure(randi())
 		jet.id = _next_id
 		_next_id += 1
 		# The lead in the middle, wingmen stepped out either side.
 		var slot := float(i) - float(count - 1) * 0.5
 		jet.formation_offset = across * slot * FORMATION_SPACING_M
 		jet.position = lead + jet.formation_offset
-		jet.position.y = maxf(jet.position.y, ENEMY.MIN_ALTITUDE_M)
+		jet.position.y = maxf(jet.position.y, _terrain_floor(jet.position))
 		jet.heading = atan2(around.x - jet.position.x, -(around.z - jet.position.z))
 		jet.speed = ENEMY.ENEMY_CRUISE_MPS
 		_jets.append(jet)
@@ -83,13 +111,40 @@ func spawn(count: int, around: Vector3) -> void:
 		_spawn_visual(jet)
 
 
-func update(delta: float, player_position: Vector3, player_nose: Vector3) -> void:
-	for jet in _jets:
+func update(delta: float, player_position: Vector3, player_nose: Vector3, rounds: Array = []) -> void:
+	for jet in _jets.duplicate():
 		if jet.state == ENEMY.State.DESTROYED:
 			continue
-		jet.update(delta, player_position, player_nose)
+		var floor_m := maxf(_terrain_floor(jet.position), _terrain_floor(jet.position + jet.nose() * jet.speed * 3.0))
+		var previous_velocity: Vector3 = jet.velocity
+		jet.update(delta, player_position, player_nose, _incoming_missile(jet, rounds), floor_m)
+		if jet.has_departed():
+			_remove_jet(jet)
+			continue
 		_register(jet)
 		_place_visual(jet)
+		var vapor: Node3D = _visuals[jet.id].get_node("WingVapor")
+		# Enemy flight is kinematic; curvature supplies its visual load estimate.
+		var acceleration: float = (jet.velocity - previous_velocity).length() / maxf(delta, 0.001) if previous_velocity.length() > 1 else 0.0
+		var load_g := sqrt(1.0 + pow(acceleration / 9.80665, 2))
+		vapor.set_flight(jet.speed, load_g, deg_to_rad(4 + load_g * 1.5))
+
+
+func _terrain_floor(point: Vector3) -> float:
+	return maxf(ENEMY.MIN_ALTITUDE_M, float(ground_height.call(point)) + 250.0) if ground_height.is_valid() else ENEMY.MIN_ALTITUDE_M
+
+
+func _incoming_missile(jet, rounds: Array) -> Variant:
+	var nearest: Variant = null
+	var nearest_distance := MISSILE_WARNING_RANGE_M
+	for round_data in rounds:
+		if round_data.weapon_source != "missile" or round_data.flight == null or round_data.flight.target_handle != jet.id:
+			continue
+		var offset: Vector3 = jet.position - round_data.position
+		if offset.length() < nearest_distance and (round_data.velocity - jet.velocity).dot(offset) > 0.0:
+			nearest = round_data.position
+			nearest_distance = offset.length()
+	return nearest
 
 
 ## What the tracker consumes. The squadron does not know what a visor is.
@@ -113,14 +168,20 @@ func destroy_jet(entity_id: int) -> Variant:
 		if jet.id != entity_id:
 			continue
 		jet.state = ENEMY.State.DESTROYED
-		hit_index.remove_entity(entity_id)
-		if _visuals.has(entity_id):
-			var node: Node3D = _visuals[entity_id]
-			if is_instance_valid(node):
-				node.queue_free()
-			_visuals.erase(entity_id)
+		kills += 1
+		_remove_jet(jet)
 		return jet
 	return null
+
+
+func _remove_jet(jet) -> void:
+	hit_index.remove_entity(jet.id)
+	_jets.erase(jet)
+	if _visuals.has(jet.id):
+		var node: Node3D = _visuals[jet.id]
+		if is_instance_valid(node):
+			node.queue_free()
+		_visuals.erase(jet.id)
 
 
 func _register(jet) -> void:
@@ -142,6 +203,10 @@ func _spawn_visual(jet) -> Node3D:
 		if String(child.name).to_lower().contains("landingon"):
 			(child as Node3D).visible = false
 	_visuals[jet.id] = anchor
+	var vapor := VAPOR.new()
+	vapor.name = "WingVapor"
+	anchor.add_child(vapor)
+	vapor.build(model)
 	_place_visual(jet)
 	return anchor
 

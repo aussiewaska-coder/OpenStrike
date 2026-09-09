@@ -81,6 +81,21 @@ func _run() -> void:
 	var safe := CAMERA.clear_orbit_position(low_focus, low_focus + Vector3(0, -16, 12), 6.0)
 	check(safe.y >= 6.0 and absf(safe.distance_to(low_focus) - 20.0) < 0.001, "terrain clearance should preserve available orbit radius")
 	main._jet_view = CAMERA.Mode.COCKPIT
+	main._free_look = Vector2.ZERO
+	jet.load_factor = 9.0
+	for time in [0.0, 0.3, 0.9, 1.7]:
+		main._cockpit_bob_time = time
+		main._update_jet_camera(1.0 / 60.0)
+		check(camera.global_position.is_equal_approx(jet.global_position), "first-person camera must remain on its mount")
+		check(camera.global_basis.is_equal_approx(Basis.looking_at(jet.basis.x, jet.basis.y)), "neutral nose camera must face forward without head bob, including under load")
+	jet.load_factor = 1.0
+	main._free_look_motion.velocity = Vector2.RIGHT
+	main._cockpit_bob_time = 0.3
+	main._update_jet_camera(1.0 / 60.0)
+	var neutral := Basis.looking_at(jet.basis.x, jet.basis.y)
+	var bob_angle := neutral.get_rotation_quaternion().angle_to(camera.basis.get_rotation_quaternion())
+	check(bob_angle > deg_to_rad(0.01) and bob_angle < deg_to_rad(0.4), "moving freelook must add only a subtle rotational head bob")
+	check(camera.position.is_equal_approx(jet.position), "head bob must preserve cockpit mount clearance")
 	main._free_look = Vector2(0.6, 0.1)
 	main._update_jet_camera(0.0, true)
 	var local_look := Basis.looking_at(jet.basis.x, jet.basis.y).inverse() * camera.basis

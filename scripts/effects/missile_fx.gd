@@ -1,6 +1,7 @@
 extends Node3D
 
 const MATERIALS := preload("res://scripts/effects/effect_materials.gd")
+const PRESENTATION := preload("res://scripts/weapons/projectile_presentation.gd")
 const POOL_SIZE := 24
 var projectile_manager: Node3D
 var _models: Array[Node3D] = []
@@ -59,19 +60,23 @@ func _process(_delta: float) -> void:
 	var used := 0
 	if projectile_manager != null:
 		for round_data in projectile_manager.active_rounds:
-			if round_data.weapon_source not in ["missile", "rocket"] or used >= _models.size():
+			if round_data.weapon_source not in ["missile", "rocket", "guided_bomb"] or used >= _models.size():
 				continue
 			var model := _models[used]
 			used += 1
 			var direction: Vector3 = round_data.velocity.normalized()
 			if direction.is_zero_approx():
 				direction = Vector3.FORWARD
-			var up := Vector3.RIGHT if absf(direction.y) > 0.98 else Vector3.UP
+			var previous_up: Vector3 = model.global_basis.y.normalized() if int(model.get_meta("sequence", -1)) == round_data.sequence else Vector3.UP
+			var up := PRESENTATION.transported_up(direction, previous_up)
 			var right := direction.cross(up).normalized()
 			up = right.cross(direction).normalized()
-			var point: Vector3 = round_data.previous_position.lerp(round_data.position, Engine.get_physics_interpolation_fraction())
+			var point := PRESENTATION.position_of(round_data)
 			model.global_transform = Transform3D(Basis(direction, up, right), point)
+			model.set_meta("sequence", round_data.sequence)
 			model.scale *= 0.65 if round_data.weapon_source == "rocket" else 1.0
+			if round_data.weapon_source == "guided_bomb":
+				model.scale *= Vector3(0.65, 1.8, 1.8)
 			model.visible = true
 			var exhaust: MeshInstance3D = model.get_node("Exhaust")
 			exhaust.visible = round_data.flight.is_boosting(round_data.age)

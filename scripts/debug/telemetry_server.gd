@@ -70,6 +70,8 @@ func _process(delta: float) -> void:
 func _read_commands() -> void:
 	for peer in _peers:
 		peer.poll()
+		if peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+			continue
 		var available := peer.get_available_bytes()
 		if available <= 0:
 			continue

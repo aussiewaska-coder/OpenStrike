@@ -1,0 +1,47 @@
+extends SceneTree
+const FIRES := preload("res://scripts/effects/strike_fire.gd")
+var failed := false
+func _init() -> void: call_deferred("_run")
+func _run() -> void:
+	var fires := FIRES.new()
+	root.add_child(fires)
+	fires.ignite(Vector3.ZERO)
+	fires.ignite(Vector3(100, 0, 0), true)
+	var ground: Dictionary = fires._sites[0]
+	var building: Dictionary = fires._sites[1]
+	check(building.smoke.scale_amount_max > ground.smoke.scale_amount_max * 2.0, "building smoke is substantially larger")
+	check(ground.smoke.direction == Vector3.UP and ground.smoke.gravity.y > 0.0, "smoke rises with buoyancy")
+	check(not ground.smoke.local_coords and not ground.smoke.one_shot, "plume remains world-space and continuously emits")
+	fires._process(30.0)
+	check(ground.fire.emitting and ground.smoke.emitting, "bomb site keeps burning and smoking after thirty seconds")
+	fires._process(35.0)
+	check(not ground.fire.emitting and not ground.smoke.emitting and building.smoke.emitting, "ground fire dies down while larger building fire persists")
+	fires.ignite(Vector3.ZERO)
+	check(fires._sites.size() == 2 and ground.smoke.emitting, "repeat strikes renew a nearby fire")
+	for i in 30: fires.ignite(Vector3(200 + i * 50, 0, 0))
+	check(fires._sites.size() == FIRES.MAX_FIRES, "sustained fire cost has a fixed ceiling")
+	fires._process(120.0)
+	check(fires._sites.all(func(site): return not site.smoke.emitting and not site.fire.emitting), "every emitter stops after its burn duration")
+	check(ground.smoke.lifetime >= 20.0 and ground.smoke.scale_amount_curve.sample(1.0) > ground.smoke.scale_amount_curve.sample(0.0) * 3.0, "smoke survives and expands into a rising plume")
+	check(ground.phase != building.phase, "separate sites have independent turbulent phases")
+	var wreck := fires.ignite_wreck(Vector3(10000, 30, 0), Vector3(12, -3, 0), func(_point): return 0.0)
+	fires._process(1.0)
+	check(wreck.point.y < 30.0 and wreck.point.x > 10000.0, "burning wrecks move and fall while their smoke remains world-space")
+	fires._process(3.0)
+	check(wreck.point.y == 0.0 and not wreck.has("wreck_velocity") and wreck.smoke.emitting, "wreck fire settles onto terrain and continues smoking")
+	fires.clear()
+	check(fires._sites.is_empty(), "theatre reset clears all fires")
+	fires.follow_source(Vector3(0, 100, 0))
+	fires.follow_source(Vector3(500, 80, 0))
+	check(fires._sites.size() == 1 and fires._sites[0].point.x == 500.0, "a moving aircraft keeps one source instead of leaving burning points in the sky")
+	fires.clear()
+	var hilltop := fires.ignite(Vector3(0, 1200, 0))
+	check(hilltop.smoke.material_override.get_shader_parameter("source_height") == 1200.0, "smoke diffusion measures height above the fire, not sea level")
+	fires.clear()
+	fires.free()
+	if not failed: print("STRIKE_FIRE_TEST_PASS")
+	quit(1 if failed else 0)
+func check(ok: bool, message: String) -> void:
+	if not ok:
+		failed = true
+		push_error(message)

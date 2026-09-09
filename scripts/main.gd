@@ -1,12 +1,12 @@
 extends Node3D
 
-const HELICOPTER_SCENE := preload("res://ah-64d_apache_longbow_usa.glb")
+const HELICOPTER_SCENE := preload("res://assets/models/ah-64d_apache_longbow_usa.glb")
 const AIRFRAME := preload("res://scripts/jet/airframe.gd")
 
 ## The jets, in the order the aircraft control walks them. const cannot hold a
 ## call result in GDScript, so this is a var that is never reassigned.
-var JET_PROFILES := [AIRFRAME.raptor(), AIRFRAME.nighthawk()]
-var _jet_index := 0
+var JET_PROFILES := [AIRFRAME.raptor(), AIRFRAME.nighthawk(), AIRFRAME.super_hornet(), AIRFRAME.lightning()]
+var _jet_index := 3
 const JET_CAMERA := preload("res://scripts/camera/jet_camera.gd")
 const ORBIT_LOCK := preload("res://scripts/camera/orbit_lock.gd")
 const ZOOM_PROFILE := preload("res://scripts/camera/zoom_profile.gd")
@@ -17,6 +17,14 @@ const TRAIL_RENDERER := preload("res://scripts/effects/trail_renderer.gd")
 const ROCKET_POD := preload("res://scripts/weapons/rocket_pod.gd")
 const MISSILE_LAUNCHER := preload("res://scripts/weapons/missile_launcher.gd")
 const MISSILE_FX := preload("res://scripts/effects/missile_fx.gd")
+const PROJECTILE_CAMERA := preload("res://scripts/camera/projectile_camera.gd")
+const PROJECTILE_HUD := preload("res://scripts/ui/projectile_hud.gd")
+const ENEMY_COMBAT := preload("res://scripts/entities/enemy_combat.gd")
+const THREAT_CAMERA := preload("res://scripts/camera/threat_camera.gd")
+const COUNTERMEASURES := preload("res://scripts/effects/countermeasures.gd")
+const THREAT_WARNING := preload("res://scripts/ui/threat_warning.gd")
+const STRIKE_FIRE := preload("res://scripts/effects/strike_fire.gd")
+const JET_AUDIO := preload("res://scripts/audio/jet_audio.gd")
 const WEAPON_SELECTION := preload("res://scripts/weapons/weapon_selection.gd")
 const DRONE_FIELD := preload("res://scripts/entities/drone_field.gd")
 const RAID_MISSION := preload("res://scripts/entities/raid_mission.gd")
@@ -115,10 +123,9 @@ var _tactical_mfd: Control
 var _waypoint_hud: Control
 var _navigation := TACTICAL_NAV.new()
 var _map_layers_timer := 0.0
+var _cockpit_map_layers_timer := 1.0
 var _helmet: Control
 var _tracker := TARGET_TRACKER.new()
-## Enemy squadrons arrive on a timer while the player is flying the jet.
-var _next_squadron_in := 25.0
 var _tape: Control
 var _drone_field: Node3D
 var _hero_towers: Node3D
@@ -150,6 +157,7 @@ var _arcade_camera_feedback := ARCADE_CAMERA_FEEDBACK.new()
 var _ballistics := BALLISTICS.new()
 var _look_target := Vector3.ZERO
 var _free_look := Vector2.ZERO
+var _free_look_motion := preload("res://scripts/camera/free_look_motion.gd").new()
 var _manual_view_active := false
 var _manual_view_basis := Basis.IDENTITY
 var _view_returning := false
@@ -165,7 +173,18 @@ var _weapons := WEAPON_SELECTION.new()
 var _trail_renderer: MeshInstance3D
 var _rocket_pod: Node3D
 var _missile_launcher: Node3D
+var _enemy_combat: Node3D
+var _threat_camera: Node3D
+var _countermeasures: Node3D
+var _countermeasures_button: Button
+var _wreck_fire: Node3D
+var _threat_warning: Control
+var _strike_fire: Node3D
 var _missile_fx: Node3D
+var _projectile_camera: Node3D
+var _missile_view_button: Button
+var _projectile_hud: Control
+var _jet_audio: Node
 var _tracking_basis := Basis.IDENTITY
 var _jet_camera_focus := Vector3.ZERO
 var _weapon_label: Label
@@ -201,6 +220,16 @@ func _ready() -> void:
 		elif arg.begins_with("--weather="):
 			start_weather = int(arg.trim_prefix("--weather="))
 	_build_hud()
+	_jet_audio = JET_AUDIO.new()
+	add_child(_jet_audio)
+	settings_panel.engine_volume_cycled.connect(func():
+		_jet_audio.cycle_volume()
+		settings_panel.set_engine_volume_text(_jet_audio.volume_text()))
+	settings_panel.set_engine_volume_text(_jet_audio.volume_text())
+	settings_panel.weather_volume_cycled.connect(func():
+		weather.audio.cycle_volume()
+		settings_panel.set_weather_volume_text(weather.audio.volume_text()))
+	settings_panel.set_weather_volume_text(weather.audio.volume_text())
 	LocationService.status_changed.connect(_on_location_status_changed)
 	LocationService.region_selected.connect(_on_region_selected)
 	LocationService.location_updated.connect(_on_location_updated)
@@ -258,6 +287,12 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if _strike_fire != null:
+		_strike_fire.wind_mps = float(weather.current.get("wind_mps", 6.0))
+	if _wreck_fire != null:
+		_wreck_fire.wind_mps = float(weather.current.get("wind_mps", 6.0))
+	_update_jet_audio(delta)
+	_update_enemy_combat(delta)
 	_shot_frames += 1
 	if _shot_path != "" and _shot_frames == _shot_at_frame:
 		_save_shot_and_quit()
@@ -272,6 +307,63 @@ func _process(delta: float) -> void:
 			_camera_aim_basis = camera.global_basis
 		_update_attack_reticle()
 		_update_target_marker()
+	if _projectile_camera != null:
+		_projectile_camera.update(delta, projectile_manager.active_rounds)
+		_update_missile_view_ui()
+	_update_defensive_view(delta)
+
+
+func _update_enemy_combat(delta: float) -> void:
+	if _enemy_combat == null:
+		return
+	var point := _vehicle().global_position
+	_countermeasures.update(delta)
+	_enemy_combat.defence.radar_signature = jet_anchor.airframe.radar_signature
+	_enemy_combat.defence.heat_signature = jet_anchor.airframe.heat_signature
+	_enemy_combat.defence.afterburner = jet_anchor.engine_afterburner_fraction() if jet_anchor.airframe.thrust_afterburner_g > jet_anchor.airframe.thrust_military_g else 0.0
+	_enemy_combat.defence.nose = jet_anchor.global_basis.x.normalized()
+	_enemy_combat.update(delta, point, _vehicle_velocity(), point.y - _ground_height_at(point), enemy_squadron.jets(), launcher_field.launcher_positions(), _camera_follow_enabled and _flying_jet and not jet_anchor.is_crashed())
+	_countermeasures_button.text = _countermeasures.button_text()
+	_countermeasures_button.disabled = not _flying_jet or jet_anchor.is_crashed() or _countermeasures.cooldown > 0 or _countermeasures.charges == 0
+	_threat_warning.watching_sequence = _threat_camera.sequence
+	_threat_warning.update_warning(delta, _enemy_combat.warning_state(), get_viewport().get_camera_3d(), jet_anchor.combat_hull)
+
+
+func _on_hostile_missile_hit(_point: Vector3) -> void:
+	if jet_anchor.is_crashed():
+		return
+	impact_fx.spawn_explosion(jet_anchor.global_position)
+	jet_anchor.apply_missile_damage()
+	_threat_warning.show_hit()
+	_arcade_camera_feedback.add_impact(0.0, true)
+
+
+func _deploy_countermeasures() -> void:
+	if not _flying_jet or jet_anchor.is_crashed() or not _camera_follow_enabled:
+		return
+	if _countermeasures.deploy(jet_anchor.global_position, jet_anchor.velocity, jet_anchor.global_basis.x.normalized()):
+		status_label.text = "FLARES + CHAFF • BREAK TURN / CUT AFTERBURNER"
+		_countermeasures_button.text = _countermeasures.button_text()
+
+
+func _update_defensive_view(delta: float) -> void:
+	if _threat_camera == null:
+		return
+	_threat_camera.update(delta, _enemy_combat.projectiles.active_rounds, jet_anchor)
+	if jet_anchor.is_crashed() and jet_anchor.combat_hull == 0:
+		_wreck_fire.follow_source(jet_anchor.global_position)
+	_update_missile_view_ui()
+
+
+func _reset_defensive_view() -> void:
+	if _threat_camera != null:
+		_threat_camera.stop()
+		_countermeasures.clear()
+		_wreck_fire.clear()
+
+
+func _update_jet_audio(delta: float) -> void:
+	_jet_audio.update_state(delta, _flying_jet and not jet_anchor.is_crashed(), jet_anchor.engine_core_fraction(), jet_anchor.engine_afterburner_fraction(), _is_cockpit_view(), _projectile_camera != null and _projectile_camera.watching)
 
 
 ## Rockets are driven from here rather than from their own _physics_process, so
@@ -304,8 +396,11 @@ func _update_rockets(delta: float) -> void:
 				_trail_renderer.end_trail(round_data.sequence)
 	if _weapon_label != null:
 		_weapon_label.text = _weapons.name_of(_weapons.current)
-		if _weapons.current in [WEAPON_SELECTION.Weapon.HEAT, WEAPON_SELECTION.Weapon.RADAR]:
+		if WEAPON_SELECTION.is_guided(_weapons.current):
 			_weapon_label.text += "  " + _missile_launcher.status
+		if _flying_jet:
+			_weapon_label.text += "  |  HOSTILES %d  KILLS %d" % [enemy_squadron.jet_count(), enemy_squadron.kills]
+			_weapon_label.text += "  |  GROUND %d" % launcher_field.launcher_count()
 
 
 ## What is left on screen while flying: a status line, the raid line, the
@@ -339,16 +434,31 @@ func _build_hud() -> void:
 	_settings_button.text = "SETTINGS"
 	_settings_button.custom_minimum_size = Vector2(140, 52)
 	_settings_button.pressed.connect(_toggle_settings)
-	row.add_child(_settings_button)
+	var actions := VBoxContainer.new()
+	row.add_child(actions)
+	actions.add_child(_settings_button)
 	_weapon_label = Label.new()
 	_weapon_label.text = _weapons.name_of(_weapons.current)
 	_weapon_label.add_theme_color_override("font_color", Color(0.55, 1.0, 0.7))
 	_weapon_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	column.add_child(_weapon_label)
+	_missile_view_button = Button.new()
+	_missile_view_button.text = "MISSILE VIEW: OFF"
+	_missile_view_button.custom_minimum_size = Vector2(250, 52)
+	_missile_view_button.pressed.connect(_toggle_missile_view)
+	actions.add_child(_missile_view_button)
+	_countermeasures_button = Button.new()
+	_countermeasures_button.name = "CountermeasuresButton"
+	_countermeasures_button.custom_minimum_size = Vector2(250, 52)
+	_countermeasures_button.text = "COUNTERMEASURES 8"
+	_countermeasures_button.pressed.connect(_deploy_countermeasures)
+	actions.add_child(_countermeasures_button)
 
 	# The visor goes in first so the scope and the tape draw over it.
 	_helmet = HELMET_HUD.new()
 	ui_layer.add_child(_helmet)
+	_projectile_hud = PROJECTILE_HUD.new()
+	ui_layer.add_child(_projectile_hud)
 	_waypoint_hud = WAYPOINT_HUD.new()
 	ui_layer.add_child(_waypoint_hud)
 	_tactical_mfd = TACTICAL_MFD.new()
@@ -421,12 +531,10 @@ func _on_radar_range_changed(metres: float) -> void:
 ## The one place the three target sources become one list, and the one place the
 ## visor and the scope are told anything.
 func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: float) -> void:
+	enemy_squadron.ground_height = _ground_height_at
 	if _flying_jet:
-		_next_squadron_in -= delta
-		if _next_squadron_in <= 0.0 and enemy_squadron.jet_count() == 0:
-			enemy_squadron.spawn(randi_range(2, 4), vehicle.global_position)
-			_next_squadron_in = 90.0
-	enemy_squadron.update(delta, vehicle.global_position, nose)
+		enemy_squadron.advance_encounters(delta, vehicle.global_position, nose)
+	enemy_squadron.update(delta, vehicle.global_position, nose, projectile_manager.active_rounds)
 
 	var contacts: Array = []
 	contacts.append_array(enemy_squadron.contacts())
@@ -439,7 +547,7 @@ func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: fl
 	for launcher in launcher_field.launcher_positions():
 		contacts.append(TARGET_TRACKER.contact(
 			int(launcher["id"]), TARGET_TRACKER.Kind.GROUND_LAUNCHER,
-			launcher["position"], Vector3.ZERO, "SAM"
+			launcher["position"], Vector3.ZERO, launcher.get("name", "SAM")
 		))
 
 	# The tracker's cone is the CAMERA's, not the airframe's: what the visor
@@ -449,6 +557,7 @@ func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: fl
 	# Apply POV tracking before selecting the HUD's visible contact boxes.
 	_apply_target_tracking(delta)
 	var locked: Dictionary = _tracker.locked()
+	_helmet.set_seeker_state(_missile_launcher.seeker_state() if _flying_jet and _missile_launcher != null else {})
 	_helmet.set_state(
 		camera,
 		velocity,
@@ -464,6 +573,7 @@ func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: fl
 		}
 	)
 	_radar.set_contacts(vehicle.get_global_transform_interpolated().origin, heading, _tracker.tracked(), _tracker.locked_handle())
+	_update_cockpit_map(delta, vehicle, heading)
 	_navigation.advance(vehicle.global_position)
 	if _waypoint_hud != null:
 		_waypoint_hud.set_state(camera, vehicle.global_position, _navigation)
@@ -496,7 +606,11 @@ func _vehicle_velocity() -> Vector3:
 func _on_rocket_fired(round_data: RefCounted, _hardpoint_index: int) -> void:
 	# Keyed on the sequence number, which is unique for the life of the round and
 	# is what the manager hands back on impact and expiry.
-	_trail_renderer.begin_trail(round_data.sequence)
+	if round_data.weapon_source != "guided_bomb":
+		_trail_renderer.begin_trail(round_data.sequence)
+	if _projectile_camera != null:
+		_projectile_camera.on_launch(round_data)
+		_update_missile_view_ui()
 
 
 func _on_magazine_changed(remaining: int, capacity: int) -> void:
@@ -513,6 +627,8 @@ func _on_weapon_changed(weapon: int) -> void:
 
 ## A rocket that runs out of fuel and range leaves its smoke behind to fade.
 func _on_projectile_expired(round_data: RefCounted) -> void:
+	if _projectile_camera != null:
+		_projectile_camera.finish(round_data.sequence, round_data.position, false)
 	if _trail_renderer != null and round_data.weapon_source in ["rocket", "missile"]:
 		_trail_renderer.end_trail(round_data.sequence)
 
@@ -561,6 +677,7 @@ func _spawn_jet() -> void:
 	var jet: Node3D = (load(String(profile.scene_path)) as PackedScene).instantiate()
 	jet.name = "HeroJet"
 	jet_anchor.add_child(jet)
+	jet_anchor.refresh_visual()
 	# The controller measures the wingspan and scales the model itself, so
 	# there is no magic number here the way there is for the Apache.
 	_set_vehicle_active(jet_anchor, _flying_jet)
@@ -578,6 +695,11 @@ func _set_vehicle_active(anchor: Node3D, active: bool) -> void:
 ## looking at. The jet needs height and speed to exist at all, so it is launched
 ## rather than simply moved.
 func _switch_aircraft() -> void:
+	_reset_defensive_view()
+	if _enemy_combat != null:
+		_enemy_combat.clear()
+	if _projectile_camera != null:
+		_projectile_camera.cancel()
 	_tracker.clear_lock()
 	var leaving := _vehicle()
 	var handover := leaving.global_position
@@ -588,7 +710,7 @@ func _switch_aircraft() -> void:
 		nose = nose.normalized()
 		heading = atan2(nose.x, -nose.z)
 
-	# Raptor, Nighthawk, Apache, and back to the Raptor.
+	# Raptor, Nighthawk, Super Hornet, Apache, and back to the Raptor.
 	var changing_jet := false
 	if _flying_jet and _jet_index + 1 < JET_PROFILES.size():
 		_jet_index += 1
@@ -683,11 +805,19 @@ func _on_region_selected(region: Dictionary) -> void:
 ## Every theatre streams. The map cache is checked before the network, so a
 ## theatre already flown loads from disk and needs no signal.
 func _load_streamed_region(region: Dictionary) -> void:
+	_reset_defensive_view()
+	if _projectile_camera != null:
+		_projectile_camera.cancel()
 	_navigation.clear()
+	if _enemy_combat != null:
+		_enemy_combat.clear()
+	if _strike_fire != null:
+		_strike_fire.clear()
 	if _tactical_mfd != null:
 		_tactical_mfd.map.set_layers({})
 	_tracker.clear_lock()
 	launcher_field.clear()
+	enemy_squadron.clear()
 	_hero_towers.clear()
 	streamed_terrain.visible = true
 	if not streamed_terrain.status_changed.is_connected(_on_streamed_status_changed):
@@ -720,7 +850,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 		deg_to_rad(streamed_terrain.get_spawn_yaw_degrees(-35.0))
 	)
 	streamed_terrain.set_focus(_vehicle())
-	launcher_field.populate(String(region.get("id", "")), streamed_terrain)
+	launcher_field.populate(String(region.get("id", "")), streamed_terrain, _building_hit_index)
 	_hero_towers.populate(String(region.get("id", "")), streamed_terrain)
 	_camera_follow_enabled = true
 	_start_raid()
@@ -739,6 +869,8 @@ func _update_free_look(delta: float) -> void:
 		return
 	if _tracker.tracking_view and not manual_look.is_zero_approx():
 		_begin_manual_view()
+	if _flying_jet:
+		manual_look = _free_look_motion.advance(manual_look, delta)
 	if _manual_view_active:
 		var yaw := -manual_look.x * free_look_speed * deg_to_rad(free_look_yaw_degrees) * delta
 		var pitch := -manual_look.y * free_look_speed * deg_to_rad(free_look_pitch_degrees) * delta
@@ -746,7 +878,7 @@ func _update_free_look(delta: float) -> void:
 		return
 	if _flying_jet:
 		_external_aim.update(Vector2.ZERO, false, delta)
-		var look := GamepadInput.get_jet_look_vector()
+		var look := manual_look
 		if _jet_view == JET_CAMERA.Mode.COCKPIT:
 			_free_look = JET_CAMERA.updated_look(
 				_free_look, look, free_look_speed, free_look_return_response, delta
@@ -799,6 +931,7 @@ func _view_return_weight() -> float:
 
 
 func _begin_view_return() -> void:
+	_free_look_motion.reset()
 	_view_return_from_tracking = _tracker.tracking_view or _manual_view_active
 	if _view_return_from_tracking:
 		var reference: Basis
@@ -881,9 +1014,11 @@ func _update_follow_camera(delta: float) -> void:
 	_apply_follow_camera(delta)
 
 
-## Raptor views are authored separately: cockpit inherits the interpolated
+## Jet views are authored separately: nose camera inherits the interpolated
 ## airframe, while external body and aim targets use independent damped springs.
 func _update_jet_camera(delta: float, snap: bool = false) -> void:
+	if snap:
+		_free_look_motion.reset()
 	var speed: float = jet_anchor.airspeed()
 	var speed_span: float = maxf(
 		jet_anchor.maximum_display_speed - jet_anchor.minimum_display_speed,
@@ -896,24 +1031,20 @@ func _update_jet_camera(delta: float, snap: bool = false) -> void:
 	)
 	if _jet_view == JET_CAMERA.Mode.COCKPIT:
 		var cockpit: Transform3D = jet_anchor.get_interpolated_cockpit_transform()
-		var bob: Vector2 = JET_CAMERA.head_bob(
-			_cockpit_bob_time,
-			jet_anchor.load_factor,
-			speed_fraction
-		)
 		camera.global_position = cockpit.origin
 		var head_basis := _free_look_basis()
 		if _view_returning and _view_return_from_tracking:
 			head_basis = _view_return_basis.slerp(Basis.IDENTITY, _view_return_weight())
 		camera.global_basis = Basis.looking_at(cockpit.basis.x, cockpit.basis.y) \
-			* head_basis \
-			* Basis.from_euler(Vector3(deg_to_rad(bob.x), 0.0, deg_to_rad(bob.y)))
+			* head_basis
 		camera.fov = JET_CAMERA.field_of_view(
 			_jet_view, _camera_zoom, speed_fraction, camera_zoom_max
 		)
 		_look_target = cockpit.origin + cockpit.basis.x * 100.0
 		_jet_camera_focus = _focus_position()
 		_apply_manual_view()
+		if not _tracker.tracking_view and not _view_returning:
+			camera.global_basis *= _free_look_motion.bob_basis(_cockpit_bob_time)
 		return
 
 	var focus := _focus_position()
@@ -1069,9 +1200,7 @@ func _ground_point_under_helicopter() -> Vector3:
 
 func _update_instruments() -> void:
 	if _flying_jet:
-		# The Raptor's GLB carries its own cockpit panel, instrument glass and
-		# HUD combiner. Drawing a second set of readings over the top of real
-		# modelled instruments is worse than drawing none.
+		# Jet flight readings are provided by the helmet HUD.
 		attack_reticle.hide_instruments()
 		return
 	var focus := _focus_position()
@@ -1156,6 +1285,14 @@ func _telemetry_command(command: Dictionary) -> Dictionary:
 				day_cycle.refresh()
 			"weather":
 				weather.set_preset(int(value))
+			"render_scale_3d":
+				get_viewport().scaling_3d_scale = clampf(float(value), 0.5, 1.0)
+			"cloud_enabled":
+				$CloudDeck.visible = bool(value)
+			"cloud_steps":
+				$CloudDeck.configure_quality(int(value), $CloudDeck.shadow_steps)
+			"cloud_shadow_steps":
+				$CloudDeck.configure_quality($CloudDeck.march_steps, int(value))
 			"cloud_coverage":
 				weather.current["cloud_coverage"] = float(value)
 			"sun_multiplier":
@@ -1186,7 +1323,7 @@ func _telemetry_sample() -> Dictionary:
 	var raw_triggers := GamepadInput.get_raw_trigger_vector()
 	var sample := {
 		"theatre": String(LocationService.selected_region.get("display_name", "none")),
-		"aircraft": "F-22" if _flying_jet else "AH-64D",
+		"aircraft": current_aircraft_name(),
 		"view": JET_CAMERA.Mode.keys()[_jet_view] if _flying_jet else View.keys()[_view],
 		"free_look_held": GamepadInput.is_free_look_held(),
 		"free_look_x": _free_look.x,
@@ -1269,6 +1406,12 @@ func _telemetry_sample() -> Dictionary:
 		"tonemap_mode": environment.tonemap_mode,
 		"weather": weather.preset_name(),
 		"cloud_coverage": float(weather.current.get("cloud_coverage", 0.0)),
+		"cloud_immersion": weather.cloud_immersion,
+		"render_scale_3d": get_viewport().scaling_3d_scale,
+		"cloud_enabled": $CloudDeck.visible,
+		"cloud_steps": $CloudDeck.march_steps,
+		"cloud_shadow_steps": $CloudDeck.shadow_steps,
+		"rain_intensity": weather.rain_intensity,
 	}, true)
 	return sample
 
@@ -1310,6 +1453,10 @@ func _camera_orbit_input() -> float:
 ## A tap picks a point on the ground to orbit. There are no collision shapes
 ## under the streamed terrain, so the ray is marched against the height field.
 func _unhandled_input(event: InputEvent) -> void:
+	if _threat_camera != null and _threat_camera.watching:
+		return
+	if _projectile_camera != null and _projectile_camera.watching:
+		return
 	if _tactical_mfd != null and _tactical_mfd.visible:
 		return
 	if settings_panel != null and settings_panel.visible:
@@ -1323,30 +1470,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		screen = (event as InputEventMouseButton).position
 	else:
 		return
+	if _flying_jet and _is_cockpit_view() and is_instance_valid(jet_anchor.cockpit_mfd):
+		if jet_anchor.cockpit_mfd.contains_screen_point(camera, screen):
+			_radar.cycle_range()
+			get_viewport().set_input_as_handled()
+			return
 	_lock_at_screen(screen)
 
 
-## A screen press locks a target independently of the gamepad flight controls.
+## The finger's screen ray selects the lock, then starts the same camera
+## tracking as R1. Selection must not use the centre reticle instead of the tap.
 func _lock_at_screen(screen: Vector2) -> void:
 	if not _camera_follow_enabled:
 		return
 	var origin := camera.project_ray_origin(screen)
 	var direction := camera.project_ray_normal(screen)
-	var hit := GROUND_RAY.intersect(origin, direction, _ground_height_xz)
-	var point = null
-	var kind: int = TARGET_TRACKER.Kind.GROUND_POINT
-	var target_name := ""
-	if not hit.is_empty():
-		point = hit["point"]
-	# `_hit_query` already knows how to tell a building from the dirt, so the
-	# lock asks it rather than growing a second opinion about what was struck.
-	if _hit_query != null:
-		var world: RefCounted = _hit_query.query_segment(origin, origin + direction * 12000.0)
-		if world != null and world.hit and world.object_type == WORLD_HIT.ObjectKind.BUILDING:
-			point = world.position
-			kind = TARGET_TRACKER.Kind.BUILDING
-			target_name = "BUILDING"
-	var handle := _tracker.lock_at(origin, direction, point, kind, target_name)
+	var world := _world_lock_hit(origin, direction, true)
+	var handle := _tracker.lock_at(origin, direction, world.point, world.kind, world.name)
 	if handle == -1:
 		_has_target_point = false
 		attack_reticle.clear_target()
@@ -1359,8 +1499,31 @@ func _lock_at_screen(screen: Vector2) -> void:
 	_has_target_point = true
 	if _vehicle().has_method("set_orbit_target"):
 		_vehicle().set_orbit_target(_target_point)
+	_begin_locked_view_tracking()
 	var range_m := roundi(_focus_position().distance_to(_target_point))
-	status_label.text = "LOCK %s  %d m" % [HELMET_HUD.kind_label(int(locked["kind"])), range_m]
+	status_label.text = "TRACKING %s  %d m" % [HELMET_HUD.kind_label(int(locked["kind"])), range_m]
+
+
+## Resolve the centre/touch ray against terrain, water and buildings. A sky
+## selection can pin a point 5 km ahead; the point then stays fixed in world space.
+func _world_lock_hit(origin: Vector3, direction: Vector3, allow_sky: bool = false) -> Dictionary:
+	var result := {"point": null, "kind": TARGET_TRACKER.Kind.GROUND_POINT, "name": "GROUND POINT"}
+	var ground := GROUND_RAY.intersect(origin, direction, _ground_height_xz)
+	var endpoint := origin + direction * 20000.0
+	if not ground.is_empty():
+		result.point = ground.point
+		endpoint = ground.point
+	if _hit_query != null:
+		var world: RefCounted = _hit_query.query_segment(origin, endpoint)
+		if world != null and world.hit:
+			result.point = world.position
+			if world.object_type == WORLD_HIT.ObjectKind.BUILDING:
+				result.kind = TARGET_TRACKER.Kind.BUILDING
+				result.name = "BUILDING"
+	if result.point == null and allow_sky:
+		result.point = origin + direction * 5000.0
+		result.name = "WORLD POINT"
+	return result
 
 
 func _update_target_marker() -> void:
@@ -1448,6 +1611,7 @@ func _is_cockpit_view() -> bool:
 
 
 func _snap_follow_camera() -> void:
+	_free_look_motion.reset()
 	_manual_view_active = false
 	_view_returning = false
 	_release_orbit_lock()
@@ -1533,8 +1697,6 @@ func _speed_fov_offset() -> float:
 
 func _apply_arcade_camera_shake(delta: float) -> void:
 	var rotation_degrees: Vector3 = _arcade_camera_feedback.update(delta)
-	if _flying_jet and _is_cockpit_view():
-		rotation_degrees += jet_anchor.EFFECTS.cockpit_vibration(_cockpit_bob_time, jet_anchor.engine_afterburner_fraction(), jet_anchor.airbrake)
 	if rotation_degrees.is_zero_approx():
 		return
 	camera.global_basis = camera.global_basis * Basis.from_euler(Vector3(
@@ -1553,12 +1715,27 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 	if settings_panel != null and settings_panel.visible:
 		return
 	if action == GamepadInput.ACTION_TRACK_TARGET:
+		if _threat_camera != null and _threat_camera.watching:
+			return
+		if _projectile_camera != null and _projectile_camera.watching:
+			return
 		_track_looked_at_target()
 	elif action == GamepadInput.ACTION_ZOOM_IN:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, true, camera_zoom_max)
 	elif action == GamepadInput.ACTION_ZOOM_OUT:
 		_camera_zoom = _zoom_profile.step(_camera_zoom, camera_zoom_step_ratio, false, camera_zoom_max)
 	elif action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
+		if _threat_camera != null and (_threat_camera.watching or not _enemy_combat.projectiles.active_rounds.is_empty()):
+			if _threat_camera.wreck_view:
+				return
+			_projectile_camera.cancel()
+			_threat_camera.cycle(_enemy_combat.projectiles.active_rounds, jet_anchor.global_position)
+			_update_defensive_view(0.0)
+			return
+		if _projectile_camera != null and _projectile_camera.watching:
+			_projectile_camera.cancel()
+			_update_missile_view_ui()
+			return
 		if _tracker.tracking_view:
 			if _flying_jet:
 				_begin_view_return()
@@ -1566,6 +1743,12 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 				_tracker.stop_view_tracking()
 				_free_look = Vector2.ZERO
 			status_label.text = "TRACKING OFF -- WEAPON LOCK RETAINED"
+			return
+		# A manual glance suspends tracking but retains its live target. Return
+		# to that target before applying the usual view/aircraft recovery.
+		if _manual_view_active and not _tracker.locked().is_empty():
+			_begin_locked_view_tracking()
+			status_label.text = "RESUMING TRACKING %s" % _tracker.locked().get("name", "TARGET")
 			return
 		if _flying_jet:
 			if _view_returning:
@@ -1601,13 +1784,26 @@ func _track_looked_at_target() -> void:
 			visible.append(int(c.handle))
 	var handle := _tracker.cycle_view_lock(visible, camera.global_position, -camera.global_basis.z)
 	if handle == -1:
-		status_label.text = "NO TARGET IN VIEW CLUSTER"
+		var world := _world_lock_hit(camera.global_position, -camera.global_basis.z, true)
+		handle = _tracker.track_point(world.point, world.kind, world.name)
+	_begin_locked_view_tracking()
+	if handle == TARGET_TRACKER.FALLBACK_HANDLE:
+		status_label.text = "TRACKING %s" % _tracker.locked().name
+	else:
+		status_label.text = "TRACKING %s -- %s NEXT IN CLUSTER" % [_tracker.locked().get("name", "TARGET"), GamepadInput.BINDINGS.label(GamepadInput.bindings.values.track_target)]
+
+
+func _begin_locked_view_tracking() -> void:
+	var locked: Dictionary = _tracker.locked()
+	if locked.is_empty():
 		return
+	_free_look_motion.reset()
+	_manual_view_active = false
+	_tracker.tracking_view = true
 	_view_returning = false
 	_tracking_basis = camera.global_basis
 	_has_target_point = true
-	_target_point = _tracker.locked().position
-	status_label.text = "TRACKING %s -- %s NEXT IN CLUSTER" % [_tracker.locked().get("name", "TARGET"), GamepadInput.BINDINGS.label(GamepadInput.bindings.values.track_target)]
+	_target_point = locked.position
 
 
 func _apply_target_tracking(delta: float) -> void:
@@ -1654,6 +1850,8 @@ func _toggle_flight_mode() -> void:
 
 
 func _toggle_settings() -> void:
+	if _threat_camera != null:
+		_threat_camera.stop()
 	if _tactical_mfd != null:
 		_tactical_mfd.close_panel()
 	if settings_panel.toggle_panel():
@@ -1681,7 +1879,7 @@ func _refresh_settings() -> void:
 	var focus := _focus_position()
 	var view_name: String = JET_CAMERA.Mode.keys()[_jet_view] if _flying_jet else View.keys()[_view]
 	settings_panel.set_status("%s · %s view\n%d m above ground" % [
-		"F-22 Raptor" if _flying_jet else "AH-64D Apache", view_name.to_lower(), roundi(focus.y - _ground_height_at(focus))
+		current_aircraft_name(), view_name.to_lower(), roundi(focus.y - _ground_height_at(focus))
 	])
 
 
@@ -1750,18 +1948,19 @@ func _cycle_view() -> void:
 	_apply_view_chrome()
 	if _view != View.COCKPIT:
 		_snap_follow_camera()
+	_apply_target_tracking(1.0)
 
 
 func _cycle_jet_view(direction: int) -> void:
-	_tracker.stop_view_tracking()
 	var count := JET_CAMERA.Mode.size()
 	_jet_view = posmod(_jet_view + direction, count)
 	_free_look = Vector2.ZERO
 	_apply_view_chrome()
 	_snap_follow_camera()
+	_apply_target_tracking(1.0)
 	match _jet_view:
 		JET_CAMERA.Mode.COCKPIT:
-			status_label.text = "COCKPIT VIEW"
+			status_label.text = "NOSE VIEW"
 		JET_CAMERA.Mode.PURSUIT:
 			status_label.text = "PURSUIT VIEW"
 		JET_CAMERA.Mode.TRACK:
@@ -1772,12 +1971,30 @@ func _cycle_jet_view(direction: int) -> void:
 
 ## In the cockpit the screen is the HUD and nothing else.
 func _apply_view_chrome() -> void:
-	# The tape is a cockpit instrument; the scope is always up. The input
-	# monitor is a settings toggle now and does not follow the view.
+	# The tape is a cockpit instrument. The F-35's scope moves onto its physical
+	# MFD in _update_cockpit_map; other views keep the corner scope.
 	if _tape != null:
 		_tape.visible = _is_cockpit_view()
 	if _helmet != null:
 		_helmet.set_cockpit_view(_is_cockpit_view())
+
+
+func _update_cockpit_map(delta: float, vehicle: Node3D, heading: float) -> void:
+	var display: Node3D = jet_anchor.cockpit_mfd
+	var active := _flying_jet and _is_cockpit_view() and is_instance_valid(display)
+	_radar.visible = not active
+	if not is_instance_valid(display):
+		_cockpit_map_layers_timer = 1.0
+		return
+	display.set_active(active)
+	if not active:
+		_cockpit_map_layers_timer = 1.0
+		return
+	display.set_state(vehicle.get_global_transform_interpolated().origin, heading, _tracker.tracked(), _tracker.locked_handle(), _radar.range_m())
+	_cockpit_map_layers_timer += delta
+	if _cockpit_map_layers_timer >= 1.0:
+		_cockpit_map_layers_timer = 0.0
+		display.set_layers(streamed_terrain.tactical_map_layers())
 
 
 func _on_gamepad_connection_changed(connected: bool, _device_id: int, device_name: String) -> void:
@@ -1796,10 +2013,17 @@ func _on_controller_attention_changed(required: bool, title: String, detail: Str
 
 func _on_jet_crashed(_point: Vector3) -> void:
 	_tracker.clear_lock()
+	if jet_anchor.combat_hull == 0 and _threat_camera != null:
+		_projectile_camera.cancel()
+		_threat_camera.show_wreck(jet_anchor)
+		_wreck_fire.follow_source(jet_anchor.global_position)
+		_update_missile_view_ui()
 	status_label.text = "IMPACT -- RECOVERING"
 
 
 func _on_jet_respawned() -> void:
+	_reset_defensive_view()
+	_enemy_combat.clear()
 	status_label.text = "AIRBORNE -- " + GamepadInput.control_hint("HOME + D-PAD THROTTLE · D-PAD ZOOM · BOTH TRIGGERS BRAKE / VECTOR")
 	_snap_follow_camera()
 
@@ -1869,9 +2093,41 @@ func _wire_cannon_systems() -> void:
 	_missile_launcher.selection = _weapons
 	_missile_launcher.tracker = _tracker
 	_missile_launcher.missile_fired.connect(_on_rocket_fired)
+	_strike_fire = STRIKE_FIRE.new()
+	_strike_fire.name = "StrikeFires"
+	add_child(_strike_fire)
+	_enemy_combat = ENEMY_COMBAT.new()
+	_enemy_combat.name = "EnemyCombat"
+	add_child(_enemy_combat)
+	var hostile_query := WORLD_HIT_QUERY.new()
+	hostile_query.configure(_ground_height_xz, _building_hit_index, _surface_resolver, 0.0)
+	_enemy_combat.world_query = hostile_query
+	_enemy_combat.trails = _trail_renderer
+	_enemy_combat.impact_fx = impact_fx
+	_enemy_combat.strike_fire = _strike_fire
+	_enemy_combat.player_hit.connect(_on_hostile_missile_hit)
+	_countermeasures = COUNTERMEASURES.new()
+	add_child(_countermeasures)
+	_enemy_combat.countermeasures = _countermeasures
+	_threat_camera = THREAT_CAMERA.new()
+	_threat_camera.aircraft_camera = camera
+	_threat_camera.ground_height = _ground_height_at
+	add_child(_threat_camera)
+	_wreck_fire = STRIKE_FIRE.new()
+	add_child(_wreck_fire)
+	var warning_layer := CanvasLayer.new()
+	warning_layer.layer = 5
+	add_child(warning_layer)
+	_threat_warning = THREAT_WARNING.new()
+	_threat_warning.name = "ThreatWarning"
+	warning_layer.add_child(_threat_warning)
 	_missile_fx = MISSILE_FX.new()
 	_missile_fx.projectile_manager = projectile_manager
 	add_child(_missile_fx)
+	_projectile_camera = PROJECTILE_CAMERA.new()
+	_projectile_camera.aircraft_camera = camera
+	_projectile_camera.ground_height = _ground_height_at
+	add_child(_projectile_camera)
 	_weapons.changed.connect(_on_weapon_changed)
 	projectile_manager.projectile_expired.connect(_on_projectile_expired)
 
@@ -1948,27 +2204,41 @@ func _play_destructive_hit_stop() -> void:
 
 
 func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> void:
+	if _projectile_camera != null:
+		_projectile_camera.finish(round_data.sequence, hit_result.position, true)
 	if _trail_renderer != null and round_data.weapon_source in ["rocket", "missile"]:
 		_trail_renderer.end_trail(round_data.sequence)
 	if impact_fx != null:
 		impact_fx.spawn_impact(hit_result, round_data)
-		if round_data.weapon_source == "missile" and hit_result.object_type != WORLD_HIT.ObjectKind.ENTITY:
+		if round_data.weapon_source in ["missile", "guided_bomb", "bomb", "rocket"] and hit_result.object_type != WORLD_HIT.ObjectKind.ENTITY:
 			impact_fx.spawn_explosion(hit_result.position)
+	if _strike_fire != null and hit_result.object_type != WORLD_HIT.ObjectKind.WATER:
+		var ground_entity: bool = hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY and hit_result.object_id < DRONE_FIELD.FIRST_ID
+		var surface_hit: bool = hit_result.object_type in [WORLD_HIT.ObjectKind.TERRAIN, WORLD_HIT.ObjectKind.BUILDING]
+		if (round_data.weapon_source in ["bomb", "guided_bomb", "missile", "rocket"] and surface_hit) or ground_entity:
+			var burn_point: Vector3 = hit_result.position
+			if ground_entity:
+				burn_point.y = _ground_height_at(burn_point)
+			_strike_fire.ignite(burn_point, hit_result.object_type == WORLD_HIT.ObjectKind.BUILDING)
 	var destructive: bool = hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY
 	attack_reticle.show_hit_confirm(destructive)
 	_arcade_camera_feedback.add_impact(camera.global_position.distance_to(hit_result.position), destructive)
 	# Every round damages what it actually struck, selected target or not.
 	if hit_result.object_type == WORLD_HIT.ObjectKind.BUILDING and _building_damage != null:
 		_building_damage.apply_hit(hit_result, round_data)
+		if _strike_fire != null and _building_damage.damage_for(hit_result.building_id) >= _building_damage.SMOKE_THRESHOLD:
+			_strike_fire.ignite(hit_result.position, true)
 	elif hit_result.object_type == WORLD_HIT.ObjectKind.ENTITY:
 		# The fields have disjoint id spaces, so whichever claims the id
 		# is the one that was hit. A bomb striking its own drone is refused
 		# by weapon_source, or drones would shoot themselves down.
 		var explosion_position: Variant = null
+		var wreck_velocity := Vector3(0, -20, 0)
 		if hit_result.object_id >= enemy_squadron.FIRST_ID:
 			var destroyed = enemy_squadron.destroy_jet(hit_result.object_id)
 			if destroyed != null:
 				explosion_position = destroyed.position
+				wreck_velocity = destroyed.velocity
 		elif hit_result.object_id >= DRONE_FIELD.FIRST_ID:
 			if round_data.weapon_source != "bomb":
 				explosion_position = _drone_field.destroy_drone(hit_result.object_id)
@@ -1983,10 +2253,60 @@ func _on_projectile_impacted(hit_result: RefCounted, round_data: RefCounted) -> 
 			if _tracker.locked().is_empty():
 				_has_target_point = false
 			impact_fx.spawn_explosion(explosion_position)
+			if _strike_fire != null and hit_result.object_id >= DRONE_FIELD.FIRST_ID:
+				_strike_fire.ignite_wreck(explosion_position, wreck_velocity, _ground_height_at)
 			_play_destructive_hit_stop()
+	if round_data.weapon_source == "guided_bomb":
+		_apply_ground_blast(hit_result.position, 55.0)
+		if _tracker.locked().is_empty():
+			_has_target_point = false
+
+
+func _apply_ground_blast(point: Vector3, radius: float) -> void:
+	for target in launcher_field.launcher_positions():
+		if point.distance_to(target.position) > radius:
+			continue
+		# Walls and ridges shield neighbouring sites from a bomb's blast.
+		var obstruction = _hit_query.query_segment(point + Vector3.UP * 2.0, target.position) if _hit_query != null else null
+		if obstruction != null and (obstruction.object_type != WORLD_HIT.ObjectKind.ENTITY or obstruction.object_id != target.id):
+			continue
+		var destroyed = launcher_field.destroy_launcher(target.id)
+		if destroyed is Vector3:
+			_tracker.remove_contact(target.id)
+			impact_fx.spawn_explosion(destroyed)
+			var burn_point: Vector3 = destroyed
+			burn_point.y = _ground_height_at(burn_point)
+			_strike_fire.ignite(burn_point)
+
+
+func _toggle_missile_view() -> void:
+	if _threat_camera != null:
+		_threat_camera.stop()
+	if _projectile_camera == null:
+		return
+	_projectile_camera.set_enabled(not _projectile_camera.enabled, projectile_manager.active_rounds)
+	_update_missile_view_ui()
+
+
+func _update_missile_view_ui() -> void:
+	var watching: bool = _projectile_camera.watching or (_threat_camera != null and _threat_camera.watching)
+	_missile_view_button.text = _projectile_camera.button_text()
+	_projectile_hud.set_state(_projectile_camera.camera, _projectile_camera.tracking_state())
+	status_label.visible = not watching
+	_mission_label.visible = not watching
+	_weapon_label.visible = not watching
+	_helmet.visible = not watching
+	attack_reticle.visible = not watching
+	_waypoint_hud.visible = not watching
+	_tape.visible = not watching and _is_cockpit_view()
 
 
 func _toggle_tactical_map() -> void:
+	if _threat_camera != null:
+		_threat_camera.stop()
+	if _projectile_camera != null and _projectile_camera.watching:
+		_projectile_camera.cancel()
+		_update_missile_view_ui()
 	if _tactical_mfd == null or (settings_panel != null and settings_panel.visible):
 		return
 	if _tactical_mfd.visible:

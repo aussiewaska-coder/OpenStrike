@@ -1,6 +1,6 @@
 extends SceneTree
 
-const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const JET_SCENE := preload("res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb")
 const JET_VISUALS := preload("res://scripts/jet/jet_visuals.gd")
 
 

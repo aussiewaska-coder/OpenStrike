@@ -14,7 +14,7 @@ Walls are judged against the tower's vertical axis and roofs and soffits
 against its centre. Rewriting only the index buffer in place leaves positions,
 UVs, the texture and every byte of the JSON chunk untouched.
 
-    python3 tools/fix_tower_winding.py 3dassets/q1_tower.glb
+    python3 tools/fix_tower_winding.py assets/models/q1_tower.glb
 """
 
 from __future__ import annotations

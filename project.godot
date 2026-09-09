@@ -28,6 +28,8 @@ window/handheld/orientation=4
 
 [rendering]
 
+scaling_3d/scale.mobile=0.75
+
 textures/default_filters/texture_mipmap_bias=-0.25
 
 renderer/rendering_method="gl_compatibility"
@@ -45,13 +47,17 @@ common/physics_interpolation=true
 
 [shader_globals]
 
+os_lightning={
+"type": "float",
+"value": 0.0
+}
 os_cloud_noise={
 "type": "sampler2D",
-"value": "res://textures/cloud_noise.tres"
+"value": "res://assets/textures/cloud_noise.tres"
 }
 os_water_normal={
 "type": "sampler2D",
-"value": "res://textures/water_normal.tres"
+"value": "res://assets/textures/water_normal.tres"
 }
 os_cloud_wind={
 "type": "vec2",

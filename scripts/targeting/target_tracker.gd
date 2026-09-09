@@ -218,9 +218,11 @@ func cycle_view_lock(visible_handles: Array, origin: Vector3, forward: Vector3) 
 			visible.append(c)
 	if visible.is_empty():
 		return -1
-	if not tracking_view:
+	if not tracking_view or _view_cluster.is_empty():
 		visible.sort_custom(func(a, b): return forward.angle_to(a.position - origin) < forward.angle_to(b.position - origin))
 		var seed: Dictionary = visible[0]
+		if forward.angle_to(seed.position - origin) > deg_to_rad(LOCK_TOLERANCE_DEGREES):
+			return -1
 		_view_cluster.clear()
 		for c in visible:
 			var nearby: bool = (c.position as Vector3).distance_to(seed.position) <= CLUSTER_SPACING_M
@@ -242,6 +244,16 @@ func cycle_view_lock(visible_handles: Array, origin: Vector3, forward: Vector3) 
 	_locked_fallback = {}
 	tracking_view = true
 	return _locked_handle
+
+
+## A fixed point uses the same lock as weapons and HUD, surviving contact
+## refreshes while the camera follows it as the aircraft moves.
+func track_point(position: Vector3, kind: int, name: String) -> int:
+	stop_view_tracking()
+	_locked_fallback = contact(FALLBACK_HANDLE, kind, position, Vector3.ZERO, name)
+	_locked_handle = FALLBACK_HANDLE
+	tracking_view = true
+	return FALLBACK_HANDLE
 
 
 static func is_airborne(c: Dictionary) -> bool:

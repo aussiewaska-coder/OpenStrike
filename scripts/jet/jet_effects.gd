@@ -7,17 +7,26 @@ var plumes: Array[MeshInstance3D] = []
 var lights: Array[OmniLight3D] = []
 var _roll := 0.0
 var _time := 0.0
+var _exhaust_origins := PackedVector3Array()
 
-func build(model: Node3D) -> void:
+func build(model: Node3D, profile = null) -> void:
 	for node in model.find_children("*", "MeshInstance3D", true, false):
 		if node.get_parent().name.to_lower().begins_with("f-22-airframe"):
 			_rig_wings(node)
-	# Model measurements in physical aircraft axes: +X nose, +Z right.
-	for side in [-1.0, 1.0]:
+	# Nozzle positions follow the installed model scale and orientation.
+	_exhaust_origins = PackedVector3Array([Vector3(-3.65, 0, -0.69), Vector3(-3.65, 0, 0.69)])
+	var radius := 0.48
+	if profile != null:
+		radius = profile.exhaust_radius_m
+		if not profile.exhaust_model_positions.is_empty():
+			_exhaust_origins.clear()
+			for origin in profile.exhaust_model_positions:
+				_exhaust_origins.append(model.transform * origin)
+	for origin in _exhaust_origins:
 		var plume := MeshInstance3D.new()
 		var mesh := CylinderMesh.new()
 		mesh.top_radius = 0.05
-		mesh.bottom_radius = 0.48
+		mesh.bottom_radius = radius
 		mesh.height = 1.0
 		mesh.radial_segments = 16
 		mesh.rings = 6
@@ -27,11 +36,11 @@ func build(model: Node3D) -> void:
 		var material := ShaderMaterial.new()
 		material.shader = PLUME
 		plume.material_override = material
-		plume.position = Vector3(-4.0, 0.0, side * 0.69)
+		plume.position = origin
 		add_child(plume)
 		plumes.append(plume)
 		var light := OmniLight3D.new()
-		light.position = Vector3(-3.6, 0.0, side * 0.69)
+		light.position = origin + Vector3.RIGHT * 0.05
 		light.light_color = Color(0.40, 0.52, 1.0)
 		light.omni_range = 3.5
 		light.shadow_enabled = false
@@ -92,7 +101,7 @@ func update(delta: float, roll: float, brake: float, burner: float) -> void:
 		var length := (0.6 + 4.8 * burner) * pulse
 		plumes[i].visible = burner > 0.005
 		plumes[i].scale.y = length
-		plumes[i].position.x = -3.65 - length * 0.5
+		plumes[i].position = _exhaust_origins[i] + Vector3.LEFT * length * 0.5
 		plumes[i].material_override.set_shader_parameter("power", burner)
 		lights[i].light_energy = burner * 1.5 * pulse
 		lights[i].visible = burner > 0.005

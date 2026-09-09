@@ -36,12 +36,48 @@ func _process(delta: float) -> void:
 			marker.scale = Vector3(pulse, 1.0, pulse)
 
 
-func populate(region_id: String, terrain: Node) -> void:
+func populate(region_id: String, terrain: Node, buildings: RefCounted = null) -> void:
 	clear()
 	if terrain == null:
 		return
-	for beach_position in LAYOUT.positions_for(region_id):
-		_spawn_launcher(beach_position, terrain)
+	var half := float(terrain.world_half_extent()) if terrain.has_method("world_half_extent") else 6000.0
+	var world_of := Callable(terrain, "world_from_coordinate") if terrain.has_method("world_from_coordinate") else Callable()
+	for cluster in LAYOUT.clusters_for(region_id, half, world_of):
+		var placed := 0
+		var chosen: Array[Vector2] = []
+		var obstacles: Array = terrain.ground_site_obstacles(Rect2(cluster.centre - Vector2.ONE * 450.0, Vector2.ONE * 900.0)) if terrain.has_method("ground_site_obstacles") else []
+		# Search a bounded patch for dry, reasonably level, unobstructed sites.
+		for attempt in range(48):
+			var angle := float(attempt) * 2.399963
+			var point: Vector2 = cluster.centre + Vector2(cos(angle), sin(angle)) * (55.0 + float(attempt / 8) * 55.0)
+			if absf(point.x) > half - 100.0 or absf(point.y) > half - 100.0:
+				continue
+			if chosen.any(func(p): return p.distance_to(point) < 45.0):
+				continue
+			if obstacles.any(func(box): return box.has_point(point)):
+				continue
+			var height := _terrain_height(terrain, point)
+			if height < 1.0:
+				continue
+			var slope := 0.0
+			for offset in [Vector2(12, 0), Vector2(-12, 0), Vector2(0, 12), Vector2(0, -12)]:
+				slope = maxf(slope, absf(_terrain_height(terrain, point + offset) - height))
+			if slope > 5.0:
+				continue
+			var origin := Vector3(point.x, height + 100.0, point.y)
+			if buildings != null and buildings.query_segment(origin, origin - Vector3.UP * 98.0) != null:
+				continue
+			_spawn_launcher(point, terrain, "%s %d" % [cluster.name, placed + 1])
+			chosen.append(point)
+			placed += 1
+			if placed == LAYOUT.TARGETS_PER_CLUSTER:
+				break
+
+
+func _terrain_height(terrain: Node, point: Vector2) -> float:
+	if terrain.has_method("sample_mesh_height"):
+		return float(terrain.sample_mesh_height(point.x, point.y))
+	return float(terrain.sample_height_world(point.x, point.y)) if terrain.has_method("sample_height_world") else 0.0
 
 
 func clear() -> void:
@@ -67,7 +103,7 @@ func launcher_positions() -> Array:
 		var node: Node3D = launcher["node"]
 		if not is_instance_valid(node):
 			continue
-		out.append({"id": int(entity_id), "position": node.global_position})
+		out.append({"id": int(entity_id), "position": launcher["bounds"].get_center(), "name": launcher.get("name", "SAM")})
 	return out
 
 
@@ -91,7 +127,7 @@ func destroy_launcher(entity_id: int) -> Variant:
 	return explosion_position
 
 
-func _spawn_launcher(beach_position: Vector2, terrain: Node) -> void:
+func _spawn_launcher(beach_position: Vector2, terrain: Node, contact_name := "SAM") -> void:
 	var target := Node3D.new()
 	target.name = "Launcher_%02d" % _next_id
 	target.rotation_degrees.y = BEACH_HEADING_DEGREES
@@ -116,7 +152,7 @@ func _spawn_launcher(beach_position: Vector2, terrain: Node) -> void:
 	var entity_id := _next_id
 	_next_id += 1
 	hit_index.add_entity(entity_id, world_bounds)
-	_launchers[entity_id] = {"node": target, "bounds": world_bounds, "marker": marker}
+	_launchers[entity_id] = {"node": target, "bounds": world_bounds, "marker": marker, "name": contact_name}
 	set_process(true)
 
 

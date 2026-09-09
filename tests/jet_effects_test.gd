@@ -1,6 +1,6 @@
 extends SceneTree
 const JET := preload("res://scripts/jet/jet_controller.gd")
-const MODEL := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const MODEL := preload("res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb")
 func _init(): call_deferred("_run")
 func _run():
 	var output := ""

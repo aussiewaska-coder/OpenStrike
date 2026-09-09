@@ -14,6 +14,9 @@ func _init() -> void:
 	_step_moves_toward_and_never_past()
 	_step_from_empty_snaps_to_target()
 	_lightning_window()
+	_altitude_and_cloud_holes()
+	_transition_is_frame_rate_independent()
+	_flash_is_timed()
 	if _failed:
 		return
 	print("WEATHER_STATE_TEST_PASS")
@@ -73,3 +76,51 @@ func _fail(message: String) -> void:
 	_failed = true
 	push_error(message)
 	quit(1)
+
+
+func _altitude_and_cloud_holes() -> void:
+	if not is_equal_approx(WEATHER.rain_at_altitude(0.6, 500.0), 0.6):
+		_fail("rain preset intensity must survive below the clouds")
+	if WEATHER.rain_at_altitude(1.0, 1900.0) <= WEATHER.rain_at_altitude(1.0, 2100.0):
+		_fail("rain must taper through the top of the cloud")
+	if WEATHER.rain_at_altitude(1.0, WEATHER.CLOUD_ALTITUDE_M + WEATHER.CLOUD_HALF_DEPTH_M) != 0.0 or WEATHER.rain_at_altitude(1.0, 12000.0) != 0.0:
+		_fail("there must be no rain above cloud tops")
+	if WEATHER.cloud_band(500.0) != 0.0 or WEATHER.cloud_band(3000.0) != 0.0 or WEATHER.cloud_band(1800.0) != 1.0:
+		_fail("cloud immersion must be confined to the cloud band")
+	var image := Image.create(8, 8, false, Image.FORMAT_RF)
+	image.fill(Color.BLACK)
+	if WEATHER.cloud_density(image, Vector2(-3000, 800), Vector2.ZERO, 1.0) != 0.0:
+		_fail("a hole in the shared cloud texture must stay clear even in storm")
+	image.fill(Color.WHITE)
+	if WEATHER.cloud_density(image, Vector2(-3000, 800), Vector2.ZERO, 1.0) != 1.0:
+		_fail("a dense cloud must reduce visibility at the camera")
+	for x in 8:
+		for y in 8:
+			image.set_pixel(x, y, Color(float(x + y) / 14.0, 0, 0))
+	# Both noise octaves repeat after ten base tiles (the second uses 3.1x).
+	var sample := WEATHER.cloud_density(image, Vector2(-3200, 1800), Vector2(400, 0), 0.85)
+	var repeated := WEATHER.cloud_density(image, Vector2(56800, 61800), Vector2(400, 0), 0.85)
+	if not is_equal_approx(sample, repeated):
+		_fail("camera cloud sampling must wrap at negative coordinates like the shader")
+	var drifted := WEATHER.cloud_density(image, Vector2(-2800, 1800), Vector2.ZERO, 0.85)
+	if not is_equal_approx(sample, drifted):
+		_fail("cloud visibility must drift with the visible cloud field")
+
+
+func _transition_is_frame_rate_independent() -> void:
+	var target := WEATHER.target(WEATHER.Preset.STORM)
+	var slow := WEATHER.target(WEATHER.Preset.CLEAR)
+	var fast := slow.duplicate()
+	for frame in 15 * 20:
+		slow = WEATHER.step(slow, target, 1.0 / 15.0)
+	for frame in 120 * 20:
+		fast = WEATHER.step(fast, target, 1.0 / 120.0)
+	if absf(slow["rain_rate"] - fast["rain_rate"]) > 0.00001:
+		_fail("weather transitions must take equal real time at 15 and 120 fps")
+
+
+func _flash_is_timed() -> void:
+	if WEATHER.lightning_strength(0.02) <= 0.0 or WEATHER.lightning_strength(0.15) <= 0.0:
+		_fail("lightning must have two visible timed pulses")
+	if WEATHER.lightning_strength(-1.0) != 0.0 or WEATHER.lightning_strength(0.35) != 0.0:
+		_fail("lightning must be dark outside the flash interval")

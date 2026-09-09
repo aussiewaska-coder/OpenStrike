@@ -7,7 +7,7 @@ extends RefCounted
 
 signal changed(weapon: int)
 
-enum Weapon {CANNON, ROCKETS, HEAT, RADAR}
+enum Weapon {CANNON, ROCKETS, HEAT, RADAR, GUIDED_BOMB, GROUND_MISSILE}
 
 var current: int = Weapon.CANNON
 
@@ -28,4 +28,16 @@ func name_of(weapon: int) -> String:
 			return "HEAT SEEKER"
 		Weapon.RADAR:
 			return "RADAR MISSILE"
+		Weapon.GUIDED_BOMB:
+			return "GUIDED BOMB"
+		Weapon.GROUND_MISSILE:
+			return "GROUND MISSILE"
 	return "UNKNOWN"
+
+
+static func is_guided(weapon: int) -> bool:
+	return weapon in [Weapon.HEAT, Weapon.RADAR, Weapon.GUIDED_BOMB, Weapon.GROUND_MISSILE]
+
+
+static func is_ground(weapon: int) -> bool:
+	return weapon in [Weapon.GUIDED_BOMB, Weapon.GROUND_MISSILE]

@@ -3,7 +3,7 @@ extends SceneTree
 ## Run with a real Compatibility renderer and --visual-out=/tmp/... to export
 ## the three lighting states. The normal headless suite checks scene wiring.
 const JET := preload("res://scripts/jet/jet_controller.gd")
-const JET_SCENE := preload("res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb")
+const JET_SCENE := preload("res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb")
 const DAY := preload("res://scripts/world/day_cycle.gd")
 const SKY := preload("res://scripts/world/sky_state.gd")
 const FLARE := preload("res://scripts/world/lens_flare.gd")

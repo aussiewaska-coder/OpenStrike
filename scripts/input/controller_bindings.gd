@@ -3,8 +3,8 @@ extends RefCounted
 ## One portable custom layout. UI navigation stays available independently.
 const PATH := "user://controller_bindings.cfg"
 const ACTIONS := [
-	["flight_left", "Roll left", 0, -1], ["flight_right", "Roll right", 0, 1],
-	["flight_forward", "Pitch forward", 1, -1], ["flight_back", "Pitch back", 1, 1],
+	["flight_left", "Roll left / Apache left", 0, -1], ["flight_right", "Roll right / Apache right", 0, 1],
+	["flight_forward", "Pitch down / Apache forward", 1, -1], ["flight_back", "Pitch up / Apache back", 1, 1],
 	["aim_left", "Look / yaw left", 2, -1], ["aim_right", "Look / yaw right", 2, 1],
 	["aim_forward", "Look up / collective up", 3, -1], ["aim_back", "Look down / collective down", 3, 1],
 	["rudder_left", "Left rudder", 4, 1], ["rudder_right", "Right rudder", 5, 1],

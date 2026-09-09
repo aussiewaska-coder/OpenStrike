@@ -1,21 +1,15 @@
 shader_type sky;
-// Gradient sky with a sun that blooms, a moon and stars after dark, and the
-// same cloud field the ground is shadowed by. Single pass on purpose: the
-// half-resolution subpass is unproven on the Compatibility renderer, and
-// four noise reads per background pixel is within budget.
-
+// Atmosphere and a thin high cirrus sheet; low clouds use the volume pass.
 #include "res://shaders/os_clouds.gdshaderinc"
 
 global uniform float os_night;
 global uniform vec3 os_sun_color;
+global uniform float os_lightning;
 
 uniform vec3 sky_top_color : source_color = vec3(0.19, 0.5, 0.82);
 uniform vec3 sky_horizon_color : source_color = vec3(0.78, 0.88, 0.96);
 uniform vec3 ground_color : source_color = vec3(0.19, 0.24, 0.25);
 uniform float sun_disc_size = 0.018;     // radians
-uniform float cloud_altitude_m = 1800.0;
-uniform float deck_radius_m = 30000.0;   // the cloud deck quad covers this
-uniform float cloud_altitude_fade_m = 25000.0;
 
 float hash13(vec3 p) {
 	p = fract(p * 0.1031);
@@ -27,12 +21,13 @@ void sky() {
 	vec3 dir = EYEDIR;
 	float up = dir.y;
 
-	// Gradient: pale at the horizon, deep overhead, dark ground below.
+	// Broad horizon haze on both sides hides the finite terrain edge.
+	// Avoid an abrupt dark lower hemisphere just below the distant skyline.
 	vec3 col;
 	if (up >= 0.0) {
-		col = mix(sky_horizon_color, sky_top_color, pow(clamp(up, 0.0, 1.0), 0.45));
+		col = mix(sky_horizon_color, sky_top_color, pow(smoothstep(0.0, 0.85, up), 0.65));
 	} else {
-		col = mix(sky_horizon_color, ground_color, smoothstep(0.0, 0.12, -up));
+		col = mix(sky_horizon_color, ground_color, smoothstep(0.12, 0.65, -up));
 	}
 
 	// Sun or moon: LIGHT0 is whichever the day cycle has aimed at us.
@@ -44,6 +39,22 @@ void sky() {
 	vec3 light_col = LIGHT0_COLOR * LIGHT0_ENERGY;
 	col += light_col * (disc * mix(4.0, 1.5, night) + glow * mix(1.0, 0.15, night));
 
+	// Two texture reads for a distant cirrus sheet, with world-space parallax.
+	// It is drawn behind the lower volume, without another ray march.
+	if (abs(up) > 0.015) {
+		float cirrus_t = (6500.0 - POSITION.y) / up;
+		if (cirrus_t > 0.0 && cirrus_t < 120000.0) {
+			vec2 at = POSITION.xz + dir.xz * cirrus_t + os_cloud_wind * 1.6;
+			vec2 stretched = vec2(at.x + at.y * 0.35, at.y - at.x * 0.2) / vec2(22000.0, 2600.0);
+			float strands = textureLod(os_cloud_noise, stretched, 0.0).r;
+			float patches = textureLod(os_cloud_noise, at / 18000.0 + vec2(0.19, 0.63), 0.0).r;
+			float veil = smoothstep(0.46, 0.70, strands) * smoothstep(0.40, 0.65, patches);
+			veil *= smoothstep(0.015, 0.12, abs(up)) * (1.0 - smoothstep(60000.0, 120000.0, cirrus_t));
+			vec3 ice = mix(vec3(0.94, 0.95, 1.0), sky_horizon_color, 0.35) * mix(1.0, 0.15, night);
+			col = mix(col, ice, veil * 0.42);
+		}
+	}
+
 	// Stars: a sparse hash on the view direction, only after dark.
 	if (night > 0.0 && up > 0.0) {
 		vec3 cell = floor(dir * 220.0);
@@ -51,24 +62,6 @@ void sky() {
 		col += vec3(star) * 1.4 * night;
 	}
 
-	// Clouds on a sheet at cloud_altitude_m. When the camera is under the
-	// sheet the deck quad draws the near part, so the sky only draws beyond
-	// its radius; above the sheet the sky has no clouds overhead at all.
-	float height_above = cloud_altitude_m - POSITION.y;
-	if (height_above > 0.0 && up > 0.005) {
-		float t = height_above / up;
-		if (t > deck_radius_m) {
-			vec2 world_xz = POSITION.xz + dir.xz * t;
-			float density = os_cloud_density(world_xz);
-			float lit = os_cloud_lit(world_xz, density, LIGHT0_DIRECTION);
-			vec3 cloud_bright = mix(vec3(0.9, 0.92, 0.95), light_col, 0.5);
-			vec3 cloud_dark = mix(sky_horizon_color, vec3(0.45, 0.5, 0.6), 0.5);
-			vec3 cloud = mix(cloud_dark, cloud_bright, lit) * mix(1.0, 0.12, night);
-			float edge = smoothstep(deck_radius_m, deck_radius_m * 1.15, t);
-			float far_fade = 1.0 - smoothstep(cloud_altitude_fade_m * 3.0, cloud_altitude_fade_m * 6.0, t);
-			col = mix(col, cloud, density * edge * far_fade);
-		}
-	}
 
-	COLOR = col;
+	COLOR = col + vec3(0.3, 0.4, 0.6) * os_lightning;
 }

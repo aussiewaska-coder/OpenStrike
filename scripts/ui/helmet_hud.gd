@@ -17,6 +17,7 @@ const TRACKER := preload("res://scripts/targeting/target_tracker.gd")
 
 const GREEN := Color(0.45, 1.0, 0.6)
 const AMBER := Color(1.0, 0.72, 0.25)
+const HOSTILE_RED := Color(1.0, 0.22, 0.18)
 const LINE_WIDTH := 1.4
 const LOCK_LINE_WIDTH := 2.4
 const LABEL_SIZE := 12
@@ -41,6 +42,18 @@ var _boxed: Array = []
 var _locked := {}
 var _closure := 0.0
 var _instruments := {}
+var _seeker := {}
+
+
+func set_seeker_state(state: Dictionary) -> void:
+	_seeker = state
+	queue_redraw()
+
+
+func _lock_colour() -> Color:
+	if TRACKER.is_airborne(_locked):
+		return HOSTILE_RED
+	return AMBER
 
 
 func _ready() -> void:
@@ -228,12 +241,13 @@ func _draw_boxes() -> void:
 			continue
 		var range_m := _camera.global_position.distance_to(position)
 		var half := box_half_extent_px(range_m)
-		draw_rect(Rect2((at as Vector2) - Vector2(half, half), Vector2(half, half) * 2.0), Color(GREEN, 0.7), false, LINE_WIDTH)
+		var colour := Color(HOSTILE_RED if TRACKER.is_airborne(c) else GREEN, 0.7)
+		draw_rect(Rect2((at as Vector2) - Vector2(half, half), Vector2(half, half) * 2.0), colour, false, LINE_WIDTH)
 		draw_string(
 			ThemeDB.fallback_font,
 			(at as Vector2) + Vector2(-half, half + LABEL_SIZE + 2.0),
 			"%d" % roundi(range_m),
-			HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE, Color(GREEN, 0.7)
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE, colour
 		)
 
 
@@ -252,18 +266,27 @@ func _draw_lock() -> void:
 		return
 	var centre: Vector2 = at
 	var half := maxf(box_half_extent_px(range_m), 14.0)
+	var colour := _lock_colour()
 	# Diamond.
 	draw_polyline(PackedVector2Array([
 		centre + Vector2(0.0, -half), centre + Vector2(half, 0.0),
 		centre + Vector2(0.0, half), centre + Vector2(-half, 0.0),
 		centre + Vector2(0.0, -half),
-	]), AMBER, LOCK_LINE_WIDTH)
+	]), colour, LOCK_LINE_WIDTH)
 	# Corner brackets, outside the diamond.
 	var bracket := half + 8.0
 	for corner in [Vector2(-1.0, -1.0), Vector2(1.0, -1.0), Vector2(1.0, 1.0), Vector2(-1.0, 1.0)]:
 		var c: Vector2 = centre + corner * bracket
-		draw_line(c, c - Vector2(corner.x * 7.0, 0.0), AMBER, LOCK_LINE_WIDTH)
-		draw_line(c, c - Vector2(0.0, corner.y * 7.0), AMBER, LOCK_LINE_WIDTH)
+		draw_line(c, c - Vector2(corner.x * 7.0, 0.0), colour, LOCK_LINE_WIDTH)
+		draw_line(c, c - Vector2(0.0, corner.y * 7.0), colour, LOCK_LINE_WIDTH)
+	if not _seeker.is_empty() and int(_seeker.get("handle", -1)) == int(_locked["handle"]):
+		var ready := bool(_seeker.get("ready", false))
+		var progress := float(_seeker.get("progress", 0.0))
+		var seeker_colour := HOSTILE_RED if ready else AMBER
+		if progress > 0.0:
+			draw_arc(centre, bracket + 5.0, -PI * 0.5, -PI * 0.5 + TAU * progress, 48, seeker_colour, LOCK_LINE_WIDTH, true)
+		var seeker_text := String(_seeker.get("fire_label", "MISSILE LOCK - FIRE")) if ready else String(_seeker.get("status", "ACQUIRING"))
+		draw_string(ThemeDB.fallback_font, centre + Vector2(-bracket, bracket + 24.0), seeker_text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE + 1, seeker_colour)
 	var label := "%s  %d m  %s" % [
 		kind_label(int(_locked["kind"])), roundi(range_m), closure_text(_closure)
 	]
@@ -272,11 +295,12 @@ func _draw_lock() -> void:
 		label = "%s  %s" % [contact_name, label]
 	draw_string(
 		ThemeDB.fallback_font, centre + Vector2(bracket + 6.0, 4.0), label,
-		HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE + 1, AMBER
+		HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE + 1, colour
 	)
 
 
 func _draw_lock_chevron(position: Vector3, range_m: float) -> void:
+	var colour := _lock_colour()
 	var centre := size * 0.5
 	var to_target: Vector3 = position - _camera.global_position
 	var local: Vector3 = _camera.global_basis.inverse() * to_target
@@ -291,10 +315,10 @@ func _draw_lock_chevron(position: Vector3, range_m: float) -> void:
 	var side := Vector2(-direction.y, direction.x)
 	draw_polyline(PackedVector2Array([
 		edge - direction * 10.0 + side * 7.0, edge, edge - direction * 10.0 - side * 7.0,
-	]), AMBER, LOCK_LINE_WIDTH)
+	]), colour, LOCK_LINE_WIDTH)
 	draw_string(
 		ThemeDB.fallback_font, edge - direction * 26.0 + Vector2(-14.0, 0.0),
-		"%d" % roundi(range_m), HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE, AMBER
+		"%d" % roundi(range_m), HORIZONTAL_ALIGNMENT_LEFT, -1.0, LABEL_SIZE, colour
 	)
 
 

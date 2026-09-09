@@ -51,13 +51,14 @@ def main() -> int:
                     print(json.dumps(sample))
                     continue
                 jet = ""
-                if sample.get("aircraft") == "F-22":
+                if "jet_airspeed_mps" in sample:
                     jet = (
-                        " | F22 pad %s raw L%+.2f,%+.2f R%+.2f,%+.2f "
+                        " | %s pad %s raw L%+.2f,%+.2f R%+.2f,%+.2f "
                         "thr %3.0f%% ab %2.0f%% in r%+.2f p%+.2f y%+.2f t%+.2f "
                         "rate r%+5.1f p%+5.1f y%+5.1f "
                         "spd %5.1f alt %5.0f vz %+5.1f bank %+5.1f alpha %+4.1f g %+.1f"
                         % (
+                            sample.get("aircraft", "jet"),
                             sample.get("controller_name", "?"),
                             sample.get("raw_left_x", 0),
                             sample.get("raw_left_y", 0),

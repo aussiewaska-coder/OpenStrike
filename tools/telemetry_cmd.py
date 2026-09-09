@@ -9,7 +9,7 @@ fog_light_color [r,g,b], tonemap_mode (0 linear, 2 filmic, 3 aces, 4 agx),
 tonemap_exposure, tonemap_white, ambient_energy, camera_far, sun_energy,
 sky_top_color [r,g,b], sky_horizon_color [r,g,b], terrain_tint [r,g,b],
 fog_multiplier, sun_multiplier, weather (0 clear, 1 overcast, 2 rain, 3 storm),
-cloud_coverage.
+cloud_coverage, cloud_enabled, cloud_steps (16–128), cloud_shadow_steps (1–5), render_scale_3d (0.5–1.0).
 """
 import argparse
 import base64

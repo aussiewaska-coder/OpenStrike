@@ -9,6 +9,9 @@ extends RefCounted
 
 class_name Airframe
 
+# Relative arcade detectability. Lower radar signature shortens SAM reach.
+var radar_signature := 0.28
+var heat_signature := 0.75
 var display_name := "F-22 RAPTOR"
 
 # Lift curve
@@ -40,7 +43,7 @@ var control_authority_floor := 0.10
 var thrust_vector_authority := 0.38
 
 # Rigging
-var scene_path := "res://3dassets/f-22_raptor_-_fighter_jet_-_free.glb"
+var scene_path := "res://assets/models/f-22_raptor_-_fighter_jet_-_free.glb"
 ## Applied to the visual root before anything is measured, so every aircraft
 ## presents its length on X, its up on Y and its span on Z -- the convention
 ## aero_model.alpha_beta() documents and _scale_to_reference() depends on.
@@ -54,14 +57,25 @@ var hull_clearance_m := 2.5
 var cockpit_seat_fraction := 0.60
 var cockpit_eye_height_fraction := 0.80
 var cockpit_pitch_degrees := -8.0
+## Only aircraft without an authored interior use a camera ahead of the nose.
+var has_cockpit := true
+## A thin highlight layer and stable mobile shading on the painted exterior.
+var satin_exterior := false
+var has_live_mfd := false
 ## The Raptor's parts have names -- "canopy", "landingon" -- and the
 ## Nighthawk's are all Object_N, so each model's canopy and gear are found the
 ## way that model allows.
 var parts_are_named := true
+## Optional rig for imported parts that need more than name/height matching.
+var landing_gear_rig: Script
 ## jet_effects.gd partitions the Raptor's trailing wing panels into ailerons
 ## and hangs plumes off its nozzles. That is Raptor geometry, not a general
 ## capability, so an aircraft it was not written for opts out.
 var has_jet_effects := true
+## Optional nozzle and rail locations in imported model-root units.
+var exhaust_model_positions := PackedVector3Array()
+var exhaust_radius_m := 0.48
+var hardpoint_model_positions := PackedVector3Array()
 
 
 ## Peak lift coefficient, at the stall angle. aero_model.gd wrote this as
@@ -92,6 +106,8 @@ static func raptor() -> Airframe:
 static func nighthawk() -> Airframe:
 	var f := Airframe.new()
 	f.display_name = "F-117 NIGHTHAWK"
+	f.radar_signature = 0.20
+	f.heat_signature = 0.55
 
 	# Real thrust-to-weight is 0.47 against the Raptor's 0.82, so 0.57 of it.
 	# Two F404s with no reheat, hauling an aircraft that is mostly angles.
@@ -128,7 +144,7 @@ static func nighthawk() -> Airframe:
 	# No vectoring nozzles. Both triggers stays an airbrake and nothing more.
 	f.thrust_vector_authority = 0.0
 
-	f.scene_path = "res://3dassets/f117_nighthawk.glb"
+	f.scene_path = "res://assets/models/f117_nighthawk.glb"
 	# The GLB arrives span on X, length on Y and up on Z, so it needs turning
 	# onto the Raptor's convention: length on X, up on Y, span on Z. Found by
 	# trying every proper rotation and keeping the one that measures 20.24 m
@@ -146,5 +162,56 @@ static func nighthawk() -> Airframe:
 	f.cockpit_eye_height_fraction = 0.72
 	f.cockpit_pitch_degrees = -7.0
 	f.parts_are_named = false
+	f.has_cockpit = false
+	f.landing_gear_rig = preload("res://scripts/jet/nighthawk_gear.gd")
 	f.has_jet_effects = false
+	return f
+
+
+## The supplied broad-wing model has the carrier variant's proportions.
+static func lightning() -> Airframe:
+	var f := Airframe.new()
+	f.display_name = "F-35 LIGHTNING II"
+	f.radar_signature = 0.34
+	f.heat_signature = 0.85
+	f.scene_path = "res://assets/models/f35_lightning.glb"
+	f.satin_exterior = true
+	f.has_live_mfd = true
+	# The generic seat fraction puts the lens against this model's front
+	# canopy bow. This point clears the seat and keeps its panel in view.
+	f.cockpit_seat_fraction = 0.45
+	f.reference_wingspan_m = 13.1
+	f.hull_clearance_m = 2.2
+	f.load_limit_g = 7.5
+	f.thrust_vector_authority = 0.0
+	# Root units: X nose, Y up. The one nozzle sits ahead of the tail tips.
+	f.exhaust_model_positions = PackedVector3Array([Vector3(-40.56, -1.62, 0.0)])
+	f.exhaust_radius_m = 0.45
+	return f
+
+
+## Game-feel tuning in the same compressed speed envelope as the other jets.
+static func super_hornet() -> Airframe:
+	var f := Airframe.new()
+	f.display_name = "F/A-18F SUPER HORNET"
+	f.radar_signature = 1.0
+	f.heat_signature = 1.0
+	f.scene_path = "res://assets/models/FA18F_RAAF_Gunmetal_GearUp.glb"
+	f.reference_wingspan_m = 13.62
+	f.hull_clearance_m = 2.2
+	f.load_limit_g = 7.5
+	f.aero_authority = 0.0021
+	f.cd0 = 0.074
+	f.k_induced = 0.058
+	f.thrust_military_g = 0.50
+	f.thrust_afterburner_g = 1.05
+	f.thrust_vector_authority = 0.0
+	# Measured nozzle exit centres: negative X is aft, Y is up, Z spans.
+	# The imported GLB is about ten times aircraft scale. The visual's
+	# installed transform converts these points alongside the actual mesh.
+	f.exhaust_model_positions = PackedVector3Array([
+		Vector3(-56.35, 1.32, -4.93), Vector3(-56.35, 1.32, 4.93)])
+	f.exhaust_radius_m = 0.34
+	f.hardpoint_model_positions = PackedVector3Array([
+		Vector3(18.0, -7.5, -29.5), Vector3(18.0, -7.5, 29.5)])
 	return f

@@ -1,21 +1,29 @@
 class_name LauncherLayout
 extends RefCounted
 
-const SURFERS_REGION := "au_qld_surfers"
+const TARGETS_PER_CLUSTER := 1
 
-
-static func positions_for(region_id: String) -> PackedVector2Array:
-	if region_id != SURFERS_REGION:
-		return PackedVector2Array()
-	return PackedVector2Array([
-		Vector2(-20.0, -900.0),
-		Vector2(-10.0, -700.0),
-		Vector2(10.0, -500.0),
-		Vector2(45.0, -300.0),
-		Vector2(60.0, -100.0),
-		Vector2(65.0, 100.0),
-		Vector2(70.0, 300.0),
-		Vector2(85.0, 500.0),
-		Vector2(110.0, 700.0),
-		Vector2(140.0, 900.0),
-	])
+## Fictional game sites around the built-up coast and inland hills.
+static func clusters_for(region_id: String, half_extent: float, world_of := Callable()) -> Array:
+	if region_id == "au_gold_coast_tweed_corridor" and world_of.is_valid():
+		var sites := [
+			["CITY NORTH", -27.978, 153.412],
+			["CITY CENTRAL", -28.015, 153.416],
+			["CITY SOUTH", -28.092, 153.435],
+			["HINTERLAND NORTH", -27.985, 153.285],
+			["HINTERLAND CENTRAL", -28.064, 153.302],
+			["HINTERLAND SOUTH", -28.165, 153.348],
+		]
+		var out := []
+		for site in sites:
+			out.append({"name": site[0], "centre": world_of.call(site[1], site[2])})
+		return out
+	var scale := minf(half_extent, 6000.0)
+	return [
+		{"name": "CITY NORTH", "centre": Vector2(-0.12, -0.25) * scale},
+		{"name": "CITY CENTRAL", "centre": Vector2(-0.16, 0.0) * scale},
+		{"name": "CITY SOUTH", "centre": Vector2(-0.12, 0.25) * scale},
+		{"name": "HINTERLAND NORTH", "centre": Vector2(-0.65, -0.4) * scale},
+		{"name": "HINTERLAND CENTRAL", "centre": Vector2(-0.55, 0.0) * scale},
+		{"name": "HINTERLAND SOUTH", "centre": Vector2(-0.65, 0.4) * scale},
+	]

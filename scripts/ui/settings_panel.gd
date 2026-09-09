@@ -12,6 +12,8 @@ signal weather_cycled
 signal input_monitor_toggled(enabled: bool)
 signal raid_restarted
 signal open_changed(is_open: bool)
+signal engine_volume_cycled
+signal weather_volume_cycled
 
 const ACCENT := Color(0.40, 0.88, 0.79)
 const INK := Color(0.90, 0.94, 0.96)
@@ -28,6 +30,8 @@ var _quality_button: Button
 var _time_button: Button
 var _weather_button: Button
 var _stats_label: Label
+var _engine_volume_button: Button
+var _weather_volume_button: Button
 var _monitor_button: CheckButton
 var _region_label: Label
 var _resume_button: Button
@@ -119,6 +123,11 @@ func _ready() -> void:
 	var status := _card(flight, "Current flight")
 	_stats_label = _label("", MUTED)
 	status.add_child(_stats_label)
+	var sound := _card(flight, "Audio", "Select to cycle off, 40%, 70% and 100% volume.")
+	_engine_volume_button = _button("ENGINE SOUND: 70%", func(): engine_volume_cycled.emit())
+	sound.add_child(_engine_volume_button)
+	_weather_volume_button = _button("WEATHER SOUND: 70%", func(): weather_volume_cycled.emit())
+	sound.add_child(_weather_volume_button)
 
 	var location := _card(_pages[1], "Theatre", "Choose where to fly. Selecting a theatre returns you to the game.")
 	_region_label = _label("", ACCENT)
@@ -134,7 +143,7 @@ func _ready() -> void:
 	var time := _card(display, "Time of day", "Change the light and sky.")
 	_time_button = _button("AFTERNOON", func(): time_cycled.emit())
 	time.add_child(_time_button)
-	var weather := _card(display, "Weather", "Select to cycle weather conditions.")
+	var weather := _card(display, "Weather", "Cycle clear, overcast, rain and storm. Storm adds towering clouds.")
 	_weather_button = _button("CLEAR", func(): weather_cycled.emit())
 	weather.add_child(_weather_button)
 	var hud := _card(display, "HUD", "Show controller readings while flying.")
@@ -344,6 +353,14 @@ func set_region_text(text: String) -> void:
 
 func set_status(text: String) -> void:
 	_stats_label.text = text
+
+
+func set_engine_volume_text(text: String) -> void:
+	_engine_volume_button.text = text
+
+
+func set_weather_volume_text(text: String) -> void:
+	_weather_volume_button.text = text
 
 
 func open_panel() -> void:

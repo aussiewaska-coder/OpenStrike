@@ -38,9 +38,12 @@ var airframe = AIRFRAME.raptor()
 var _aero
 var _assist
 const JET_VISUALS := preload("res://scripts/jet/jet_visuals.gd")
+const COCKPIT_MFD := preload("res://scripts/jet/cockpit_mfd.gd")
 const FIXED_GUN_MOUNT := preload("res://scripts/weapons/fixed_gun_mount.gd")
 
 const EFFECTS := preload("res://scripts/jet/jet_effects.gd")
+const VAPOR := preload("res://scripts/jet/wing_vapor.gd")
+var _vapor: Node3D
 var _effects: Node3D
 
 const GRAVITY := 9.80665
@@ -72,6 +75,9 @@ signal boundary_warning(urgency: float)
 @export var dihedral_roll_gain := 0.35
 @export var sideslip_damping_gain := 2.4
 @export var control_response := 7.0           ## how quickly commanded rates are reached
+## Releasing a thumbstick must arrest the correction promptly. Using the
+## engagement response here carried a half-second roll another 13 degrees.
+@export var control_release_response := 24.0
 
 @export_group("Throttle")
 ## Dedicated up/down buttons move the throttle; releasing holds the setting.
@@ -119,6 +125,7 @@ var _braking := false
 
 var _terrain: Node
 var _visual: Node3D
+var cockpit_mfd: Node3D
 var _gun_mount: Node3D
 var _hardpoints: Array[Node3D] = []
 var _thrust_setting := 0.62
@@ -126,9 +133,12 @@ var _roll_rate := 0.0
 var _pitch_rate := 0.0
 var _yaw_rate := 0.0
 var _world_limit := 1950.0
+var combat_hull := 100
+var _combat_falling := false
 var _crashed := false
 var _respawn_timer := 0.0
-var _cockpit_local := Vector3(9.5, 1.05, 0.0)
+var _first_person_local := Vector3(9.85, 0.0, 0.0)
+var _has_cockpit_view := false
 var _boundary_urgency := 0.0
 var _wings_level_requested := false
 
@@ -139,7 +149,7 @@ func _ready() -> void:
 	_adopt_world_bounds(_terrain)
 	throttle = starting_throttle
 	_thrust_setting = starting_throttle
-	call_deferred("_find_visual")
+	call_deferred("refresh_visual")
 
 
 ## The airframe decides the aerodynamics, and the assist must fly by the same
@@ -187,12 +197,28 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	vectoring = false
 	airbrake = 0.0
 	_braking = false
+	_combat_falling = false
+	combat_hull = 100
 	_crashed = false
 	_respawn_timer = 0.0
 	_wings_level_requested = false
+	if is_instance_valid(_vapor):
+		_vapor.clear()
 	if is_inside_tree():
 		get_global_transform_interpolated()
 		reset_physics_interpolation()
+
+
+func apply_missile_damage() -> void:
+	if _crashed:
+		return
+	combat_hull = maxi(0, combat_hull - 25)
+	if combat_hull == 0:
+		_crashed = true
+		_respawn_timer = 4.0
+		_combat_falling = true
+		velocity *= 0.7
+		crashed.emit(global_position)
 
 
 func is_crashed() -> bool:
@@ -201,6 +227,15 @@ func is_crashed() -> bool:
 
 func _physics_process(delta: float) -> void:
 	if _crashed:
+		if _combat_falling:
+			velocity.y -= 18.0 * delta
+			global_position += velocity * delta
+			rotate_object_local(Vector3.RIGHT, delta * 0.75)
+			var floor_m := _sample_ground() + hull_clearance_m
+			if global_position.y <= floor_m:
+				global_position.y = floor_m
+				velocity = Vector3.ZERO
+				_combat_falling = false
 		_update_visual(delta)
 		_respawn_timer -= delta
 		if _respawn_timer <= 0.0:
@@ -226,6 +261,7 @@ func _read_controls(delta: float) -> void:
 		rudder_axis = gamepad.get_rudder_axis()
 		throttle_axis = gamepad.get_jet_throttle_axis()
 		boost_held = gamepad.is_vectoring_held()
+	# Left/right rolls; pushing forward lowers the nose, pulling back raises it.
 	roll_input = stick.x
 	pitch_input = pitch_input_from_stick(stick.y)
 	rudder_input = rudder_axis
@@ -236,6 +272,7 @@ func _read_controls(delta: float) -> void:
 
 	var speed := velocity.length()
 	bank = bank_angle(basis)
+	var nose_pitch := asin(clampf(basis.x.y, -1.0, 1.0))
 	var level := absf(bank) < deg_to_rad(15.0 if _braking else 10.0) and absf(velocity.normalized().y) < 0.17
 	_braking = boost_held and level and stick.length() < 0.12 and absf(rudder_axis) < 0.12
 	vectoring = boost_held and not _braking
@@ -250,6 +287,7 @@ func _read_controls(delta: float) -> void:
 		vectoring
 	)
 	commanded_roll += _assist.dihedral_roll_rate(beta, dihedral_roll_gain)
+	commanded_roll += _assist.level_turn_roll_rate(bank, speed, nose_pitch, _roll_rate)
 	commanded_roll += _boundary_roll_command()
 	if _wings_level_requested:
 		if absf(roll_input) > 0.2:
@@ -270,9 +308,10 @@ func _read_controls(delta: float) -> void:
 		alpha,
 		_roll_rate,
 		clampf(_thrust_setting, 0.0, 1.0),
-		vectoring
+		vectoring,
+		nose_pitch
 	)
-	var commanded_yaw: float = _assist.level_turn_yaw_rate(bank, speed, _roll_rate)
+	var commanded_yaw: float = _assist.level_turn_yaw_rate(bank, speed, _roll_rate, nose_pitch)
 	commanded_yaw += _assist.rudder_yaw_rate(
 		rudder_input,
 		deg_to_rad(maximum_rudder_sideslip_degrees),
@@ -284,17 +323,17 @@ func _read_controls(delta: float) -> void:
 	# Control surfaces move quickly but not instantly, which is what stops the
 	# aircraft snapping between attitudes.
 	var weight := 1.0 - exp(-control_response * delta)
-	_roll_rate = lerpf(_roll_rate, commanded_roll, weight)
-	_pitch_rate = lerpf(_pitch_rate, commanded_pitch, weight)
+	var release_weight := 1.0 - exp(-control_release_response * delta)
+	_roll_rate = lerpf(_roll_rate, commanded_roll, release_weight if is_zero_approx(roll_input) else weight)
+	_pitch_rate = lerpf(_pitch_rate, commanded_pitch, release_weight if is_zero_approx(pitch_input) else weight)
 	_yaw_rate = lerpf(_yaw_rate, commanded_yaw, weight)
 
 	basis = rotate_body(basis, _roll_rate, _pitch_rate, _yaw_rate, delta)
 
 
-## Godot's stick vector is negative when pushed forward and positive when
-## pulled back. Positive aircraft pitch raises the nose.
-static func pitch_input_from_stick(stick_y: float) -> float:
-	return stick_y
+## Forward stick lowers the nose; back raises it.
+static func pitch_input_from_stick(stick_axis: float) -> float:
+	return stick_axis
 
 
 ## Roll about the nose, pitch about the right wing, yaw about the aircraft's own
@@ -361,9 +400,15 @@ func _integrate(delta: float) -> void:
 	# Drag opposes travel without pitching the nose or changing the throttle.
 	acceleration -= velocity.normalized() * airbrake * minf(35.0, 18.0 * pow(speed / 175.0, 2.0))
 	velocity += acceleration * delta
+	velocity = _assist.forward_flight_velocity(velocity, basis, rudder_input, delta)
 	global_position += velocity * delta
 
 	load_factor = _aero.lift_acceleration(speed, alpha) * falloff / GRAVITY
+	# Publish the direction we actually moved, and feed that state into the
+	# next control step rather than damping yesterday's sideslip again.
+	angles = _aero.alpha_beta(basis.inverse() * velocity)
+	alpha = angles.x
+	beta = angles.y
 
 
 ## Roll the assist adds to bring the aircraft back over the theatre. Zero
@@ -460,6 +505,34 @@ func wings_level_requested() -> bool:
 	return _wings_level_requested
 
 
+## Rebind after main replaces HeroJet. The controller survives an aircraft
+## switch, so _ready alone cannot initialise the new model or retire the old
+## effects/mounts. Keep the hardpoint array itself so weapon owners sharing it
+## see the replacement points too.
+func refresh_visual() -> void:
+	var replacement := get_node_or_null("HeroJet")
+	if is_instance_valid(_visual) and _visual == replacement:
+		return
+	if is_instance_valid(_effects):
+		_effects.free()
+	_effects = null
+	if is_instance_valid(_vapor):
+		_vapor.free()
+	_vapor = null
+	if is_instance_valid(_gun_mount):
+		_gun_mount.free()
+	_gun_mount = null
+	for mount in _hardpoints:
+		if is_instance_valid(mount):
+			mount.free()
+	_hardpoints.clear()
+	_visual = null
+	cockpit_mfd = null
+	_find_visual()
+	if _visual != null:
+		_visual.reset_physics_interpolation()
+
+
 func _find_visual() -> void:
 	_visual = get_node_or_null("HeroJet")
 	if _visual == null:
@@ -467,19 +540,31 @@ func _find_visual() -> void:
 	_scale_to_reference()
 	# The Raptor's parts have names and the Nighthawk's are all Object_N, so
 	# each is found the way its own model allows.
-	if airframe.parts_are_named:
+	if airframe.landing_gear_rig != null:
+		airframe.landing_gear_rig.stow(_visual)
+	elif airframe.parts_are_named:
 		_stow_landing_gear()
-		JET_VISUALS.clarify_canopy(_visual)
 	else:
 		JET_VISUALS.hide_landing_gear(_visual, airframe.model_basis, GEAR_HEIGHT_FRACTION)
+	if airframe.parts_are_named:
+		JET_VISUALS.clarify_canopy(_visual)
+	else:
 		JET_VISUALS.clarify_canopy_by_bounds(_visual, airframe.model_basis)
-	_measure_cockpit()
+	if airframe.satin_exterior:
+		JET_VISUALS.satin_exterior(_visual)
+	_measure_first_person_camera()
+	if airframe.has_live_mfd:
+		cockpit_mfd = COCKPIT_MFD.attach(_visual)
 	if airframe.has_jet_effects and _effects == null:
 		_effects = EFFECTS.new()
 		add_child(_effects)
-		_effects.build(_visual)
+		_effects.build(_visual, airframe)
 	_attach_fixed_gun_mount()
 	_attach_hardpoints()
+	if _vapor == null:
+		_vapor = VAPOR.new()
+		add_child(_vapor)
+		_vapor.build(_visual)
 
 
 ## The GLB is ten times real scale. Measure the wingspan and scale to the real
@@ -532,6 +617,14 @@ func _attach_fixed_gun_mount() -> void:
 func _attach_hardpoints() -> void:
 	if _visual == null or not _hardpoints.is_empty():
 		return
+	if not airframe.hardpoint_model_positions.is_empty():
+		for point in airframe.hardpoint_model_positions:
+			var mount := Node3D.new()
+			mount.name = "Hardpoint%d" % _hardpoints.size()
+			add_child(mount)
+			mount.position = _visual.transform * point
+			_hardpoints.append(mount)
+		return
 	var bounds := _measure_bounds()
 	if bounds.size.is_zero_approx():
 		return
@@ -566,74 +659,55 @@ func _measure_bounds() -> AABB:
 		return bounds
 	for child in _visual.find_children("*", "MeshInstance3D", true, false):
 		var instance := child as MeshInstance3D
-		var local: AABB = _visual.global_transform.affine_inverse() * (instance.global_transform * instance.get_aabb())
+		var local: AABB = (_visual.global_transform.affine_inverse() * instance.global_transform) * instance.get_aabb()
 		bounds = local if not found else bounds.merge(local)
 		found = true
 	return bounds
 
 
-## The Apache's GLB has no interior at all, which is why its cockpit camera
-## floats out in front of the nose. This one carries a modelled cockpit tub,
-## instrument glass and HUD combiner, so the pilot station is a real place
-## inside the aircraft. Sit far enough back and high enough in the tub that the
-## panel and the combiner are both in frame.
-func _measure_cockpit() -> void:
-	var tub := _find_named("cockpit")
-	var bounds := _mesh_bounds(tub) if tub != null else _measure_bounds()
-	if bounds.size.is_zero_approx():
-		return
-	var oriented: AABB = Transform3D(airframe.model_basis, Vector3.ZERO) * bounds
-	var seat := Vector3(
-		oriented.position.x + oriented.size.x * airframe.cockpit_seat_fraction,
-		oriented.position.y + oriented.size.y * airframe.cockpit_eye_height_fraction,
-		oriented.get_center().z
-	)
-	# _visual carries the corrective rotation now, and this is multiplied by
-	# it, so hand back a point in the model's own frame.
-	_cockpit_local = airframe.model_basis.inverse() * seat
-
-
-## One node's bounds, in the visual's own units.
-func _mesh_bounds(node: Node3D) -> AABB:
+## Use the authored cockpit where available. The F-117 explicitly opts into
+## the unobstructed nose camera; that exception must not affect other jets.
+func _measure_first_person_camera() -> void:
+	_has_cockpit_view = false
 	var bounds := AABB()
 	var found := false
-	for child in node.find_children("*", "MeshInstance3D", true, false):
-		var instance := child as MeshInstance3D
-		var local: AABB = _visual.global_transform.affine_inverse() * (instance.global_transform * instance.get_aabb())
+	var tub: Node3D
+	if airframe.has_cockpit:
+		for child in _visual.find_children("*", "Node3D", true, false):
+			if String(child.name).to_lower().contains("cockpit"):
+				tub = child
+				break
+	var source: Node3D = tub if tub != null else _visual
+	for child in source.find_children("*", "MeshInstance3D", true, false):
+		var mesh := child as MeshInstance3D
+		var local: AABB = (global_transform.affine_inverse() * mesh.global_transform) * mesh.get_aabb()
 		bounds = local if not found else bounds.merge(local)
 		found = true
-	if not found and node is MeshInstance3D:
-		var self_instance := node as MeshInstance3D
-		bounds = _visual.global_transform.affine_inverse() * (self_instance.global_transform * self_instance.get_aabb())
-	return bounds
+	if not found:
+		return
+	_has_cockpit_view = tub != null
+	if _has_cockpit_view:
+		_first_person_local = Vector3(
+			bounds.position.x + bounds.size.x * airframe.cockpit_seat_fraction,
+			bounds.position.y + bounds.size.y * airframe.cockpit_eye_height_fraction,
+			bounds.get_center().z)
+	else:
+		_first_person_local = Vector3(bounds.end.x + 0.35, bounds.get_center().y, bounds.get_center().z)
 
 
-func _find_named(fragment: String) -> Node3D:
-	for child in _visual.find_children("*", "Node3D", true, false):
-		if String(child.name).to_lower().contains(fragment):
-			return child as Node3D
-	return null
+func _first_person_transform(frame: Transform3D) -> Transform3D:
+	var orientation := frame.basis.orthonormalized()
+	if _has_cockpit_view:
+		orientation = orientation.rotated(orientation.z, deg_to_rad(airframe.cockpit_pitch_degrees))
+	return Transform3D(orientation, frame * _first_person_local)
 
 
-## The pilot station, with the airframe's real orientation -- bank included.
-## A jet cockpit whose horizon stays level is not a cockpit.
 func get_cockpit_transform() -> Transform3D:
-	if _visual == null:
-		return global_transform
-	var frame := _visual.global_transform
-	var orientation := global_transform.basis.orthonormalized()
-	# Tilt down about the right wing so the panel is in frame under the HUD.
-	orientation = orientation.rotated(orientation.z, deg_to_rad(airframe.cockpit_pitch_degrees))
-	return Transform3D(orientation, frame * _cockpit_local)
+	return _first_person_transform(global_transform)
 
 
 func get_interpolated_cockpit_transform() -> Transform3D:
-	if _visual == null or not _visual.is_inside_tree():
-		return get_cockpit_transform()
-	var frame := _visual.get_global_transform_interpolated()
-	var orientation := get_global_transform_interpolated().basis.orthonormalized()
-	orientation = orientation.rotated(orientation.z, deg_to_rad(airframe.cockpit_pitch_degrees))
-	return Transform3D(orientation, frame * _cockpit_local)
+	return _first_person_transform(get_global_transform_interpolated()) if is_inside_tree() else get_cockpit_transform()
 
 
 func get_focus_position() -> Vector3:
@@ -648,10 +722,14 @@ func get_interpolated_focus_position() -> Vector3:
 
 
 func get_interpolated_airframe_transform() -> Transform3D:
-	var target: Node3D = _visual if _visual != null else self
-	if not target.is_inside_tree():
-		return target.global_transform
-	return target.get_global_transform_interpolated()
+	# Camera axes belong to the flight anchor. The imported mesh may need a
+	# corrective rotation (the F-117 needs 90 degrees), so its local X is not
+	# necessarily the aircraft's nose even when the rendered model is correct.
+	if not is_inside_tree():
+		return transform
+	var frame := get_global_transform_interpolated()
+	frame.origin = get_interpolated_focus_position()
+	return frame
 
 
 func get_muzzle_transform() -> Transform3D:
@@ -666,10 +744,17 @@ func _update_visual(delta: float) -> void:
 	if _visual == null:
 		return
 	_visual.position = Vector3.ZERO
-	_visual.rotation = Vector3.ZERO
+	# Keep the orientation installed by _scale_to_reference(). Resetting it
+	# turned the F-117 sideways on its first physics frame and moved its seat.
 	if _effects != null:
 		_effects.update(delta, roll_input, airbrake, engine_afterburner_fraction())
+	if _vapor != null:
+		_vapor.set_flight(airspeed(), load_factor, alpha, not _crashed)
 
 
 func engine_afterburner_fraction() -> float:
 	return 0.0 if _crashed else clampf((_thrust_setting - 1.0) / maxf(afterburner_travel, 0.001), 0.0, 1.0)
+
+
+func engine_core_fraction() -> float:
+	return 0.0 if _crashed else clampf(_thrust_setting, 0.0, 1.0)

@@ -13,6 +13,7 @@ extends Node3D
 
 const SURFERS_REGION := "au_qld_surfers"
 const CORRIDOR_REGION := "au_gold_coast_tweed_corridor"
+const FACADE := preload("res://shaders/hero_facade.gdshader")
 
 ## How close an OSM building's centre must be to a hero to be hidden. Q1's
 ## own record sits at its footprint centre, and the next building's centre is
@@ -30,12 +31,12 @@ static func layout_for(region_id: String) -> Array:
 	if region_id not in [SURFERS_REGION, CORRIDOR_REGION]:
 		return []
 	return [
-		{"name": "Q1", "lat": -28.0067, "lon": 153.4300, "scene": "res://3dassets/q1_tower.glb", "yaw_degrees": 0.0},
+		{"name": "Q1", "lat": -28.0067, "lon": 153.4300, "scene": "res://assets/models/q1_tower.glb", "yaw_degrees": 0.0},
 		# Soul's sail crown crests over one corner and the README says to turn
 		# it so the peak faces the ocean, which is +X here. Which corner the
 		# model puts the peak on is a device check; start square.
-		{"name": "Soul", "lat": -28.00117, "lon": 153.43049, "scene": "res://3dassets/soul_tower.glb", "yaw_degrees": 0.0},
-		{"name": "Ocean", "lat": -27.9961, "lon": 153.4297, "scene": "res://3dassets/ocean_tower.glb", "yaw_degrees": 0.0},
+		{"name": "Soul", "lat": -28.00117, "lon": 153.43049, "scene": "res://assets/models/soul_tower.glb", "yaw_degrees": 0.0},
+		{"name": "Ocean", "lat": -27.9961, "lon": 153.4297, "scene": "res://assets/models/ocean_tower.glb", "yaw_degrees": 0.0},
 	]
 
 
@@ -63,11 +64,50 @@ func populate(region_id: String, terrain: Node) -> void:
 		if terrain.has_method("sample_mesh_height"):
 			ground = float(terrain.sample_mesh_height(at.x, at.y))
 		var model: Node3D = scene.instantiate()
+		prepare_model(model)
 		model.name = "Hero_%s" % hero["name"]
 		add_child(model)
 		model.global_position = Vector3(at.x, ground, at.y)
 		model.rotation_degrees.y = float(hero["yaw_degrees"])
 		_instances.append(model)
+
+
+## The kit omits NORMAL and defaults to fully metallic. Winding alone makes
+## the shell visible but does not give it usable lighting normals. Keep the
+## imported UVs and textures; give each surface outward, area-weighted normals
+## and the same night/wet globals used by the surrounding city.
+static func prepare_model(model: Node3D) -> void:
+	for instance in model.find_children("*", "MeshInstance3D", true, false):
+		var source: Mesh = instance.mesh
+		var mesh := ArrayMesh.new()
+		for surface in source.get_surface_count():
+			var arrays := source.surface_get_arrays(surface)
+			var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var normals := PackedVector3Array()
+			normals.resize(points.size())
+			# The repaired tower indices have an outward cross product in the
+			# imported mesh (also checked by corridor_landmarks_test).
+			for triangle in range(0, indices.size(), 3):
+				var a := indices[triangle]
+				var b := indices[triangle + 1]
+				var c := indices[triangle + 2]
+				var normal := (points[b] - points[a]).cross(points[c] - points[a])
+				normals[a] += normal
+				normals[b] += normal
+				normals[c] += normal
+			for i in normals.size():
+				normals[i] = normals[i].normalized()
+			arrays[Mesh.ARRAY_NORMAL] = normals
+			mesh.add_surface_from_arrays(source.surface_get_primitive_type(surface), arrays)
+			var original := instance.get_active_material(surface) as BaseMaterial3D
+			var material := ShaderMaterial.new()
+			material.shader = FACADE
+			material.set_shader_parameter("facade", original.albedo_texture)
+			var bays := 6.0 if original.albedo_texture.resource_path.contains("soul_tower") else 8.0
+			material.set_shader_parameter("facade_grid", Vector2(bays, 3.0))
+			mesh.surface_set_material(surface, material)
+		instance.mesh = mesh
 
 
 func clear() -> void:

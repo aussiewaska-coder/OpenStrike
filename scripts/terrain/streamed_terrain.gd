@@ -402,21 +402,22 @@ func set_quality(level: Quality) -> void:
 	_refresh_detail_chunks()
 
 
-## A 2048 px chunk is 2 MB compressed and 16.7 MB not. Without a compressor the
-## same settings cost eight times the memory, so the resident set and the near
-## tier have to come down to stay inside a phone's budget.
+## Keep the sharp near tile even without ETC2. One 4096 tile plus five 2048
+## tiles uses nine 2048-equivalents, below the former ten-tile resident budget.
+## Capping every tile at 2048 erased the low-altitude tier on Android exports
+## without a runtime compressor, even when the player selected QUALITY.
 func _apply_memory_budget() -> void:
 	if TileClient.compression_available:
 		return
-	# Measured on device: 317 MB of texture stuttered badly, 104 MB held 111
-	# frames a second. 2048 px everywhere with ten chunks resident lands near
-	# 150 MB, which spends the headroom between those two on detail rather than
-	# leaving it unused. 4096 px is out without a compressor -- one such texture
-	# alone is 45 MB.
-	near_detail_texture_px = mini(near_detail_texture_px, 2048)
 	detail_texture_px = mini(detail_texture_px, 2048)
-	max_detail_chunks = mini(max_detail_chunks, 10)
-	near_detail_chunks = mini(near_detail_chunks, 2)
+	if quality == Quality.PERFORMANCE:
+		near_detail_texture_px = mini(near_detail_texture_px, 2048)
+		max_detail_chunks = mini(max_detail_chunks, 10)
+		near_detail_chunks = 0
+	else:
+		near_detail_texture_px = mini(near_detail_texture_px, 4096)
+		max_detail_chunks = mini(max_detail_chunks, 6)
+		near_detail_chunks = mini(near_detail_chunks, 1)
 
 
 ## Points a chunk's shader at a texture, with the uv window a detail texture
@@ -556,6 +557,26 @@ func _building_chunk_paths(bounds: Rect2) -> Array[String]:
 		if FileAccess.file_exists(path):
 			paths.append(path)
 	return paths
+
+
+## Ground-site placement needs footprints even before their visual chunks
+## stream in. Read only the small patch around each proposed cluster.
+func ground_site_obstacles(bounds: Rect2) -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for path in _building_chunk_paths(bounds.grow(100.0)):
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+		if not parsed is Dictionary:
+			continue
+		for record in parsed.get("buildings", []):
+			var points: Array = record.get("footprint", [])
+			if points.is_empty():
+				continue
+			var box := Rect2(Vector2(points[0][0], points[0][1]), Vector2.ZERO)
+			for point in points:
+				box = box.expand(Vector2(point[0], point[1]))
+			if box.intersects(bounds):
+				out.append(box.grow(18.0))
+	return out
 
 
 func _terrain_chunk_bounds(cx: int, cz: int) -> Rect2:

@@ -1,27 +1,29 @@
 extends Node
 
 ## Puts the sun where it really is over the selected theatre, and shapes the
-## light to match. The clock is the phone's: a location-aware game should
-## look like the sky outside. Three fixed times are offered for testing and
-## for playing at a time of day the real clock will not give.
+## light to match. Real-clock mode follows the phone; fixed presets offer
+## readable afternoon and morning light whenever the player wants it.
 
 const SOLAR := preload("res://scripts/world/solar_position.gd")
 const SKY := preload("res://scripts/world/sky_state.gd")
 
-enum Mode {REAL, NOON, DUSK, NIGHT}
+enum Mode {REAL, NOON, DUSK, NIGHT, SUNRISE}
 
 const MODE_NAMES := {
 	Mode.REAL: "REAL CLOCK",
 	Mode.NOON: "NOON",
-	Mode.DUSK: "DUSK",
+	Mode.DUSK: "AFTERNOON",
 	Mode.NIGHT: "NIGHT",
+	Mode.SUNRISE: "SUNRISE",
 }
-## Fixed modes are hours of local mean solar time, so DUSK is a low sun in
-## the west whatever the season.
+## Local mean solar hours. Move the old 17:36 dusk preset 45 minutes
+## toward daylight; use the matching brighter morning hour for sunrise.
+## Keep existing enum values so saved/telemetry mode IDs remain valid.
 const MODE_HOURS := {
 	Mode.NOON: 12.0,
-	Mode.DUSK: 17.6,
+	Mode.DUSK: 17.6 - 0.75,
 	Mode.NIGHT: 23.0,
+	Mode.SUNRISE: 6.4 + 0.75,
 }
 const REFRESH_SECONDS := 2.0
 ## Gold Coast, matching the location service's editor fallback.
@@ -33,14 +35,18 @@ const DEMO_LONGITUDE := 153.431
 ## Weather scales these; the cycle re-applies them on every refresh.
 var sun_multiplier := 1.0
 var fog_multiplier := 1.0
+var cloud_immersion := 0.0
 
-var mode: Mode = Mode.REAL
+var mode: Mode = Mode.DUSK
 var elevation_deg := 0.0
 var azimuth_deg := 0.0
 
 var _sun: DirectionalLight3D
 var _environment: Environment
 var _base_fog_density := 0.0001
+var _base_fog_sky_affect := 0.25
+var _horizon := Color(0.78, 0.88, 0.96)
+var _cloud_fog_color := Color(0.65, 0.69, 0.73)
 ## Looked up rather than named, so the node also runs headless where the
 ## autoload is not a global.
 var _location: Node
@@ -54,6 +60,7 @@ func _ready() -> void:
 	_environment = world_environment.environment if world_environment != null else null
 	if _environment != null:
 		_base_fog_density = _environment.fog_density
+		_base_fog_sky_affect = _environment.fog_sky_affect
 	_location = get_node_or_null("/root/LocationService")
 	if _location != null:
 		_location.region_selected.connect(func(_region: Dictionary): _accumulator = REFRESH_SECONDS)
@@ -116,8 +123,9 @@ func _apply(state: Dictionary) -> void:
 	RenderingServer.global_shader_parameter_set("os_night", 1.0 - smoothstep(SKY.TWILIGHT_BELOW - 4.0, SKY.FULL_DAY_ABOVE, elevation_deg))
 	if _environment != null:
 		_environment.ambient_light_energy = float(state["ambient_energy"]) * lerpf(0.6, 1.0, sun_multiplier)
-		_environment.fog_light_color = horizon
-		_environment.fog_density = _base_fog_density * fog_multiplier
+		_horizon = horizon
+		_cloud_fog_color = Color(0.65, 0.69, 0.73).lerp(Color(0.07, 0.09, 0.14), smoothstep(0.4, 0.6, 1.0 - smoothstep(SKY.TWILIGHT_BELOW - 4.0, SKY.FULL_DAY_ABOVE, elevation_deg)))
+		_apply_fog()
 		var sky := _environment.sky.sky_material as ShaderMaterial if _environment.sky != null else null
 		if sky != null:
 			sky.set_shader_parameter("sky_top_color", state["sky_top_color"])
@@ -125,6 +133,19 @@ func _apply(state: Dictionary) -> void:
 	var tint: Color = state["terrain_tint"]
 	applied_tint = tint
 	RenderingServer.global_shader_parameter_set("os_terrain_tint", Vector3(tint.r, tint.g, tint.b))
+
+
+func set_cloud_immersion(value: float) -> void:
+	cloud_immersion = clampf(value, 0.0, 1.0)
+	_apply_fog()
+
+
+func _apply_fog() -> void:
+	if _environment == null:
+		return
+	_environment.fog_light_color = _horizon.lerp(_cloud_fog_color, cloud_immersion)
+	_environment.fog_density = _base_fog_density * fog_multiplier + cloud_immersion * 0.006
+	_environment.fog_sky_affect = lerpf(_base_fog_sky_affect, 1.0, cloud_immersion)
 
 
 ## look_at needs an up vector that is not parallel to the view; straight
