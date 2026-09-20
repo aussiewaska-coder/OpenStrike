@@ -19,6 +19,36 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: gradle
+
+      - name: Cache Godot downloads
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-dl
+          key: godot-4.7.2
+
+      - name: Cache export templates
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/godot/export_templates
+          key: godot-templates-4.7.2
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('export_presets.cfg', 'android/location_plugin/**/*.kts', 'android/location_plugin/*.kts') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Cache Godot imports
+        uses: actions/cache@v4
+        with:
+          path: .godot/imported
+          key: ${{ runner.os }}-godot-imports-${{ hashFiles('project.godot', 'export_presets.cfg', 'assets/**/*', 'scenes/**/*', 'scripts/**/*') }}
+          restore-keys: ${{ runner.os }}-godot-imports-
 
       - name: Install Android packages (use preinstalled SDK)
         run: |
@@ -32,18 +62,28 @@ jobs:
 
       - name: Download Godot 4.7.2
         run: |
-          wget -q https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
-          unzip -q Godot_v4.7.2-stable_linux.x86_64.zip
-          chmod +x Godot_v4.7.2-stable_linux.x86_64
-          mv Godot_v4.7.2-stable_linux.x86_64 /usr/local/bin/godot
-          godot --version
+          mkdir -p ~/godot-dl ~/godot-bin
+          if [ ! -f ~/godot-dl/Godot_v4.7.2-stable_linux.x86_64.zip ]; then
+            wget -q -O ~/godot-dl/Godot_v4.7.2-stable_linux.x86_64.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          fi
+          if [ ! -f ~/godot-bin/godot ]; then
+            unzip -q -o ~/godot-dl/Godot_v4.7.2-stable_linux.x86_64.zip -d ~/godot-bin
+            chmod +x ~/godot-bin/Godot_v4.7.2-stable_linux.x86_64
+            mv ~/godot-bin/Godot_v4.7.2-stable_linux.x86_64 ~/godot-bin/godot
+          fi
+          echo "$HOME/godot-bin" >> $GITHUB_PATH
+          ~/godot-bin/godot --version
 
       - name: Install export templates
         run: |
           mkdir -p ~/.local/share/godot/export_templates/4.7.2.stable
-          wget -q https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
-          unzip -q Godot_v4.7.2-stable_export_templates.tpz -d /tmp/godot-templates
-          mv /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/4.7.2.stable/
+          if [ -z "$(ls -A ~/.local/share/godot/export_templates/4.7.2.stable 2>/dev/null)" ]; then
+            if [ ! -f ~/godot-dl/Godot_v4.7.2-stable_export_templates.tpz ]; then
+              wget -q -O ~/godot-dl/Godot_v4.7.2-stable_export_templates.tpz https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz
+            fi
+            unzip -q -o ~/godot-dl/Godot_v4.7.2-stable_export_templates.tpz -d /tmp/godot-templates
+            mv /tmp/godot-templates/templates/* ~/.local/share/godot/export_templates/4.7.2.stable/
+          fi
           ls ~/.local/share/godot/export_templates/4.7.2.stable/
 
       - name: Strip local keystore path (debug uses auto debug key)
