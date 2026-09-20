@@ -58,7 +58,7 @@ jobs:
         run: |
           mkdir -p build/android
           godot --headless --path . --import
-          godot --headless --path . --export-debug "Android" build/android/OpenStrike-debug.apk
+          godot --headless --path . --install-android-build-template --export-debug "Android" build/android/OpenStrike-debug.apk
           ls -lh build/android/
 
       - name: Upload debug APK artifact
