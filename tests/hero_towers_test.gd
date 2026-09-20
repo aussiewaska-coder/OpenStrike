@@ -10,6 +10,21 @@ const HEROES := preload("res://scripts/entities/hero_towers.gd")
 func _init() -> void:
 	if HEROES.layout_for("au_qld_surfers").size() != 3:
 		_fail("Surfers has three hero towers")
+	if HEROES.layout_for("au_nsw_sydney_harbour").size() != 3:
+		_fail("Sydney has three procedural heroes")
+	for hero in HEROES.layout_for("au_nsw_sydney_harbour"):
+		for key in ["name", "lat", "lon", "yaw_degrees"]:
+			if not hero.has(key):
+				_fail("Sydney hero %s is missing %s" % [hero.get("name", "?"), key])
+		if not bool(hero.get("procedural", false)):
+			_fail("Sydney hero %s must be procedural" % hero.get("name", "?"))
+		var built: Node3D = SydneyLandmarks.build_landmark(String(hero["name"]))
+		if built == null:
+			_fail("Sydney hero %s builds nothing" % hero.get("name", "?"))
+		else:
+			if built.find_children("*", "MeshInstance3D", true, false).is_empty():
+				_fail("Sydney hero %s has no geometry" % hero.get("name", "?"))
+			built.free()
 	if not HEROES.layout_for("somewhere_else").is_empty():
 		_fail("unrelated theatres must not have these heroes")
 	for hero in HEROES.layout_for("au_qld_surfers"):

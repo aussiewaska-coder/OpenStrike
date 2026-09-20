@@ -10,14 +10,18 @@ static func stow(root: Node3D) -> void:
 	if root.has_meta("nighthawk_gear_stowed"):
 		return
 	var into_aircraft := root.transform * root.global_transform.affine_inverse()
+	var saved_mesh: Mesh
+	var saved_doors := {}
 	for child in root.find_children("*", "MeshInstance3D", true, false):
 		var mesh := child as MeshInstance3D
 		var part := String(mesh.name)
 		if part in STRUTS_AND_WHEELS:
 			mesh.hide()
 		elif part == "Object_30":
+			saved_mesh = mesh.mesh
 			_remove_shared_wheels(mesh, into_aircraft * mesh.global_transform)
 		elif part in DOORS:
+			saved_doors[part] = mesh.transform
 			var frame := into_aircraft * mesh.global_transform
 			var box: AABB = frame * mesh.get_aabb()
 			# Hinge is the upper longitudinal edge. Rotate the hanging panel
@@ -27,7 +31,32 @@ static func stow(root: Node3D) -> void:
 			var close := Transform3D(rotation, hinge - rotation * hinge)
 			var parent_frame := into_aircraft * mesh.get_parent_node_3d().global_transform
 			mesh.transform = parent_frame.affine_inverse() * close * frame
+	root.set_meta("nighthawk_gear_saved_mesh", saved_mesh)
+	root.set_meta("nighthawk_gear_saved_doors", saved_doors)
 	root.set_meta("nighthawk_gear_stowed", true)
+
+
+## Reverse of stow: show the struts, restore the shared wheels mesh and the
+## door transforms. Saved state comes from the matching stow call.
+static func deploy(root: Node3D) -> void:
+	if not root.has_meta("nighthawk_gear_stowed"):
+		return
+	for child in root.find_children("*", "MeshInstance3D", true, false):
+		var mesh := child as MeshInstance3D
+		if String(mesh.name) in STRUTS_AND_WHEELS:
+			mesh.show()
+	var saved_mesh: Mesh = root.get_meta("nighthawk_gear_saved_mesh")
+	if saved_mesh != null:
+		var cut := root.find_child("Object_30", true, false) as MeshInstance3D
+		if cut != null:
+			cut.mesh = saved_mesh
+	var saved_doors: Dictionary = root.get_meta("nighthawk_gear_saved_doors", {})
+	for child in root.find_children("*", "MeshInstance3D", true, false):
+		if saved_doors.has(String(child.name)):
+			(child as MeshInstance3D).transform = saved_doors[String(child.name)]
+	root.remove_meta("nighthawk_gear_saved_mesh")
+	root.remove_meta("nighthawk_gear_saved_doors")
+	root.remove_meta("nighthawk_gear_stowed")
 
 
 static func _remove_shared_wheels(instance: MeshInstance3D, into_aircraft: Transform3D) -> void:

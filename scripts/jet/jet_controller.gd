@@ -32,6 +32,21 @@ const AIRFRAME := preload("res://scripts/jet/airframe.gd")
 ## Anything hanging below this fraction of an unnamed model's height is gear.
 const GEAR_HEIGHT_FRACTION := 0.30
 
+## Landing gear limits. Deploying above the blowout speed rips the doors off
+## and jams the gear up; touching down faster, harder, banked or gear-up is a
+## crash, not a landing.
+const GEAR_MAX_SPEED_MPS := 120.0
+const GEAR_DRAG := 14.0
+const FLAP_MAX_SPEED_MPS := 150.0
+const FLAP_LIFT_BONUS := 0.35
+const FLAP_DRAG := 9.0
+const TOUCHDOWN_SINK_LIMIT_MPS := 6.0
+const TOUCHDOWN_BANK_DEGREES := 15.0
+const ROLL_FRICTION_MPS2 := 2.0
+const BRAKE_DECEL_MPS2 := 9.0
+const STEER_RATE_RADPS := 0.6
+const WATER_LEVEL_M := 0.2
+
 ## Which aircraft this is. Set before the node enters the tree.
 var airframe = AIRFRAME.raptor()
 ## Built from the airframe, and shared with the assist so both agree.
@@ -51,6 +66,10 @@ const GRAVITY := 9.80665
 signal crashed(point: Vector3)
 signal respawned()
 signal boundary_warning(urgency: float)
+signal gear_changed(down: bool, damaged: bool)
+signal flaps_changed(down: bool, damaged: bool)
+signal touched_down()
+signal lifted_off()
 
 @export var terrain_path: NodePath = NodePath("../StreamedTerrain")
 @export var world_edge_margin := 50.0
@@ -142,6 +161,17 @@ var _has_cockpit_view := false
 var _boundary_urgency := 0.0
 var _wings_level_requested := false
 
+## Landing gear and flaps. Both stow on launch; gear damage jams it up and
+## flap damage jams them up. Rolling is the ground-roll state after a gentle
+## gear-down touchdown: throttle, steering and brakes work, the wing does not.
+var gear_down := false
+var gear_damaged := false
+var flaps_down := false
+var flaps_damaged := false
+var rolling := false
+var _hidden_gear_nodes: Array[Node3D] = []
+var _gear_is_nighthawk_rig := false
+
 
 func _ready() -> void:
 	_build_aerodynamics()
@@ -202,11 +232,40 @@ func launch(at_position: Vector3, heading_radians: float) -> void:
 	_crashed = false
 	_respawn_timer = 0.0
 	_wings_level_requested = false
+	gear_down = false
+	gear_damaged = false
+	flaps_down = false
+	flaps_damaged = false
+	rolling = false
+	_apply_gear_visual()
+	gear_changed.emit(false, false)
+	flaps_changed.emit(false, false)
 	if is_instance_valid(_vapor):
 		_vapor.clear()
 	if is_inside_tree():
 		get_global_transform_interpolated()
 		reset_physics_interpolation()
+
+
+## Line up on a runway threshold at a standstill, gear down, ready to roll.
+## The caller places the position; this sets the attitude, state and hud-facing
+## defaults for a ground start.
+func launch_rolling(at_position: Vector3, heading_radians: float) -> void:
+	launch(at_position, heading_radians)
+	var nose := Vector3(sin(heading_radians), 0.0, -cos(heading_radians))
+	basis = _basis_from_nose(nose, Vector3.UP)
+	global_position = at_position
+	velocity = Vector3.ZERO
+	throttle = 0.0
+	_thrust_setting = 0.0
+	alpha = 0.0
+	beta = 0.0
+	load_factor = 1.0
+	bank = 0.0
+	gear_down = true
+	rolling = true
+	_apply_gear_visual()
+	gear_changed.emit(true, false)
 
 
 func apply_missile_damage() -> void:
@@ -225,6 +284,53 @@ func is_crashed() -> bool:
 	return _crashed
 
 
+## Gear lever. Deploying above blowout speed destroys the gear and leaves it
+## jammed up; the lever does nothing while rolling or once damaged.
+func toggle_gear() -> void:
+	if _crashed or rolling or gear_damaged:
+		return
+	if not gear_down and velocity.length() > GEAR_MAX_SPEED_MPS:
+		gear_damaged = true
+		gear_changed.emit(false, true)
+		return
+	gear_down = not gear_down
+	_apply_gear_visual()
+	gear_changed.emit(gear_down, false)
+
+
+## Flap lever. Same overspeed rule as the gear: too fast and they jam up.
+func toggle_flaps() -> void:
+	if _crashed or flaps_damaged:
+		return
+	if not flaps_down and velocity.length() > FLAP_MAX_SPEED_MPS:
+		flaps_damaged = true
+		flaps_changed.emit(false, true)
+		return
+	flaps_down = not flaps_down
+	flaps_changed.emit(flaps_down, false)
+
+
+## Rotation speed with the current flap setting: flaps buy about 15% lower
+## liftoff. Derived from the lift curve so retuning lift moves it too.
+func rotation_speed_mps() -> float:
+	var bonus := FLAP_LIFT_BONUS if flaps_down and not flaps_damaged else 0.0
+	return _aero.mush_speed() / sqrt(1.0 + bonus) * 1.1
+
+
+func _apply_gear_visual() -> void:
+	if _visual == null:
+		return
+	if _gear_is_nighthawk_rig and airframe.landing_gear_rig != null:
+		if gear_down:
+			airframe.landing_gear_rig.deploy(_visual)
+		else:
+			airframe.landing_gear_rig.stow(_visual)
+		return
+	for node in _hidden_gear_nodes:
+		if is_instance_valid(node):
+			node.visible = gear_down
+
+
 func _physics_process(delta: float) -> void:
 	if _crashed:
 		if _combat_falling:
@@ -240,6 +346,11 @@ func _physics_process(delta: float) -> void:
 		_respawn_timer -= delta
 		if _respawn_timer <= 0.0:
 			_respawn()
+		return
+	if rolling:
+		_roll(delta)
+		_check_boundaries()
+		_update_visual(delta)
 		return
 	_read_controls(delta)
 	_integrate(delta)
@@ -269,6 +380,11 @@ func _read_controls(delta: float) -> void:
 
 	throttle = clampf(throttle + throttle_axis * throttle_rate * delta, 0.0, maximum_throttle)
 	_thrust_setting = _aero.spool(_thrust_setting, throttle, spool_response, delta)
+
+	if InputMap.has_action("landing_gear") and Input.is_action_just_pressed("landing_gear"):
+		toggle_gear()
+	if InputMap.has_action("flaps") and Input.is_action_just_pressed("flaps"):
+		toggle_flaps()
 
 	var speed := velocity.length()
 	bank = bank_angle(basis)
@@ -380,6 +496,17 @@ static func heading_of(from_basis: Basis) -> float:
 
 func _integrate(delta: float) -> void:
 	var speed := velocity.length()
+	# Gear and flaps left out past their placards tear off: jammed up, extra
+	# drag gone with them, and the lever cannot bring them back.
+	if gear_down and not gear_damaged and speed > GEAR_MAX_SPEED_MPS * 1.25:
+		gear_damaged = true
+		gear_down = false
+		_apply_gear_visual()
+		gear_changed.emit(false, true)
+	if flaps_down and not flaps_damaged and speed > FLAP_MAX_SPEED_MPS * 1.2:
+		flaps_damaged = true
+		flaps_down = false
+		flaps_changed.emit(false, true)
 	var nose := basis.x
 	var up := basis.y
 
@@ -399,6 +526,13 @@ func _integrate(delta: float) -> void:
 	var acceleration: Vector3 = _aero.flight_acceleration(nose, up, velocity, thrust, alpha, falloff)
 	# Drag opposes travel without pitching the nose or changing the throttle.
 	acceleration -= velocity.normalized() * airbrake * minf(35.0, 18.0 * pow(speed / 175.0, 2.0))
+	# Gear and flaps are drag devices too; flaps also add about a third more
+	# lift at the same angle of attack, which is what lowers the stall.
+	if gear_down and not gear_damaged:
+		acceleration -= velocity.normalized() * minf(GEAR_DRAG, GEAR_DRAG * pow(speed / 175.0, 2.0) + 4.0)
+	if flaps_down and not flaps_damaged:
+		acceleration += _aero.lift_direction(up, velocity) * _aero.lift_acceleration(speed, alpha) * falloff * FLAP_LIFT_BONUS
+		acceleration -= velocity.normalized() * minf(FLAP_DRAG, FLAP_DRAG * pow(speed / 175.0, 2.0) + 3.0)
 	velocity += acceleration * delta
 	velocity = _assist.forward_flight_velocity(velocity, basis, rudder_input, delta)
 	global_position += velocity * delta
@@ -434,11 +568,100 @@ func _check_ground() -> void:
 	var ground_height := _sample_ground()
 	if global_position.y - hull_clearance_m > ground_height:
 		return
+	if _try_touchdown(ground_height):
+		return
+	_crash_into_ground(ground_height)
+
+
+func _crash_into_ground(ground_height: float = -1.0) -> void:
+	if ground_height < 0.0:
+		ground_height = _sample_ground()
 	_crashed = true
+	rolling = false
 	_respawn_timer = respawn_delay_s
 	global_position.y = ground_height + hull_clearance_m
 	velocity = Vector3.ZERO
 	crashed.emit(global_position)
+
+
+## Gear-down, gentle, wings-level contact on dry land becomes a touchdown
+## rather than a crash. Anything else -- water, gear up, hard, banked, nose
+## down -- stays a crash.
+func _try_touchdown(ground_height: float) -> bool:
+	if not gear_down or gear_damaged:
+		return false
+	if ground_height <= WATER_LEVEL_M:
+		return false
+	if -velocity.y > TOUCHDOWN_SINK_LIMIT_MPS:
+		return false
+	if absf(bank_angle(basis)) > deg_to_rad(TOUCHDOWN_BANK_DEGREES):
+		return false
+	if basis.x.y < -0.08:
+		return false
+	var heading := _heading()
+	var flat_nose := Vector3(sin(heading), 0.0, -cos(heading))
+	var flat := velocity
+	flat.y = 0.0
+	if flat.length() < 5.0:
+		flat = flat_nose * 5.0
+	rolling = true
+	velocity = flat
+	basis = _basis_from_nose(flat_nose, Vector3.UP)
+	global_position.y = ground_height + hull_clearance_m
+	_roll_rate = 0.0
+	_pitch_rate = 0.0
+	_yaw_rate = 0.0
+	touched_down.emit()
+	return true
+
+
+## Ground roll: thrust pushes, tyres and brakes resist, the rudder steers the
+## nosewheel, and pulling back past rotation speed lifts off. The wing is out
+## of it until flying speed.
+func _roll(delta: float) -> void:
+	var throttle_axis := 0.0
+	var rudder_axis := 0.0
+	var stick_y := 0.0
+	var brake_held := false
+	var gamepad := get_node_or_null("/root/GamepadInput")
+	if gamepad != null and gamepad.is_controller_ready():
+		throttle_axis = gamepad.get_jet_throttle_axis()
+		rudder_axis = gamepad.get_rudder_axis()
+		stick_y = gamepad.get_flight_vector().y
+		brake_held = gamepad.is_vectoring_held()
+	if InputMap.has_action("landing_gear") and Input.is_action_just_pressed("landing_gear"):
+		toggle_gear()
+	throttle = clampf(throttle + throttle_axis * throttle_rate * delta, 0.0, maximum_throttle)
+	_thrust_setting = _aero.spool(_thrust_setting, throttle, spool_response, delta)
+	var thrust: float = _aero.thrust_acceleration(clampf(_thrust_setting, 0.0, 1.0), 0.0)
+	var speed := Vector2(velocity.x, velocity.z).length()
+	var accel := thrust - ROLL_FRICTION_MPS2
+	if brake_held:
+		accel -= BRAKE_DECEL_MPS2
+	accel -= _aero.drag_acceleration(speed, 0.0) * 0.5
+	speed = maxf(speed + accel * delta, 0.0)
+	var steer := rudder_axis * STEER_RATE_RADPS * clampf(speed / 30.0, 0.0, 1.0)
+	var heading := _heading() + steer * delta
+	var flat_nose := Vector3(sin(heading), 0.0, -cos(heading))
+	basis = _basis_from_nose(flat_nose, Vector3.UP)
+	velocity = flat_nose * speed
+	global_position = Vector3(
+		global_position.x + velocity.x * delta,
+		global_position.y,
+		global_position.z + velocity.z * delta
+	)
+	var ground := _sample_ground()
+	if ground <= WATER_LEVEL_M:
+		_crash_into_ground(ground)
+		return
+	if ground > global_position.y - hull_clearance_m + 1.0 and speed > 25.0:
+		_crash_into_ground(ground)
+		return
+	global_position.y = ground + hull_clearance_m
+	if stick_y > 0.5 and speed > rotation_speed_mps():
+		rolling = false
+		velocity = flat_nose * speed + Vector3.UP * 2.0
+		lifted_off.emit()
 
 
 func _respawn() -> void:
@@ -538,14 +761,19 @@ func _find_visual() -> void:
 	if _visual == null:
 		return
 	_scale_to_reference()
-	# The Raptor's parts have names and the Nighthawk's are all Object_N, so
-	# each is found the way its own model allows.
-	if airframe.landing_gear_rig != null:
+	# Gear starts stowed. Every hidden node is recorded so the lever can show
+	# the same assembly again; the Nighthawk rig saves and restores its own.
+	_hidden_gear_nodes.clear()
+	_gear_is_nighthawk_rig = airframe.landing_gear_rig != null
+	if _gear_is_nighthawk_rig:
 		airframe.landing_gear_rig.stow(_visual)
 	elif airframe.parts_are_named:
-		_stow_landing_gear()
+		for child in _visual.find_children("*", "Node3D", true, false):
+			if String(child.name).to_lower().contains("landingon"):
+				(child as Node3D).visible = false
+				_hidden_gear_nodes.append(child as Node3D)
 	else:
-		JET_VISUALS.hide_landing_gear(_visual, airframe.model_basis, GEAR_HEIGHT_FRACTION)
+		JET_VISUALS.hide_landing_gear(_visual, airframe.model_basis, GEAR_HEIGHT_FRACTION, _hidden_gear_nodes)
 	if airframe.parts_are_named:
 		JET_VISUALS.clarify_canopy(_visual)
 	else:
@@ -585,15 +813,6 @@ func _scale_to_reference() -> void:
 ## 2.92 m height as its wingspan.
 func _oriented_bounds() -> AABB:
 	return Transform3D(airframe.model_basis, Vector3.ZERO) * _measure_bounds()
-
-
-## The model carries both a gear-up and a gear-down assembly, and renders them
-## both unless told otherwise. This aircraft never lands, so the gear stays up.
-func _stow_landing_gear() -> void:
-	for child in _visual.find_children("*", "Node3D", true, false):
-		var name_lower := String(child.name).to_lower()
-		if name_lower.contains("landingon"):
-			(child as Node3D).visible = false
 
 
 func _attach_fixed_gun_mount() -> void:
@@ -747,7 +966,7 @@ func _update_visual(delta: float) -> void:
 	# Keep the orientation installed by _scale_to_reference(). Resetting it
 	# turned the F-117 sideways on its first physics frame and moved its seat.
 	if _effects != null:
-		_effects.update(delta, roll_input, airbrake, engine_afterburner_fraction())
+		_effects.update(delta, roll_input, airbrake, engine_afterburner_fraction(), engine_core_fraction())
 	if _vapor != null:
 		_vapor.set_flight(airspeed(), load_factor, alpha, not _crashed)
 

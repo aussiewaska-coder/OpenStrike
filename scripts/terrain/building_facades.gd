@@ -68,11 +68,12 @@ static func pick_roof(height_m: float, h: int) -> int:
 	return Layer.ROOF
 
 
-## Near-white tint; keeps the texture's own colour but kills the clone-stamp look.
+## Muted tint; the lit facades blew out against the sun-baked aerial photo,
+## so the range sits clearly below white now.
 static func pick_tint(h: int) -> Color:
-	var r := 0.92 + float((h >> 3) % 100) / 100.0 * 0.08
-	var g := 0.92 + float((h >> 9) % 100) / 100.0 * 0.08
-	var b := 0.92 + float((h >> 15) % 100) / 100.0 * 0.08
+	var r := 0.78 + float((h >> 3) % 100) / 100.0 * 0.12
+	var g := 0.78 + float((h >> 9) % 100) / 100.0 * 0.12
+	var b := 0.78 + float((h >> 15) % 100) / 100.0 * 0.12
 	return Color(r, g, b)
 
 

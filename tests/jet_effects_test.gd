@@ -29,6 +29,8 @@ func _run():
 	await process_frame
 	assert(jet._effects != null and jet._effects.ailerons.size() == 2)
 	for plume in jet._effects.plumes: assert(not plume.visible, "military power must not show afterburner")
+	for frame in range(5): jet._update_visual(1.0 / 60.0)
+	for core in jet._effects.cores: assert(core.visible, "military power must show the red pipe glow")
 	var rest := jet._visual.transform
 	jet.roll_input = 1.0
 	jet._thrust_setting = 1.35
@@ -66,6 +68,7 @@ func _run():
 	jet._crashed = true
 	jet._update_visual(1.0/60.0)
 	for plume in jet._effects.plumes: assert(not plume.visible, "crash cuts flames")
+	for core in jet._effects.cores: assert(not core.visible, "crash cuts the pipe glow")
 	for light in jet._effects.lights: assert(not light.visible, "crash cuts lights")
 	stage.free()
 	print("JET_EFFECTS_TEST_PASS")

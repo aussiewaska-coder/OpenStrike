@@ -83,13 +83,13 @@ void fragment() {
 	// leaves the city a row of black slabs at dusk against lit ground.
 	// Take the tint's colour and leave its brightness to the light.
 	vec3 cast = os_terrain_tint / max(max(os_terrain_tint.r, max(os_terrain_tint.g, os_terrain_tint.b)), 0.001);
-	ALBEDO = col * cast;
+	ALBEDO = col * cast * 0.85;
 
 	// glass pixels are the darker blue-ish ones; cheap luminance-based gloss
 	float glassiness = smoothstep(0.35, 0.15, dot(tex.rgb, vec3(0.333)));
-	ROUGHNESS = mix(mix(0.85, 0.25, glassiness), 0.15, os_wet);
+	ROUGHNESS = mix(mix(0.95, 0.25, glassiness), 0.15, os_wet);
 	METALLIC = 0.0;
-	SPECULAR = mix(0.3, 0.6, glassiness);
+	SPECULAR = mix(0.2, 0.6, glassiness);
 
 	// At night some windows are lit: one cell per bay per floor, chosen by a
 	// hash seeded with the building's tint so neighbours differ.

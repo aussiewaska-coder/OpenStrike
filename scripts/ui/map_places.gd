@@ -10,6 +10,11 @@ const PLACES := [
 	{"name": "NERANG", "lat": -27.99028, "lon": 153.33583},
 	{"name": "BURLEIGH HEADS", "lat": -28.0894, "lon": 153.4506},
 	{"name": "TWEED HEADS", "lat": -28.1739, "lon": 153.545},
+	{"name": "SYDNEY AIRPORT", "subtitle": "YSSY / KINGSFORD SMITH", "lat": -33.9399, "lon": 151.1753, "airport": true},
+	{"name": "SYDNEY HARBOUR", "lat": -33.852, "lon": 151.21},
+	{"name": "SYDNEY CBD", "lat": -33.8688, "lon": 151.2093},
+	{"name": "MANLY", "lat": -33.797, "lon": 151.285},
+	{"name": "PARRAMATTA", "lat": -33.8151, "lon": 151.0034},
 ]
 
 static func for_bounds(bounds: Dictionary, world_size: float) -> Array:

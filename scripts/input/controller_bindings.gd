@@ -18,6 +18,8 @@ const ACTIONS := [
 	["camera_orbit_left", "Apache orbit left", 5, 1], ["camera_orbit_right", "Apache orbit right", 4, 1],
 	["throttle_up", "Throttle up", 1],
 	["throttle_down", "Throttle down", 0],
+	["landing_gear", "Gear up / down", 6],
+	["flaps", "Flaps up / down", -1],
 ]
 const BUTTON_NAMES := ["A / Cross", "B / Circle", "X / Square", "Y / Triangle", "Back / Share", "Home / Guide", "Start / Options", "L3", "R3", "LB / L1", "RB / R1", "D-pad up", "D-pad down", "D-pad left", "D-pad right"]
 const AXIS_NAMES := ["Left stick X", "Left stick Y", "Right stick X", "Right stick Y", "LT / L2", "RT / R2"]

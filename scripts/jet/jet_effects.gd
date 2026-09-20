@@ -5,6 +5,10 @@ const PLUME := preload("res://shaders/afterburner.gdshader")
 var ailerons: Array[Node3D] = []
 var plumes: Array[MeshInstance3D] = []
 var lights: Array[OmniLight3D] = []
+## Red-hot exhaust cores: the visible flame inside each pipe at any power
+## setting, under the blue afterburner plume rather than instead of it.
+var cores: Array[MeshInstance3D] = []
+var _core_material: StandardMaterial3D
 var _roll := 0.0
 var _time := 0.0
 var _exhaust_origins := PackedVector3Array()
@@ -39,6 +43,27 @@ func build(model: Node3D, profile = null) -> void:
 		plume.position = origin
 		add_child(plume)
 		plumes.append(plume)
+		var core := MeshInstance3D.new()
+		var core_mesh := CylinderMesh.new()
+		core_mesh.top_radius = 0.05
+		core_mesh.bottom_radius = radius * 0.62
+		core_mesh.height = 1.0
+		core_mesh.radial_segments = 12
+		core_mesh.rings = 3
+		core.mesh = core_mesh
+		core.rotation.z = PI * 0.5
+		core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if _core_material == null:
+			_core_material = StandardMaterial3D.new()
+			_core_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			_core_material.albedo_color = Color(1.0, 0.15, 0.02)
+			_core_material.emission_enabled = true
+			_core_material.emission = Color(1.0, 0.10, 0.02)
+			_core_material.emission_energy_multiplier = 1.0
+		core.material_override = _core_material
+		core.position = origin
+		add_child(core)
+		cores.append(core)
 		var light := OmniLight3D.new()
 		light.position = origin + Vector3.RIGHT * 0.05
 		light.light_color = Color(0.40, 0.52, 1.0)
@@ -89,7 +114,7 @@ func _rig_wings(source: MeshInstance3D) -> void:
 		pivot.set_meta("axis", Vector3(0.307, side, 0.0).normalized())
 		ailerons.append(pivot)
 
-func update(delta: float, roll: float, brake: float, burner: float) -> void:
+func update(delta: float, roll: float, brake: float, burner: float, core: float = 0.0) -> void:
 	_time = fmod(_time + delta, 100.0)
 	_roll = lerpf(_roll, clampf(roll, -1.0, 1.0), 1.0 - exp(-12.0 * delta))
 	for i in range(ailerons.size()):
@@ -105,6 +130,17 @@ func update(delta: float, roll: float, brake: float, burner: float) -> void:
 		plumes[i].material_override.set_shader_parameter("power", burner)
 		lights[i].light_energy = burner * 1.5 * pulse
 		lights[i].visible = burner > 0.005
+	# The pipe glow burns whenever the engine turns, dull red at idle rising
+	# to bright orange at military power; the burner plume swallows it whole.
+	var heat := clampf(core, 0.0, 1.0)
+	_core_material.emission = Color(1.0, 0.08 + 0.30 * heat, 0.02)
+	_core_material.emission_energy_multiplier = 0.5 + 2.0 * heat
+	for i in range(cores.size()):
+		var flicker := 0.9 + 0.07 * sin(_time * 47.0 + float(i) * 1.7) + 0.03 * sin(_time * 83.0)
+		var core_length := (0.25 + 0.9 * heat) * flicker
+		cores[i].visible = heat > 0.01
+		cores[i].scale.y = core_length
+		cores[i].position = _exhaust_origins[i] + Vector3.LEFT * core_length * 0.5
 
 static func cockpit_vibration(time: float, burner: float, brake: float) -> Vector3:
 	var amount := clampf(burner * 0.045 + brake * 0.075, 0.0, 0.12)

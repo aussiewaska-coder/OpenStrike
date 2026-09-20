@@ -119,6 +119,8 @@ var _radar: Control
 const TACTICAL_MFD := preload("res://scripts/ui/tactical_mfd.gd")
 const TACTICAL_NAV := preload("res://scripts/ui/tactical_navigation.gd")
 const WAYPOINT_HUD := preload("res://scripts/ui/waypoint_hud.gd")
+const RUNWAYS := preload("res://scripts/world/runways.gd")
+const STARTUP_PANEL := preload("res://scripts/ui/startup_panel.gd")
 var _tactical_mfd: Control
 var _waypoint_hud: Control
 var _navigation := TACTICAL_NAV.new()
@@ -177,6 +179,15 @@ var _enemy_combat: Node3D
 var _threat_camera: Node3D
 var _countermeasures: Node3D
 var _countermeasures_button: Button
+var _gear_button: Button
+var _flaps_button: Button
+var _runway_start := false
+## Pre-flight splash state. Boot flies behind the splash exactly as before;
+## the region only loads when START is pressed. Empty runway id = longest strip.
+var _startup: Control
+var _awaiting_startup := true
+var _pending_region := {}
+var _runway_id := ""
 var _wreck_fire: Node3D
 var _threat_warning: Control
 var _strike_fire: Node3D
@@ -272,10 +283,24 @@ func _ready() -> void:
 	jet_anchor.crashed.connect(_on_jet_crashed)
 	jet_anchor.respawned.connect(_on_jet_respawned)
 	jet_anchor.boundary_warning.connect(_on_jet_boundary_warning)
+	jet_anchor.gear_changed.connect(_on_jet_gear_changed)
+	jet_anchor.flaps_changed.connect(_on_jet_flaps_changed)
+	jet_anchor.touched_down.connect(_on_jet_touched_down)
+	jet_anchor.lifted_off.connect(_on_jet_lifted_off)
+	settings_panel.runway_start_toggled.connect(_on_runway_start_toggled)
+	_startup = STARTUP_PANEL.new()
+	_startup.name = "StartupPanel"
+	ui_layer.add_child(_startup)
+	_startup.theatre_chosen.connect(_on_startup_theatre)
+	_startup.hostiles_toggled.connect(_on_startup_hostiles)
+	_startup.start_mode_changed.connect(_on_startup_mode)
+	_startup.start_requested.connect(_on_startup_start)
 	# The gun mount appears when the helicopter controller finds its visual on
 	# the next frame, so the weapon graph is assembled after that.
 	call_deferred("_wire_cannon_systems")
-	if not LocationService.selected_region.is_empty():
+	if _shot_path == "":
+		_show_startup()
+	elif not LocationService.selected_region.is_empty():
 		_on_region_selected(LocationService.selected_region)
 	_on_gamepad_connection_changed(
 		GamepadInput.is_controller_ready(),
@@ -331,6 +356,7 @@ func _update_enemy_combat(delta: float) -> void:
 	_enemy_combat.update(delta, point, _vehicle_velocity(), point.y - _ground_height_at(point), enemy_squadron.jets(), sam_sites, _camera_follow_enabled and _flying_jet and not jet_anchor.is_crashed())
 	_countermeasures_button.text = _countermeasures.button_text()
 	_countermeasures_button.disabled = not _flying_jet or jet_anchor.is_crashed() or _countermeasures.cooldown > 0 or _countermeasures.charges == 0
+	_refresh_gear_flaps_buttons()
 	_threat_warning.watching_sequence = _threat_camera.sequence
 	_threat_warning.update_warning(delta, _enemy_combat.warning_state(), get_viewport().get_camera_3d(), jet_anchor.combat_hull)
 
@@ -350,6 +376,77 @@ func _deploy_countermeasures() -> void:
 	if _countermeasures.deploy(jet_anchor.global_position, jet_anchor.velocity, jet_anchor.global_basis.x.normalized()):
 		status_label.text = "FLARES + CHAFF • BREAK TURN / CUT AFTERBURNER"
 		_countermeasures_button.text = _countermeasures.button_text()
+
+
+func _toggle_gear() -> void:
+	if not _flying_jet or jet_anchor.is_crashed():
+		return
+	jet_anchor.toggle_gear()
+	_refresh_gear_flaps_buttons()
+
+
+func _toggle_flaps() -> void:
+	if not _flying_jet or jet_anchor.is_crashed():
+		return
+	jet_anchor.toggle_flaps()
+	_refresh_gear_flaps_buttons()
+
+
+func _refresh_gear_flaps_buttons() -> void:
+	if _gear_button == null or _flaps_button == null:
+		return
+	var usable: bool = _flying_jet and not jet_anchor.is_crashed()
+	if jet_anchor.gear_damaged:
+		_gear_button.text = "GEAR JAMMED"
+	elif jet_anchor.gear_down:
+		_gear_button.text = "GEAR: DOWN"
+	else:
+		_gear_button.text = "GEAR: UP"
+	_gear_button.disabled = not usable or jet_anchor.rolling
+	if jet_anchor.flaps_damaged:
+		_flaps_button.text = "FLAPS JAMMED"
+	elif jet_anchor.flaps_down:
+		_flaps_button.text = "FLAPS: DOWN"
+	else:
+		_flaps_button.text = "FLAPS: UP"
+	_flaps_button.disabled = not usable
+
+
+func _on_jet_gear_changed(down: bool, damaged: bool) -> void:
+	if damaged:
+		status_label.text = "GEAR OVERSPEED — GEAR JAMMED UP"
+	elif down:
+		status_label.text = "GEAR DOWN — 120 M/S LIMIT"
+	else:
+		status_label.text = "GEAR UP"
+	_refresh_gear_flaps_buttons()
+
+
+func _on_jet_flaps_changed(down: bool, damaged: bool) -> void:
+	if damaged:
+		status_label.text = "FLAP OVERSPEED — FLAPS JAMMED UP"
+	elif down:
+		status_label.text = "FLAPS DOWN — 150 M/S LIMIT"
+	else:
+		status_label.text = "FLAPS UP"
+	_refresh_gear_flaps_buttons()
+
+
+func _on_jet_touched_down() -> void:
+	status_label.text = "TOUCHDOWN — BRAKE WITH BOTH TRIGGERS"
+	_refresh_gear_flaps_buttons()
+
+
+func _on_jet_lifted_off() -> void:
+	status_label.text = "AIRBORNE — GEAR UP"
+	_refresh_gear_flaps_buttons()
+
+
+func _on_runway_start_toggled() -> void:
+	_runway_start = not _runway_start
+	settings_panel.set_runway_text("RUNWAY: %s" % ("START" if _runway_start else "AIRBORNE"))
+	if _runway_start:
+		status_label.text = "RUNWAY START ARMED — RESELECT THE THEATRE TO LINE UP"
 
 
 func _update_defensive_view(delta: float) -> void:
@@ -459,6 +556,18 @@ func _build_hud() -> void:
 	_countermeasures_button.text = "COUNTERMEASURES 8"
 	_countermeasures_button.pressed.connect(_deploy_countermeasures)
 	actions.add_child(_countermeasures_button)
+	_gear_button = Button.new()
+	_gear_button.name = "GearButton"
+	_gear_button.custom_minimum_size = Vector2(250, 52)
+	_gear_button.text = "GEAR: UP"
+	_gear_button.pressed.connect(_toggle_gear)
+	actions.add_child(_gear_button)
+	_flaps_button = Button.new()
+	_flaps_button.name = "FlapsButton"
+	_flaps_button.custom_minimum_size = Vector2(250, 52)
+	_flaps_button.text = "FLAPS: UP"
+	_flaps_button.pressed.connect(_toggle_flaps)
+	actions.add_child(_flaps_button)
 
 	# The visor goes in first so the scope and the tape draw over it.
 	_helmet = HELMET_HUD.new()
@@ -826,6 +935,57 @@ func _on_region_selected(region: Dictionary) -> void:
 	if region.is_empty():
 		settings_panel.set_region_text("REGION: NO THEATRE INSTALLED")
 		return
+	if _awaiting_startup:
+		_pending_region = region
+		_show_startup()
+		return
+	await _load_streamed_region(region)
+
+
+func _show_startup() -> void:
+	if _startup == null:
+		return
+	var regions := LocationService.installed_regions()
+	# No GPS plugin in on-device builds, and no demo off-Android: without this
+	# the splash waits forever. Default to the first installed theatre.
+	if _pending_region.is_empty() and LocationService.selected_region.is_empty() and not regions.is_empty():
+		_pending_region = regions[0]
+	var selected_id := String(_pending_region.get("id", LocationService.selected_region.get("id", "")))
+	_startup.show_panel(regions, selected_id, _hostiles_enabled, not _runway_start, _startup_runway())
+
+
+func _startup_runway() -> Dictionary:
+	var region_id := String(_pending_region.get("id", LocationService.selected_region.get("id", "")))
+	var strips := RUNWAYS.for_region(region_id)
+	for strip in strips:
+		if String(strip.get("id", "")) == _runway_id:
+			return strip
+	return RUNWAYS.default_runway(region_id)
+
+
+func _on_startup_theatre(region_id: String) -> void:
+	LocationService.select_region_by_id(region_id)
+
+
+func _on_startup_hostiles() -> void:
+	_on_hostiles_toggled()
+	_show_startup()
+
+
+func _on_startup_mode(airborne: bool, runway: Dictionary) -> void:
+	_runway_start = not airborne
+	_runway_id = String(runway.get("id", ""))
+	settings_panel.set_runway_text("RUNWAY: %s" % ("START" if _runway_start else "AIRBORNE"))
+	_show_startup()
+
+
+func _on_startup_start() -> void:
+	var region := _pending_region if not _pending_region.is_empty() else LocationService.selected_region
+	if region.is_empty():
+		return
+	_awaiting_startup = false
+	_startup.hide_panel()
+	_startup.set_loading("LOADING…")
 	await _load_streamed_region(region)
 
 
@@ -874,11 +1034,29 @@ func _load_streamed_region(region: Dictionary) -> void:
 	helicopter_anchor.reset_physics_interpolation()
 	if helicopter_anchor.has_method("reset_altitude_smoothing"):
 		helicopter_anchor.reset_altitude_smoothing()
-	# Prepare the F-22 at cruise altitude, whether active or parked.
-	jet_anchor.launch(
-		streamed_terrain.get_spawn_position(900.0),
-		deg_to_rad(streamed_terrain.get_spawn_yaw_degrees(-35.0))
-	)
+	# Prepare the F-22 at cruise altitude, whether active or parked — unless a
+	# runway start is armed and this theatre has an authored runway, in which
+	# case it lines up on the threshold, gear down, ready to roll.
+	var strips := RUNWAYS.for_region(String(region.get("id", "")))
+	var runway := RUNWAYS.default_runway(String(region.get("id", "")))
+	for strip in strips:
+		if String(strip.get("id", "")) == _runway_id:
+			runway = strip
+			break
+	if _runway_start and not runway.is_empty():
+		var threshold: Vector2 = RUNWAYS.threshold_latlon(runway)
+		var strip: Vector2 = streamed_terrain.world_from_coordinate(threshold.x, threshold.y)
+		var strip_height: float = streamed_terrain.sample_height_world(strip.x, strip.y)
+		jet_anchor.launch_rolling(
+			Vector3(strip.x, strip_height + jet_anchor.hull_clearance_m, strip.y),
+			deg_to_rad(float(runway.get("heading_deg", 0.0)))
+		)
+		status_label.text = "RUNWAY %s %s — THROTTLE UP, ROTATE" % [runway.get("airport", ""), runway.get("id", "")]
+	else:
+		jet_anchor.launch(
+			streamed_terrain.get_spawn_position(900.0),
+			deg_to_rad(streamed_terrain.get_spawn_yaw_degrees(-35.0))
+		)
 	streamed_terrain.set_focus(_vehicle())
 	launcher_field.populate(String(region.get("id", "")), streamed_terrain, _building_hit_index)
 	_hero_towers.populate(String(region.get("id", "")), streamed_terrain)
@@ -1900,6 +2078,12 @@ func _refresh_settings() -> void:
 		LocationService.installed_regions(),
 		String(LocationService.selected_region.get("id", ""))
 	)
+	var has_runway := false
+	for region in LocationService.installed_regions():
+		if not RUNWAYS.for_region(String(region.get("id", ""))).is_empty():
+			has_runway = true
+			break
+	settings_panel.set_runway_available(has_runway)
 	settings_panel.set_flight_mode_text(_flight_mode_text())
 	settings_panel.set_hostiles_text("HOSTILES: %s" % ("ON" if _hostiles_enabled else "OFF"))
 	if streamed_terrain.has_method("quality_name"):

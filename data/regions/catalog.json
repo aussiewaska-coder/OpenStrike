@@ -23,6 +23,29 @@
       "spawn_yaw_degrees": -15.0,
       "buildings_dir": "res://data/regions/au_gold_coast_tweed_corridor/buildings",
       "elevation_smoothing": 2
+    },
+    {
+      "id": "au_nsw_sydney_harbour",
+      "display_name": "SYDNEY HARBOUR",
+      "subtitle": "50 km theatre: harbour, CBD, coast and western suburbs",
+      "center_latitude": -33.87,
+      "center_longitude": 151.20,
+      "activation_radius_km": 60.0,
+      "location_priority": 50,
+      "streamed": true,
+      "world_size_m": 50000.0,
+      "chunk_count": 20,
+      "building_world_size_m": 36000.0,
+      "building_chunk_count": 24,
+      "elevation_zoom": 12,
+      "heightfield_resolution": 1025,
+      "vertical_exaggeration": 1.8,
+      "imagery_server": "nsw",
+      "spawn_latitude": -33.852,
+      "spawn_longitude": 151.21,
+      "spawn_yaw_degrees": -35.0,
+      "buildings_dir": "res://data/regions/au_nsw_sydney_harbour/buildings",
+      "elevation_smoothing": 2
     }
   ]
 }

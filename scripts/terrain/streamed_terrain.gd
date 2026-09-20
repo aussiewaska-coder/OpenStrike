@@ -41,16 +41,18 @@ const BUILDING_CHUNK_LAYOUT := preload("res://scripts/terrain/building_chunk_lay
 ## At speed, reserve the expensive near tier for the chunk directly underneath.
 ## Low-speed flight can keep the wider patch sharp.
 @export var near_detail_speed_limit := 45.0
-@export var near_detail_altitude_m := 300.0
+@export var near_detail_altitude_m := 500.0
 var _low_detail_altitude := false
 var _fast_detail_motion := false
-@export var detail_radius_m := 6000.0
+@export var detail_radius_m := 9000.0
 @export var max_detail_chunks := 16
+## Cheaper outer ring past the mid tier: 1024 px tiles (~2.4 m/px on a
+## 2.5 km chunk) instead of leaving everything past the mid tier on the
+## 12 m/px overview.
+@export var far_detail_texture_px := 1024
+@export var far_detail_chunks := 8
 @export var detail_update_interval_s := 0.6
-## Requests are serialised through one HTTPRequest, so queueing a dozen only
-## makes the last of them arrive a dozen fetches late -- by which time the
-## aircraft has moved on. Ask for a few and re-rank as they land.
-@export var max_pending_detail := 3
+@export var max_pending_detail := 8
 
 var _height_image: Image
 var _metadata: Dictionary = {}
@@ -64,9 +66,17 @@ var _focus: Node3D
 var _update_accumulator := 0.0
 var _pending_detail := {}
 var _pending_buildings := {}
+## Decoded images waiting for their GPU upload. Uploads happen here, at most
+## one per frame, so several chunks landing together smooth out instead of
+## hitching. Entries are {chunk, image, tier_px}.
+var _upload_queue: Array = []
 var _buildings_dir := ""
 var _building_world_size_m := 0.0
 var _building_chunk_count := 0
+## Which aerial service covers this theatre ("qld" or "nsw"). Detail chunks
+## must ask the same one as the overview: Queensland answers HTTP 200 with a
+## solid-black frame outside its coverage, which blacked out Sydney's ground.
+var _imagery_server := "qld"
 
 
 func _ready() -> void:
@@ -101,6 +111,7 @@ func load_region(region: Dictionary) -> bool:
 	)
 	elevation_zoom = int(region.get("elevation_zoom", elevation_zoom))
 	_buildings_dir = String(region.get("buildings_dir", ""))
+	_imagery_server = String(region.get("imagery_server", "qld"))
 	_building_world_size_m = float(region.get("building_world_size_m", world_size))
 	_building_chunk_count = int(region.get("building_chunk_count", chunk_count))
 
@@ -345,6 +356,7 @@ func _mesh_from_surface(arrays: Array) -> ArrayMesh:
 
 
 func _process(delta: float) -> void:
+	_drain_uploads(1)
 	if _chunks.is_empty() or _focus == null:
 		return
 	_update_accumulator += delta
@@ -352,6 +364,28 @@ func _process(delta: float) -> void:
 		return
 	_update_accumulator = 0.0
 	_refresh_detail_chunks()
+
+
+## One paced GPU upload per frame. The decode, mipmap build and format
+## conversion already happened on the worker; only this call needs the main
+## thread, and bunching several in one frame was the visible hitch.
+func _drain_uploads(budget: int) -> void:
+	while budget > 0 and not _upload_queue.is_empty():
+		var entry: Dictionary = _upload_queue.pop_front()
+		var chunk: Dictionary = entry["chunk"]
+		var key := int(chunk.get("index", -1))
+		if not _chunks.has(chunk) or not is_instance_valid(chunk["instance"]):
+			_pending_detail.erase(key)
+			continue
+		var texture := ImageTexture.create_from_image(entry["image"])
+		var cx: int = chunk["cx"]
+		var cz: int = chunk["cz"]
+		_set_chunk_texture(chunk, texture, Vector2(float(chunk_count), float(chunk_count)), Vector2(-float(cx), -float(cz)))
+		# Stretch this chunk's slice of the region-wide UV back over 0..1.
+		chunk["detailed"] = true
+		chunk["tier"] = int(entry["tier_px"])
+		_pending_detail.erase(key)
+		budget -= 1
 
 
 ## What the streamer is actually doing, for the on-screen diagnostic: guessing
@@ -433,7 +467,7 @@ func _apply_memory_budget() -> void:
 		near_detail_chunks = 0
 	else:
 		near_detail_texture_px = mini(near_detail_texture_px, 4096)
-		max_detail_chunks = mini(max_detail_chunks, 6)
+		max_detail_chunks = mini(max_detail_chunks, 8)
 		near_detail_chunks = mini(near_detail_chunks, 1)
 
 
@@ -459,26 +493,54 @@ func _focus_speed() -> float:
 	return Vector2(velocity.x, velocity.z).length()
 
 
+## Distance from a point to the segment a-b: how the lookahead ranks chunks
+## by closeness to the flight path rather than the aircraft alone.
+static func _segment_distance(point: Vector2, a: Vector2, b: Vector2) -> float:
+	var along := b - a
+	var length_squared := along.length_squared()
+	if length_squared < 0.001:
+		return point.distance_to(a)
+	var t := clampf((point - a).dot(along) / length_squared, 0.0, 1.0)
+	return point.distance_to(a + along * t)
+
+
 func _refresh_detail_chunks() -> void:
 	var focus_xz := Vector2(_focus.global_position.x, _focus.global_position.z)
+	# Lookahead: rank chunks by closeness to the flight path segment, not just
+	# the aircraft, so HD tiles arrive where the nose is going. Eight seconds
+	# of travel, capped so a fast jet does not prefetch the next theatre.
+	var velocity_xz := Vector2.ZERO
+	if "velocity" in _focus:
+		var flown: Vector3 = _focus.velocity
+		velocity_xz = Vector2(flown.x, flown.z)
+	var speed := velocity_xz.length()
+	var ahead := focus_xz
+	if speed > 5.0:
+		ahead = focus_xz + velocity_xz.normalized() * minf(speed * 8.0, 4000.0)
 	var ranked: Array = []
 	for chunk in _chunks:
-		var distance: float = focus_xz.distance_to(chunk["center"])
+		var centre: Vector2 = chunk["center"]
+		var distance: float = focus_xz.distance_to(centre)
 		if distance <= detail_radius_m:
-			ranked.append({"chunk": chunk, "distance": distance})
+			ranked.append({"chunk": chunk, "distance": _segment_distance(centre, focus_xz, ahead)})
 	ranked.sort_custom(func(a, b): return a["distance"] < b["distance"])
 	_apply_memory_budget()
-	var wanted := ranked.slice(0, max_detail_chunks)
-	# Rank decides resolution: the nearest few get the high tier, the rest the
-	# standard one, and a chunk that changes tier is re-fetched.
+	var wanted := ranked.slice(0, max_detail_chunks + far_detail_chunks)
+	# Rank decides resolution: the nearest few get the sharp tier, the middle
+	# the standard one, the outer ring the cheap one. A chunk that changes
+	# tier is re-fetched.
 	var agl := _focus.global_position.y - sample_height_world(_focus.global_position.x, _focus.global_position.z)
 	_low_detail_altitude = agl < near_detail_altitude_m + (30.0 if _low_detail_altitude else 0.0)
 	_fast_detail_motion = _focus_speed() > near_detail_speed_limit - (5.0 if _fast_detail_motion else 0.0)
 	var moving_fast := _fast_detail_motion
 	var near_count := mini(near_detail_chunks, 1) if moving_fast else near_detail_chunks
 	for position in range(wanted.size()):
-		var high_tier: bool = position < near_count and _low_detail_altitude
-		wanted[position]["tier"] = near_detail_texture_px if high_tier else detail_texture_px
+		if position < near_count and _low_detail_altitude:
+			wanted[position]["tier"] = near_detail_texture_px
+		elif position < near_count + max_detail_chunks:
+			wanted[position]["tier"] = detail_texture_px
+		else:
+			wanted[position]["tier"] = far_detail_texture_px
 
 	var keep := {}
 	for entry in wanted:
@@ -512,16 +574,13 @@ func _request_chunk_detail(chunk: Dictionary, tier_px: int = 0) -> void:
 	var west := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx) / float(chunk_count))
 	var east := lerpf(float(_bounds["west"]), float(_bounds["east"]), float(cx + 1) / float(chunk_count))
 	var requested_px: int = tier_px if tier_px > 0 else detail_texture_px
-	var texture: ImageTexture = await TileClient.fetch_aerial(
-		{"north": north, "south": south, "west": west, "east": east}, requested_px
+	var image: Image = await TileClient.fetch_aerial_image(
+		{"north": north, "south": south, "west": west, "east": east}, requested_px, _imagery_server
 	)
-	_pending_detail.erase(key)
-	if texture == null or not is_instance_valid(chunk["instance"]):
+	if image == null or not is_instance_valid(chunk["instance"]):
+		_pending_detail.erase(key)
 		return
-	_set_chunk_texture(chunk, texture, Vector2(float(chunk_count), float(chunk_count)), Vector2(-float(cx), -float(cz)))
-	# Stretch this chunk's slice of the region-wide UV back over 0..1.
-	chunk["detailed"] = true
-	chunk["tier"] = requested_px
+	_upload_queue.append({"chunk": chunk, "image": image, "tier_px": requested_px})
 
 
 ## Buildings ship in the APK per chunk, so this needs no network -- it is the
@@ -641,6 +700,8 @@ func _clear_terrain() -> void:
 			chunk["instance"].queue_free()
 	_chunks.clear()
 	_pending_detail.clear()
+	_pending_buildings.clear()
+	_upload_queue.clear()
 	_height_image = null
 	_metadata = {}
 	_bounds = {}
@@ -648,6 +709,7 @@ func _clear_terrain() -> void:
 	_overview_texture = null
 	_building_world_size_m = 0.0
 	_building_chunk_count = 0
+	_imagery_server = "qld"
 
 
 ## Shared texture references: the MFD does not duplicate or download imagery.

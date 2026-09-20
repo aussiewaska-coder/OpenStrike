@@ -25,9 +25,9 @@ func _run():
 	terrain._refresh_detail_chunks()
 	assert(terrain.requested[0] == 4096, "hysteresis prevents refetching on small altitude oscillations")
 	terrain.requested.clear()
-	focus.position.y = 1350
+	focus.position.y = 1600
 	terrain._refresh_detail_chunks()
-	assert(terrain.requested == [2048,2048,2048,2048], "above 300m AGL reduces detail, even over elevated terrain")
+	assert(terrain.requested == [2048,2048,2048,2048], "above 500m AGL reduces detail, even over elevated terrain")
 	terrain.free()
 	focus.free()
 	print("TERRAIN_DETAIL_POLICY_TEST_PASS")

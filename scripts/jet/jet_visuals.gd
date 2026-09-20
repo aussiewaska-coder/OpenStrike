@@ -75,7 +75,7 @@ static func satin_exterior(root: Node3D) -> int:
 ## basis that puts this model there and a fraction of the airframe's height.
 ## Working in the root's own frame rather than the world means it does not
 ## matter where the aeroplane happens to be standing.
-static func hide_landing_gear(root: Node3D, basis: Basis, height_fraction: float) -> int:
+static func hide_landing_gear(root: Node3D, basis: Basis, height_fraction: float, record: Array = []) -> int:
 	var boxes := _oriented_boxes(root, basis)
 	if boxes.is_empty():
 		return 0
@@ -89,6 +89,7 @@ static func hide_landing_gear(root: Node3D, basis: Basis, height_fraction: float
 		var instance: MeshInstance3D = entry["node"]
 		if instance.visible and box.position.y + box.size.y <= cut:
 			instance.visible = false
+			record.append(instance)
 			hidden += 1
 	return hidden
 

@@ -43,7 +43,7 @@ var azimuth_deg := 0.0
 
 var _sun: DirectionalLight3D
 var _environment: Environment
-var _base_fog_density := 0.0001
+var _base_fog_density := 0.000045
 var _base_fog_sky_affect := 0.25
 var _horizon := Color(0.78, 0.88, 0.96)
 var _cloud_fog_color := Color(0.65, 0.69, 0.73)

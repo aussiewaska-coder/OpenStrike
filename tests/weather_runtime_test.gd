@@ -46,7 +46,7 @@ func _run() -> void:
 	stage.clouds._process(0.1)
 	check(weather.rain_intensity == 0.0 and not weather._rain.visible and not weather._rain.emitting, "no lingering rain above cloud tops")
 	check(not weather.audio.rain_player.playing, "rain audio fades out above clouds")
-	check(is_equal_approx(stage.day.sun_multiplier, 1.0) and is_equal_approx(stage.environment.fog_density, 0.0001), "sunlight and baseline haze return above clouds")
+	check(is_equal_approx(stage.day.sun_multiplier, 1.0) and is_equal_approx(stage.environment.fog_density, 0.000045), "sunlight and baseline haze return above clouds")
 	var remote := Camera3D.new()
 	stage.add_child(remote)
 	remote.position = Vector3(25000, 600, 0)

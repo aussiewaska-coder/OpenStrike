@@ -13,6 +13,7 @@ extends Node3D
 
 const SURFERS_REGION := "au_qld_surfers"
 const CORRIDOR_REGION := "au_gold_coast_tweed_corridor"
+const SYDNEY_REGION := "au_nsw_sydney_harbour"
 const FACADE := preload("res://shaders/hero_facade.gdshader")
 
 ## How close an OSM building's centre must be to a hero to be hidden. Q1's
@@ -28,6 +29,14 @@ var _instances: Array[Node3D] = []
 ## README; the GLBs are true scale, Y-up and grounded at y = 0, so they are
 ## placed and not scaled.
 static func layout_for(region_id: String) -> Array:
+	if region_id == SYDNEY_REGION:
+		# Procedural stand-ins (sydney_landmarks.gd), not GLBs: the coathanger
+		# spans north-south, the sails face the harbour, the tower is round.
+		return [
+			{"name": "HarbourBridge", "lat": -33.8523, "lon": 151.2108, "procedural": true, "yaw_degrees": 90.0},
+			{"name": "OperaHouse", "lat": -33.8568, "lon": 151.2153, "procedural": true, "yaw_degrees": -30.0},
+			{"name": "Centrepoint", "lat": -33.8705, "lon": 151.2089, "procedural": true, "yaw_degrees": 0.0},
+		]
 	if region_id not in [SURFERS_REGION, CORRIDOR_REGION]:
 		return []
 	return [
@@ -55,16 +64,22 @@ func populate(region_id: String, terrain: Node) -> void:
 	if terrain == null or not terrain.has_method("world_from_coordinate"):
 		return
 	for hero in layout_for(region_id):
-		var scene: PackedScene = load(String(hero["scene"]))
-		if scene == null:
-			push_warning("Hero tower model missing: %s" % hero["scene"])
+		var model: Node3D = null
+		if bool(hero.get("procedural", false)):
+			model = SydneyLandmarks.build_landmark(String(hero["name"]))
+		else:
+			var scene: PackedScene = load(String(hero["scene"]))
+			if scene == null:
+				push_warning("Hero tower model missing: %s" % hero["scene"])
+				continue
+			model = scene.instantiate()
+			prepare_model(model)
+		if model == null:
 			continue
 		var at: Vector2 = terrain.world_from_coordinate(float(hero["lat"]), float(hero["lon"]))
 		var ground := 0.0
 		if terrain.has_method("sample_mesh_height"):
 			ground = float(terrain.sample_mesh_height(at.x, at.y))
-		var model: Node3D = scene.instantiate()
-		prepare_model(model)
 		model.name = "Hero_%s" % hero["name"]
 		add_child(model)
 		model.global_position = Vector3(at.x, ground, at.y)

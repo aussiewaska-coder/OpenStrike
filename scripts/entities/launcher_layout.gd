@@ -18,6 +18,19 @@ static func clusters_for(region_id: String, half_extent: float, world_of := Call
 		for site in sites:
 			out.append({"name": site[0], "centre": world_of.call(site[1], site[2])})
 		return out
+	if region_id == "au_nsw_sydney_harbour" and world_of.is_valid():
+		var sydney := [
+			["CITY NORTH", -33.815, 151.20],
+			["CITY CENTRAL", -33.8688, 151.2093],
+			["CITY SOUTH", -33.92, 151.20],
+			["HINTERLAND NORTH", -33.80, 151.05],
+			["HINTERLAND CENTRAL", -33.87, 151.05],
+			["HINTERLAND SOUTH", -33.95, 151.10],
+		]
+		var syd_out := []
+		for site in sydney:
+			syd_out.append({"name": site[0], "centre": world_of.call(site[1], site[2])})
+		return syd_out
 	var scale := minf(half_extent, 6000.0)
 	return [
 		{"name": "CITY NORTH", "centre": Vector2(-0.12, -0.25) * scale},

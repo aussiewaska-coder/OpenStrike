@@ -117,9 +117,7 @@ func _select_region(latitude: float, longitude: float, force_nearest: bool) -> v
 	region_selected.emit(selected_region)
 
 
-## Cycles to the next installed theatre. The catalog ships only the default
-## theatre, so this re-selects it (reloading the map); it stays so a future
-## second theatre needs no new input path.
+## Cycles to the next installed theatre (Gold Coast <-> Sydney).
 func cycle_region() -> void:
 	if _regions.is_empty():
 		return

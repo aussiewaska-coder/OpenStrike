@@ -12,6 +12,7 @@ signal weather_cycled
 signal input_monitor_toggled(enabled: bool)
 signal raid_restarted
 signal hostiles_toggled
+signal runway_start_toggled
 signal open_changed(is_open: bool)
 signal engine_volume_cycled
 signal weather_volume_cycled
@@ -35,6 +36,8 @@ var _engine_volume_button: Button
 var _weather_volume_button: Button
 var _monitor_button: CheckButton
 var _hostiles_button: Button
+var _runway_button: Button
+var _runway_card: VBoxContainer
 var _region_label: Label
 var _resume_button: Button
 var _scroll: ScrollContainer
@@ -125,6 +128,9 @@ func _ready() -> void:
 	var hostiles := _card(flight, "Hostiles", "Enemy jets, raid drones and SAM sites are off by default. Turn them on for a fight.")
 	_hostiles_button = _button("OFF", func(): hostiles_toggled.emit())
 	hostiles.add_child(_hostiles_button)
+	_runway_card = _card(flight, "Runway start", "Begin on the longest runway, gear down, ready to roll. Otherwise flights start airborne.")
+	_runway_button = _button("AIRBORNE", func(): runway_start_toggled.emit())
+	_runway_card.add_child(_runway_button)
 	var status := _card(flight, "Current flight")
 	_stats_label = _label("", MUTED)
 	status.add_child(_stats_label)
@@ -338,6 +344,14 @@ func set_aircraft_text(text: String) -> void:
 
 func set_hostiles_text(text: String) -> void:
 	_hostiles_button.text = text.trim_prefix("HOSTILES: ")
+
+
+func set_runway_text(text: String) -> void:
+	_runway_button.text = text.trim_prefix("RUNWAY: ")
+
+
+func set_runway_available(available: bool) -> void:
+	_runway_card.visible = available
 
 
 func set_quality_text(text: String) -> void:

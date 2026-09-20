@@ -4,9 +4,9 @@ extends Node
 ## imagery. Everything fetched is written under user://map_cache, so a theatre
 ## needs the network only the first time it is flown.
 ##
-## Requests are serialised through a single HTTPRequest. That keeps the cache
-## and the await chain trivial to reason about; the whole 50 km corridor is
-## only ~42 elevation tiles, so there is nothing here worth parallelising.
+## Downloads funnel through four HTTPRequest lanes with a shared disk cache,
+## so parallel fetches never download the same tile twice. Elevation for the
+## whole 50 km corridor is only ~42 tiles; imagery is the hungry one.
 
 signal load_progress(done: int, total: int, message: String)
 
@@ -28,8 +28,12 @@ const REQUEST_TIMEOUT_S := 45.0
 ## river channels no deeper than about -20 m, and open ocean reads a flat 0.
 const ELEVATION_FLOOR_M := -30.0
 
-var _http: HTTPRequest
-var _busy := false
+var _https: Array[HTTPRequest] = []
+var _lane_busy: Array[bool] = []
+## Four parallel download lanes. The whole 50 km theatre used to queue
+## through one HTTPRequest, so the last of a dozen detail tiles arrived a
+## dozen fetches late -- by which time the aircraft had moved on.
+const FETCH_LANES := 4
 ## Counted so the on-screen diagnostic can say whether imagery is coming off the
 ## disk, off the network, or not arriving at all.
 var cache_hits := 0
@@ -45,20 +49,27 @@ var _compression_probed := false
 
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(CACHE_DIR)
-	_http = HTTPRequest.new()
-	_http.timeout = REQUEST_TIMEOUT_S
-	_http.use_threads = true
-	add_child(_http)
+	for lane in range(FETCH_LANES):
+		var http := HTTPRequest.new()
+		http.timeout = REQUEST_TIMEOUT_S
+		http.use_threads = true
+		add_child(http)
+		_https.append(http)
+		_lane_busy.append(false)
 
 
-func _acquire() -> void:
-	while _busy:
+func _acquire() -> int:
+	while true:
+		for lane in range(_https.size()):
+			if not _lane_busy[lane]:
+				_lane_busy[lane] = true
+				return lane
 		await get_tree().process_frame
-	_busy = true
+	return -1
 
 
-func _release() -> void:
-	_busy = false
+func _release(lane: int) -> void:
+	_lane_busy[lane] = false
 
 
 ## What the map cache holds. Nothing prunes it and nothing reported it, so a
@@ -118,14 +129,15 @@ func fetch_bytes(url: String, cache_name: String) -> PackedByteArray:
 	if not cached.is_empty():
 		cache_hits += 1
 		return cached
-	await _acquire()
-	var started := _http.request(url)
+	var lane := await _acquire()
+	var http: HTTPRequest = _https[lane]
+	var started := http.request(url)
 	if started != OK:
-		_release()
+		_release(lane)
 		push_warning("Map request could not start (%d): %s" % [started, url])
 		return PackedByteArray()
-	var outcome: Array = await _http.request_completed
-	_release()
+	var outcome: Array = await http.request_completed
+	_release(lane)
 	var result := int(outcome[0])
 	var status := int(outcome[1])
 	var body: PackedByteArray = outcome[3]
@@ -326,7 +338,12 @@ func fetch_aerial(bounds: Dictionary, pixels: int, server: String = "qld") -> Im
 		return await fetch_aerial(bounds, pixels, "nsw")
 	if body.is_empty():
 		return null
-	return await _texture_from_jpeg(body, bbox)
+	var texture := await _texture_from_jpeg(body, bbox)
+	if texture == null and not use_nsw:
+		# Queensland answers HTTP 200 with a solid-black frame outside its
+		# coverage (verified over Sydney). Treat it as a miss, not a photo.
+		return await fetch_aerial(bounds, pixels, "nsw")
+	return texture
 
 
 ## Uploading aerial imagery uncompressed costs 12 MB per 2048 px chunk; ETC2
@@ -338,16 +355,61 @@ func fetch_aerial(bounds: Dictionary, pixels: int, server: String = "qld") -> Im
 ## The decode joins the mipmap build and the format conversion on the worker, so
 ## only the upload stays on the main thread.
 func _texture_from_jpeg(body: PackedByteArray, label: String) -> ImageTexture:
+	var image := await _decode_image(body)
+	if image == null:
+		push_warning("Aerial imagery did not decode for %s" % label)
+		return null
+	return ImageTexture.create_from_image(image)
+
+
+## Same decode without the upload: detail chunks prepare on the worker and
+## hand the terrain a finished Image, so it can pace GPU uploads to one per
+## frame instead of stalling whenever several chunks land together.
+func _decode_image(body: PackedByteArray) -> Image:
 	var result := {"image": null}
 	var task := WorkerThreadPool.add_task(_decode_and_prepare.bind(body, result), true)
 	while not WorkerThreadPool.is_task_completed(task):
 		await get_tree().process_frame
 	WorkerThreadPool.wait_for_task_completion(task)
-	var image: Image = result["image"]
-	if image == null:
-		push_warning("Aerial imagery did not decode for %s" % label)
+	return result["image"]
+
+
+## Image-returning twin of fetch_aerial for the paced detail pipeline. Null
+## means miss (network, decode or blank frame), never a black tile.
+func fetch_aerial_image(bounds: Dictionary, pixels: int, server: String = "qld") -> Image:
+	var use_nsw := server == "nsw"
+	if use_nsw and pixels > NSW_MAX_PX:
+		var per_side: int = clampi(int(ceil(float(pixels) / float(NSW_MAX_PX))), 2, 4)
+		var mosaic := await fetch_aerial_mosaic(bounds, NSW_MAX_PX, per_side, "nsw")
+		if mosaic == null:
+			return null
+		var stitched := Image.new()
+		stitched.copy_from(mosaic)
+		var grid_task := WorkerThreadPool.add_task(_prepare_image.bind(stitched), true)
+		while not WorkerThreadPool.is_task_completed(grid_task):
+			await get_tree().process_frame
+		WorkerThreadPool.wait_for_task_completion(grid_task)
+		return stitched
+	var size_px: int = mini(pixels, NSW_MAX_PX if use_nsw else QLD_MAX_PX)
+	var bbox := "%f,%f,%f,%f" % [
+		float(bounds["west"]), float(bounds["south"]),
+		float(bounds["east"]), float(bounds["north"]),
+	]
+	var request := MapTiles.request_pixels(bounds, size_px)
+	var width_px := request.x
+	var height_px := request.y
+	var query := "bbox=%s&bboxSR=4326&imageSR=4326&size=%d,%d&format=jpg&f=image" % [bbox, width_px, height_px]
+	var base := NSW_IMAGE_URL if use_nsw else QLD_IMAGE_URL
+	var cache_name := "aerial_%s_%s_%dx%d.jpg" % [
+		"nsw" if use_nsw else "qld", bbox.replace(",", "_").replace(".", "p"), width_px, height_px,
+	]
+	var body := await fetch_bytes("%s?%s" % [base, query], cache_name)
+	if body.is_empty():
 		return null
-	return ImageTexture.create_from_image(image)
+	var image := await _decode_image(body)
+	if image == null and not use_nsw:
+		return await fetch_aerial_image(bounds, pixels, "nsw")
+	return image
 
 
 ## Runs on a worker thread.
@@ -355,8 +417,28 @@ func _decode_and_prepare(body: PackedByteArray, result: Dictionary) -> void:
 	var image := Image.new()
 	if image.load_jpg_from_buffer(body) != OK:
 		return
+	if _is_blank_frame(image):
+		return
 	_prepare_image(image)
 	result["image"] = image
+
+
+## Out-of-coverage answers decode fine but carry no photo: every pixel
+## identical. Sample a spread so a real frame (sea included) never matches.
+static func _is_blank_frame(image: Image) -> bool:
+	var width := image.get_width()
+	var height := image.get_height()
+	if width <= 0 or height <= 0:
+		return true
+	var first := image.get_pixel(0, 0)
+	for sample in range(64):
+		var probe := image.get_pixel(
+			int(float(sample) * float(width) / 64.0) % width,
+			int(float(sample) * float(height) / 64.0) % height
+		)
+		if absf(probe.r - first.r) + absf(probe.g - first.g) + absf(probe.b - first.b) > 0.004:
+			return false
+	return true
 
 
 func _texture_from(image: Image) -> ImageTexture:
@@ -395,6 +477,16 @@ func _prepare_image(image: Image) -> void:
 func fetch_aerial_grid(
 	bounds: Dictionary, per_tile_px: int, per_side: int, server: String = "qld"
 ) -> ImageTexture:
+	var mosaic := await fetch_aerial_mosaic(bounds, per_tile_px, per_side, server)
+	if mosaic == null:
+		return null
+	return await _texture_from(mosaic)
+
+
+## Grid stitch without the upload, for the paced detail pipeline.
+func fetch_aerial_mosaic(
+	bounds: Dictionary, per_tile_px: int, per_side: int, server: String = "qld"
+) -> Image:
 	var north: float = bounds["north"]
 	var south: float = bounds["south"]
 	var west: float = bounds["west"]
@@ -409,12 +501,10 @@ func fetch_aerial_grid(
 				"west": lerpf(west, east, float(column) / float(per_side)),
 				"east": lerpf(west, east, float(column + 1) / float(per_side)),
 			}
-			var texture: ImageTexture = await fetch_aerial(cell, per_tile_px, server)
-			if texture == null:
-				return null
-			var tile := texture.get_image()
+			var tile := await fetch_aerial_image(cell, per_tile_px, server)
 			if tile == null:
 				return null
+			tile = tile.duplicate()
 			tile.decompress()
 			tile.convert(Image.FORMAT_RGB8)
 			if mosaic == null:
@@ -425,6 +515,4 @@ func fetch_aerial_grid(
 				Rect2i(Vector2i.ZERO, tile_size),
 				Vector2i(column * tile_size.x, row * tile_size.y)
 			)
-	if mosaic == null:
-		return null
-	return await _texture_from(mosaic)
+	return mosaic

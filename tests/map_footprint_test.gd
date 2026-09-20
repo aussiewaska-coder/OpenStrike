@@ -8,13 +8,20 @@ func _init() -> void:
 	var file := FileAccess.open(CATALOG_PATH, FileAccess.READ)
 	assert(file != null, "region catalog must be readable")
 	var catalog: Dictionary = JSON.parse_string(file.get_as_text())
-	assert(catalog.get("regions", []).size() == 1, "only the default theatre ships")
+	assert(catalog.get("regions", []).size() == 2, "Gold Coast + Sydney theatres ship")
 	var corridor: Dictionary = {}
+	var sydney: Dictionary = {}
 	for region in catalog.get("regions", []):
 		if String(region.get("id", "")) == "au_gold_coast_tweed_corridor":
 			corridor = region
+		if String(region.get("id", "")) == "au_nsw_sydney_harbour":
+			sydney = region
 
 	assert(not corridor.is_empty(), "Gold Coast corridor must be installed")
+	assert(not sydney.is_empty(), "Sydney Harbour must be installed")
+	assert(float(sydney.get("world_size_m", 0.0)) == 50000.0, "Sydney must match the 50 km size")
+	assert(int(sydney.get("chunk_count", 0)) == int(corridor.get("chunk_count", 0)), "Sydney must reuse the mesh budget")
+	assert(String(sydney.get("imagery_server", "")) == "nsw", "Sydney streams NSW imagery")
 	assert(float(corridor.get("world_size_m", 0.0)) == 50000.0, "corridor must span 50 km")
 	assert(
 		is_equal_approx(float(corridor.get("vertical_exaggeration", 0.0)), 1.8),
