@@ -194,6 +194,9 @@ var _hit_stop_serial := 0
 var _target_point := Vector3.ZERO
 var _has_target_point := false
 var _flying_jet := true
+## Hostile activity (enemy jet waves, raid drones, SAM fire) is off by
+## default; the settings menu's Hostiles switch opts in explicitly.
+var _hostiles_enabled := false
 var _camera_up := Vector3.UP
 var _active_terrain: Node
 var _building_hit_index: RefCounted
@@ -251,6 +254,7 @@ func _ready() -> void:
 	settings_panel.weather_cycled.connect(_on_weather_cycled)
 	settings_panel.input_monitor_toggled.connect(func(on: bool): gamepad_diagnostic.get_parent().visible = on)
 	settings_panel.raid_restarted.connect(_start_raid)
+	settings_panel.hostiles_toggled.connect(_on_hostiles_toggled)
 	_mission.raid_ended.connect(_on_raid_ended)
 	if start_time_mode >= 0:
 		day_cycle.mode = start_time_mode
@@ -322,7 +326,9 @@ func _update_enemy_combat(delta: float) -> void:
 	_enemy_combat.defence.heat_signature = jet_anchor.airframe.heat_signature
 	_enemy_combat.defence.afterburner = jet_anchor.engine_afterburner_fraction() if jet_anchor.airframe.thrust_afterburner_g > jet_anchor.airframe.thrust_military_g else 0.0
 	_enemy_combat.defence.nose = jet_anchor.global_basis.x.normalized()
-	_enemy_combat.update(delta, point, _vehicle_velocity(), point.y - _ground_height_at(point), enemy_squadron.jets(), launcher_field.launcher_positions(), _camera_follow_enabled and _flying_jet and not jet_anchor.is_crashed())
+	# SAM sites stay on the map as targets, but only shoot when hostiles are on.
+	var sam_sites: Array = launcher_field.launcher_positions() if _hostiles_enabled else []
+	_enemy_combat.update(delta, point, _vehicle_velocity(), point.y - _ground_height_at(point), enemy_squadron.jets(), sam_sites, _camera_follow_enabled and _flying_jet and not jet_anchor.is_crashed())
 	_countermeasures_button.text = _countermeasures.button_text()
 	_countermeasures_button.disabled = not _flying_jet or jet_anchor.is_crashed() or _countermeasures.cooldown > 0 or _countermeasures.charges == 0
 	_threat_warning.watching_sequence = _threat_camera.sequence
@@ -481,12 +487,33 @@ func _build_hud() -> void:
 func _start_raid() -> void:
 	if _drone_field == null:
 		return
+	if not _hostiles_enabled:
+		status_label.text = "HOSTILES OFF — ENABLE IN SETTINGS > FLIGHT"
+		return
 	var half_extent: float = streamed_terrain.world_half_extent() if streamed_terrain.has_method("world_half_extent") else 5000.0
 	_drone_field.populate(10, half_extent, Vector3.ZERO)
 	_mission.start(10)
 	_mission_label.remove_theme_color_override("font_color")
 	_mission_label.add_theme_color_override("font_color", Color(0.91, 0.77, 0.28))
 	_mission_label.text = _mission.hud_line()
+
+
+func _on_hostiles_toggled() -> void:
+	_hostiles_enabled = not _hostiles_enabled
+	if not _hostiles_enabled:
+		# Stand down immediately: waves stop, drones leave, SAMs go quiet,
+		# and anything already in the air is cleared.
+		enemy_squadron.clear()
+		if _drone_field != null:
+			_drone_field.clear()
+		if _enemy_combat != null:
+			_enemy_combat.clear()
+		_mission_label.remove_theme_color_override("font_color")
+		_mission_label.text = "HOSTILES OFF"
+		status_label.text = "HOSTILES OFF"
+	else:
+		status_label.text = "HOSTILES ON — RESTART RAID IN SETTINGS FOR DRONES"
+	_refresh_settings()
 
 
 func _on_building_damaged_for_raid(building_id: int, accumulated: float, _relative_height: float) -> void:
@@ -532,7 +559,7 @@ func _on_radar_range_changed(metres: float) -> void:
 ## visor and the scope are told anything.
 func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: float) -> void:
 	enemy_squadron.ground_height = _ground_height_at
-	if _flying_jet:
+	if _flying_jet and _hostiles_enabled:
 		enemy_squadron.advance_encounters(delta, vehicle.global_position, nose)
 	enemy_squadron.update(delta, vehicle.global_position, nose, projectile_manager.active_rounds)
 
@@ -833,6 +860,9 @@ func _load_streamed_region(region: Dictionary) -> void:
 		float(region.get("spawn_longitude", region.get("center_longitude", 0.0))),
 		float(region.get("spawn_yaw_degrees", -35.0))
 	)
+	# Every flight opens at a random spot inside the theatre, not the fixed
+	# catalog coordinate.
+	streamed_terrain.randomize_spawn()
 	_active_terrain = streamed_terrain
 	# Both aircraft need the terrain: whichever is parked still has to know the
 	# theatre's extent so it is not fenced into the wrong one when swapped to.
@@ -853,7 +883,8 @@ func _load_streamed_region(region: Dictionary) -> void:
 	launcher_field.populate(String(region.get("id", "")), streamed_terrain, _building_hit_index)
 	_hero_towers.populate(String(region.get("id", "")), streamed_terrain)
 	_camera_follow_enabled = true
-	_start_raid()
+	if _hostiles_enabled:
+		_start_raid()
 	_snap_follow_camera()
 
 
@@ -1870,6 +1901,7 @@ func _refresh_settings() -> void:
 		String(LocationService.selected_region.get("id", ""))
 	)
 	settings_panel.set_flight_mode_text(_flight_mode_text())
+	settings_panel.set_hostiles_text("HOSTILES: %s" % ("ON" if _hostiles_enabled else "OFF"))
 	if streamed_terrain.has_method("quality_name"):
 		settings_panel.set_quality_text("GRAPHICS: %s" % streamed_terrain.quality_name())
 	settings_panel.set_time_text("TIME: %s" % day_cycle.mode_name())

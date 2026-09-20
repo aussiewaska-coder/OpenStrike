@@ -18,6 +18,8 @@ func _run() -> void:
 	var nose: Vector3 = carrier.global_basis.x
 	var heading := atan2(nose.x, -nose.z)
 	main.enemy_squadron.clear()
+	# Hostiles default off; the production path under test requires the opt-in.
+	main._hostiles_enabled = true
 	main.enemy_squadron._next_encounter_in = 0.0
 	main._update_targeting(0.01, carrier, nose, heading)
 	check(main.enemy_squadron.jet_count() >= 1 and main.enemy_squadron.jet_count() <= 2, "production targeting starts an enemy encounter")

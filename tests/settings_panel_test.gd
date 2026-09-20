@@ -24,6 +24,14 @@ func _run() -> void:
 	panel.set_cache_report(127, 182000000)
 	panel.set_region_text("Surfers Paradise — Gold Coast, Queensland")
 	panel.set_status("F-22 cockpit · 900 m altitude")
+	panel.set_hostiles_text("HOSTILES: OFF")
+	check(panel._hostiles_button.text == "OFF", "hostiles toggle must show the off-by-default state")
+	panel.set_hostiles_text("HOSTILES: ON")
+	check(panel._hostiles_button.text == "ON", "hostiles toggle must reflect the menu choice")
+	var hostile_changes := [0]
+	panel.hostiles_toggled.connect(func(): hostile_changes[0] += 1)
+	panel._hostiles_button.pressed.emit()
+	check(hostile_changes[0] == 1, "hostiles toggle must emit exactly once per press")
 	var regions := []
 	for index in range(12):
 		regions.append({"id": str(index), "display_name": "Surfers Paradise %d" % index, "subtitle": "Gold Coast · Coastline and hinterland"})

@@ -218,6 +218,23 @@ func set_spawn_from_coordinate(latitude: float, longitude: float, yaw_degrees: f
 	_metadata["spawn_yaw_degrees"] = yaw_degrees
 
 
+## Jitters the spawn to a random spot inside the theatre so every flight
+## starts somewhere different. The authored yaw is kept; only the position
+## moves, clamped inside 90% of the world half-size.
+func randomize_spawn(radius_fraction: float = 0.35) -> void:
+	if not _metadata.has("spawn_uv"):
+		return
+	var world_size := float(_metadata.get("world_size_m", 50000.0))
+	var base := _spawn_world_xz()
+	var radius := world_size * 0.5 * radius_fraction
+	var offset := Vector2.RIGHT.rotated(randf() * TAU) * randf_range(radius * 0.3, radius)
+	var limit := world_size * 0.45
+	var point := base + offset
+	point.x = clampf(point.x, -limit, limit)
+	point.y = clampf(point.y, -limit, limit)
+	_metadata["spawn_uv"] = Vector2(point.x / world_size + 0.5, point.y / world_size + 0.5)
+
+
 func _build_chunks(world_size: float) -> void:
 	var chunk_size := world_size / float(chunk_count)
 	var spacing := chunk_size / float(chunk_resolution - 1)

@@ -117,9 +117,9 @@ func _select_region(latitude: float, longitude: float, force_nearest: bool) -> v
 	region_selected.emit(selected_region)
 
 
-## Cycles to the next installed theatre. Nearest-by-distance is right on
-## launch, but the packaged Surfers box sits wholly inside the streamed
-## corridor, so the two overlap and the player needs a way to pick.
+## Cycles to the next installed theatre. The catalog ships only the default
+## theatre, so this re-selects it (reloading the map); it stays so a future
+## second theatre needs no new input path.
 func cycle_region() -> void:
 	if _regions.is_empty():
 		return
