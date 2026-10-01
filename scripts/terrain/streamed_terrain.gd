@@ -118,7 +118,8 @@ func load_region(region: Dictionary) -> bool:
 	status_changed.emit("Streaming elevation for %s..." % region.get("display_name", region_id))
 	TileClient.load_progress.connect(_on_tile_progress)
 	var field: Dictionary = await TileClient.fetch_heightfield(
-		region_id, _bounds, elevation_zoom, heightfield_resolution, elevation_smoothing
+		region_id, _bounds, elevation_zoom, heightfield_resolution, elevation_smoothing,
+		String(region.get("elevation_server", "terrarium"))
 	)
 	TileClient.load_progress.disconnect(_on_tile_progress)
 	if field.is_empty():
@@ -138,6 +139,7 @@ func load_region(region: Dictionary) -> bool:
 		_bounds,
 		overview_texture_px,
 		overview_grid_per_side,
+		String(region.get("imagery_server", "qld")),
 		String(region.get("imagery_server", "qld"))
 	)
 

@@ -119,10 +119,18 @@ var _radar: Control
 const TACTICAL_MFD := preload("res://scripts/ui/tactical_mfd.gd")
 const TACTICAL_NAV := preload("res://scripts/ui/tactical_navigation.gd")
 const WAYPOINT_HUD := preload("res://scripts/ui/waypoint_hud.gd")
+const THUMB_CONTROLS := preload("res://scripts/ui/thumb_controls.gd")
 const RUNWAYS := preload("res://scripts/world/runways.gd")
 const STARTUP_PANEL := preload("res://scripts/ui/startup_panel.gd")
+## Thumb sticks are the only way to fly without a gamepad, so the choice is
+## worth keeping between runs. With no entry saved, the hardware decides.
+const UI_SETTINGS_FILE := "user://ui_settings.cfg"
+const UI_SETTINGS_SECTION := "controls"
 var _tactical_mfd: Control
 var _waypoint_hud: Control
+var _thumb: Control
+var _thumb_enabled := false
+var _tap_lock_enabled := true
 var _navigation := TACTICAL_NAV.new()
 var _map_layers_timer := 0.0
 var _cockpit_map_layers_timer := 1.0
@@ -187,6 +195,7 @@ var _runway_start := false
 var _startup: Control
 var _awaiting_startup := true
 var _pending_region := {}
+var _current_region := {}
 var _runway_id := ""
 var _wreck_fire: Node3D
 var _threat_warning: Control
@@ -260,10 +269,15 @@ func _ready() -> void:
 	settings_panel.flight_mode_toggled.connect(_toggle_flight_mode)
 	settings_panel.aircraft_switched.connect(_switch_aircraft)
 	settings_panel.cache_cleared.connect(_on_cache_cleared)
+	settings_panel.imagery_cycled.connect(_on_imagery_cycled)
+	settings_panel.precache_requested.connect(_on_precache_requested)
+	settings_panel.precache_cancelled.connect(func(): TileClient.cancel_precache())
 	settings_panel.quality_cycled.connect(_on_quality_cycled)
 	settings_panel.time_cycled.connect(_on_time_cycled)
 	settings_panel.weather_cycled.connect(_on_weather_cycled)
 	settings_panel.input_monitor_toggled.connect(func(on: bool): gamepad_diagnostic.get_parent().visible = on)
+	settings_panel.thumb_controls_toggled.connect(_on_thumb_controls_toggled)
+	settings_panel.tap_lock_toggled.connect(_on_tap_lock_toggled)
 	settings_panel.raid_restarted.connect(_start_raid)
 	settings_panel.hostiles_toggled.connect(_on_hostiles_toggled)
 	_mission.raid_ended.connect(_on_raid_ended)
@@ -291,6 +305,7 @@ func _ready() -> void:
 	_startup = STARTUP_PANEL.new()
 	_startup.name = "StartupPanel"
 	ui_layer.add_child(_startup)
+	_startup.visibility_changed.connect(_update_thumb_visibility)
 	_startup.theatre_chosen.connect(_on_startup_theatre)
 	_startup.hostiles_toggled.connect(_on_startup_hostiles)
 	_startup.start_mode_changed.connect(_on_startup_mode)
@@ -591,6 +606,69 @@ func _build_hud() -> void:
 	ui_layer.add_child(_tape)
 	# The input monitor is opt-in from settings now, not a fixture.
 	gamepad_diagnostic.get_parent().visible = false
+	_thumb = THUMB_CONTROLS.new()
+	_thumb.name = "ThumbControls"
+	ui_layer.add_child(_thumb)
+	_thumb_enabled = _load_ui_flag("thumb_sticks", _touch_mode())
+	_tap_lock_enabled = _load_ui_flag("tap_to_lock", not _touch_mode())
+	GamepadInput.set_thumb_controls(_thumb_enabled)
+	# Whatever can cover the sticks has to report it by changing its own
+	# visibility. v11 shipped with the sticks permanently invisible because only
+	# the splash's show path was wired, never its hide.
+	for cover in [settings_panel, _tactical_mfd]:
+		cover.visibility_changed.connect(_update_thumb_visibility)
+	_update_thumb_visibility()
+
+
+## Touch users have no other way to fly, so the sticks default on for anything
+## with a finger input and remember an explicit choice.
+func _touch_mode() -> bool:
+	return DisplayServer.is_touchscreen_available() or OS.has_feature("Android")
+
+
+func _load_ui_flag(key: String, fallback: bool) -> bool:
+	var config := ConfigFile.new()
+	var error: Error = config.load(UI_SETTINGS_FILE)
+	if error != OK or not config.has_section_key(UI_SETTINGS_SECTION, key):
+		return fallback
+	return bool(config.get_value(UI_SETTINGS_SECTION, key, fallback))
+
+
+func _save_ui_flag(key: String, value: bool) -> void:
+	var config := ConfigFile.new()
+	config.load(UI_SETTINGS_FILE)
+	config.set_value(UI_SETTINGS_SECTION, key, value)
+	config.save(UI_SETTINGS_FILE)
+
+
+func _on_thumb_controls_toggled(enabled: bool) -> void:
+	_set_thumb_controls(enabled)
+	_save_ui_flag("thumb_sticks", enabled)
+	_refresh_settings()
+
+
+func _on_tap_lock_toggled(enabled: bool) -> void:
+	_tap_lock_enabled = enabled
+	_save_ui_flag("tap_to_lock", enabled)
+	_refresh_settings()
+
+
+func _set_thumb_controls(enabled: bool) -> void:
+	_thumb_enabled = enabled
+	GamepadInput.set_thumb_controls(enabled)
+	_update_thumb_visibility()
+
+
+func _update_thumb_visibility() -> void:
+	if _thumb == null:
+		return
+	var covered: bool = settings_panel.visible or (_tactical_mfd != null and _tactical_mfd.visible) \
+		or (_startup != null and _startup.visible)
+	_thumb.visible = _thumb_enabled and not covered
+	if covered:
+		# A stick that vanished mid-drag must not leave the aircraft banked over.
+		_thumb.flight.release()
+		_thumb.look.release()
 
 
 func _start_raid() -> void:
@@ -1011,6 +1089,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 		streamed_terrain.status_changed.connect(_on_streamed_status_changed)
 	_camera_follow_enabled = false
 	settings_panel.set_region_text("REGION: %s\n%s" % [region.get("display_name", "Unknown"), region.get("subtitle", "")])
+	_current_region = region
 	var loaded: bool = await streamed_terrain.load_region(region)
 	if not loaded:
 		settings_panel.set_region_text("REGION: %s // STREAM UNAVAILABLE" % region.get("display_name", "Unknown"))
@@ -1684,7 +1763,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			_radar.cycle_range()
 			get_viewport().set_input_as_handled()
 			return
+	# Without a gamepad a press is a thumb reaching for a control, not a request
+	# to lock the ground under it — and every stray tap used to yank the camera
+	# into an orbit. Contacts are still selectable on the radar and the MFD, and
+	# Settings → Display → "Tap to lock target" brings this back.
+	if not _tap_lock_allowed():
+		return
 	_lock_at_screen(screen)
+
+
+func _tap_lock_allowed() -> bool:
+	return GamepadInput.is_controller_ready() or _tap_lock_enabled
 
 
 ## The finger's screen ray selects the lock, then starts the same camera
@@ -2090,8 +2179,19 @@ func _refresh_settings() -> void:
 		settings_panel.set_quality_text("GRAPHICS: %s" % streamed_terrain.quality_name())
 	settings_panel.set_time_text("TIME: %s" % day_cycle.mode_name())
 	settings_panel.set_weather_text("WEATHER: %s" % weather.preset_name())
+	settings_panel.set_thumb_controls_state(_thumb_enabled)
+	settings_panel.set_tap_lock_state(_tap_lock_enabled)
 	var report: Dictionary = TileClient.cache_report()
 	settings_panel.set_cache_report(int(report["files"]), int(report["bytes"]))
+	settings_panel.set_imagery_text(TileClient.imagery_override, TileClient.mapbox_ready())
+	if not _current_region.is_empty():
+		var estimate: Dictionary = TileClient.precache_estimate(_current_region, 2048)
+		settings_panel.set_precache_progress(
+			0, 0, "Estimate: %d tiles, ~%.0f MB for %s." % [
+				int(estimate["tiles"]), float(estimate["megabytes"]),
+				String(_current_region.get("display_name", "theatre")),
+			]
+		)
 	var focus := _focus_position()
 	var view_name: String = JET_CAMERA.Mode.keys()[_jet_view] if _flying_jet else View.keys()[_view]
 	settings_panel.set_status("%s · %s view\n%d m above ground" % [
@@ -2134,6 +2234,47 @@ func _on_weather_cycled() -> void:
 func _on_cache_cleared() -> void:
 	var removed: int = TileClient.clear_cache()
 	status_label.text = "MAP CACHE CLEARED: %d files removed" % removed
+	_refresh_settings()
+
+
+## auto -> gov -> mapbox -> auto. "gov" pins the free state mosaics even where
+## a token exists; "auto" follows the theatre catalog.
+func _on_imagery_cycled() -> void:
+	match TileClient.imagery_override:
+		"auto":
+			TileClient.imagery_override = "gov" if TileClient.mapbox_ready() else "mapbox"
+		"gov":
+			TileClient.imagery_override = "mapbox"
+		_:
+			TileClient.imagery_override = "auto"
+	TileClient.save_map_settings()
+	_refresh_settings()
+	status_label.text = "IMAGERY: %s" % TileClient.imagery_override
+
+
+func _on_precache_requested() -> void:
+	if _current_region.is_empty():
+		status_label.text = "PRE-DOWNLOAD: choose a theatre first"
+		return
+	var estimate: Dictionary = TileClient.precache_estimate(_current_region, 2048)
+	status_label.text = "PRE-DOWNLOAD: %d tiles, ~%.0f MB" % [
+		int(estimate["tiles"]), float(estimate["megabytes"])
+	]
+	TileClient.load_progress.connect(_on_precache_progress)
+	TileClient.precache_finished.connect(_on_precache_finished)
+	TileClient.precache_region(_current_region, 2048)
+
+
+func _on_precache_progress(done: int, total: int, message: String) -> void:
+	settings_panel.set_precache_progress(done, total, message)
+
+
+func _on_precache_finished(cancelled: bool) -> void:
+	if TileClient.load_progress.is_connected(_on_precache_progress):
+		TileClient.load_progress.disconnect(_on_precache_progress)
+	if TileClient.precache_finished.is_connected(_on_precache_finished):
+		TileClient.precache_finished.disconnect(_on_precache_finished)
+	settings_panel.set_precache_progress(0, 0, "Cancelled." if cancelled else "Theatre cached for offline flight.")
 	_refresh_settings()
 
 

@@ -22,7 +22,8 @@
       "spawn_longitude": 153.431,
       "spawn_yaw_degrees": -15.0,
       "buildings_dir": "res://data/regions/au_gold_coast_tweed_corridor/buildings",
-      "elevation_smoothing": 2
+      "elevation_smoothing": 2,
+      "elevation_server": "skadi"
     },
     {
       "id": "au_nsw_sydney_harbour",
@@ -45,7 +46,8 @@
       "spawn_longitude": 151.21,
       "spawn_yaw_degrees": -35.0,
       "buildings_dir": "res://data/regions/au_nsw_sydney_harbour/buildings",
-      "elevation_smoothing": 2
+      "elevation_smoothing": 2,
+      "elevation_server": "skadi"
     }
   ]
 }

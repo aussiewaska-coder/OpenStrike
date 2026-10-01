@@ -367,7 +367,7 @@ func _read_controls(delta: float) -> void:
 	var throttle_axis := 0.0
 	var boost_held := false
 	var gamepad := get_node_or_null("/root/GamepadInput")
-	if gamepad != null and gamepad.is_controller_ready():
+	if gamepad != null and gamepad.has_flight_input():
 		stick = gamepad.get_flight_vector()
 		rudder_axis = gamepad.get_rudder_axis()
 		throttle_axis = gamepad.get_jet_throttle_axis()
@@ -624,7 +624,7 @@ func _roll(delta: float) -> void:
 	var stick_y := 0.0
 	var brake_held := false
 	var gamepad := get_node_or_null("/root/GamepadInput")
-	if gamepad != null and gamepad.is_controller_ready():
+	if gamepad != null and gamepad.has_flight_input():
 		throttle_axis = gamepad.get_jet_throttle_axis()
 		rudder_axis = gamepad.get_rudder_axis()
 		stick_y = gamepad.get_flight_vector().y

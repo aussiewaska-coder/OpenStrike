@@ -151,3 +151,81 @@ the file in the GitHub web UI. Never paste PATs in chat; revoke after use.
 - `STREAM UNAVAILABLE` = terrain tiles need internet for uncached areas.
 - Controls: left stick pitch/roll, B/A throttle up/down (holds), D-pad
   views/zoom, RB track, R3 recenter/missile views, X hold = settings.
+
+## High-resolution map sources (2026-10-01 session)
+
+- `tile_client` imagery sources: `qld`/`nsw` (gov ArcGIS bbox exports) and
+  `mapbox` (Satellite XYZ tiles). Mapbox URL must be `/z/x/y@2x.png` — the
+  retina suffix leads the extension; `.png@2x` is a 404. Tiles arrive as JPEG
+  bytes whatever the extension says, so they decode through `_decode_image`.
+- Mapbox tiles are Web Mercator but the mesh UVs are linear lat/lon, so
+  `fetch_mapbox_image` resamples the mosaic (`_resample_mercator_to_latlon`).
+  `Image.set_data()` is a silent no-op in this engine build — write pixels
+  with `set_pixel`.
+- Zoom is chosen per request by `mapbox_zoom_for`: the sharpest zoom whose
+  512 px grid fits the requested pixel size (2.5 km chunk: z15 at 2048 px,
+  z16 at 4096). `MAPBOX_MAX_ZOOM = 17` (~0.6 m/px at -28°); deeper zooms only
+  return upscaled pixels and many times the tiles.
+- Token resolution order: `user://secrets.cfg [mapbox]token` (written by
+  nothing yet — Settings shows the hint), `OPENSTRIKE_MAPBOX_TOKEN`,
+  `user://mapbox_token.txt`, `/root/.mapbox_token`,
+  `/storage/emulated/0/Download/.mapbox_token`. NEVER commit or export a
+  token; `grep -rl "pk\.eyJ" --exclude-dir=.git .` must stay empty.
+- Device-level override lives in `user://map_settings.cfg`
+  (`[imagery] server=auto|gov|mapbox`), cycled from Settings → Storage; the
+  catalog stays on gov sources so a repo checkout needs no token.
+- Elevation: catalog `elevation_server` = `terrarium` | `skadi` (Copernicus
+  GLO-30 degree `.hgt.gz`, int16 BE 3601², cached raw as `skadi_*.hgt`).
+  Heightfield cache names carry the server suffix, so switching servers
+  refetches the grid once.
+- `precache_region(region, px)` walks the same chunk requests the terrain makes
+  in flight (Settings → Storage → PRE-DOWNLOAD, with estimate + cancel). It must
+  read every region key the same way `streamed_terrain.load_region` does — the
+  heightfield cache name includes `elevation_server`, so a pre-download that
+  defaults the server while the theatre asks for `skadi` fills a cache the game
+  never reads.
+- Building heights: `tools/backfill_building_heights.py` raises DEFAULT-height
+  records only (≤18.5 m), needs ≥14 m relief on flat ground (≤8 m ring spread),
+  ≥250 m² footprint on the 30 m grid; writes `"height_source": "dem"`. Pass
+  `--dsm roof.asc` (state LiDAR via `gdal_translate -of AAIGrid`) for real
+  per-building heights. Gold Coast +180 m max; Surfers towers already carry OSM
+  tags.
+
+## On-screen thumb sticks (2026-10-01)
+
+- `scripts/ui/thumb_stick.gd` + `thumb_controls.gd`: left stick pitches and
+  rolls, right stick looks, `THROTTLE +/−` are held at the bottom centre. The
+  base jumps to wherever the thumb lands, and the grab is held in `_input`, not
+  `_gui_input`, so a finger that slides off the corner keeps steering. Every
+  claimed event must be consumed: `main.gd:_unhandled_input` locks a ground
+  target on any press, which would otherwise fire under every drag.
+- Thumb vectors enter at the `GamepadInput` getters, never at the controllers.
+  The bigger deflection of pad-vs-stick wins, so a controller in use is not
+  fought over by a stray thumb. Anything reading sticks asks
+  `has_flight_input()` — `is_controller_ready()` is false on a phone with no
+  pad, which is the exact case the sticks exist for.
+- `set_thumb_controls(true)` clears the boot pause Android applies while waiting
+  for a pad (see `_clear_controller` and `requires_controller_attention`).
+  `main.gd` must call it before the attention check in `_ready`.
+- A stick applies its own 0.14 dead zone, then `GamepadInput` applies the
+  shared 0.18 one. Do not add a third.
+- Persisted at `user://ui_settings.cfg` `[controls] thumb_sticks`; with no
+  entry it follows `DisplayServer.is_touchscreen_available()`. Toggle:
+  Settings → Display → HUD → "Thumb controls".
+- Headless tests: `root.push_input(InputEventScreenTouch…)` does NOT reach a
+  node's `_input` — the display server emits its own synthetic touch instead.
+  Call `stick._input(event)` directly, the way `controller_mapper_test` feeds
+  `_gui_input`.
+- GDScript cannot infer a type from `ConfigFile.load_file()` or from an `or`
+  expression: `var e := config.load_file(p)` and `var b := x or y` are parse
+  errors. Annotate them `Error` and `bool`. (`ConfigFile` has `load`/`save`, not
+  `load_file` — the parse stage will not tell you.)
+- HUD overlays that panels can cover must re-check coverage from the covering
+  panel's own `visibility_changed`, never from a call bolted onto one code path.
+  v11 shipped the thumb sticks permanently invisible: `_update_thumb_visibility`
+  ran when the splash *opened* and nowhere when it closed — and because a hidden
+  stick ignores input, every press fell through to tap-to-lock as well.
+  `tests/thumb_visibility_test.gd` is the regression.
+- Tap-to-lock is off in controller-free mode (`_tap_lock_allowed`): a thumb
+  reaching for a control must not grab an orbit target. Settings → Display →
+  "Tap to lock target" restores it; the radar and the MFD still select contacts.

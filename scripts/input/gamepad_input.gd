@@ -22,6 +22,15 @@ const TRIGGER_DEAD_ZONE := 0.04
 const VECTORING_PRESS := 0.55
 const VECTORING_RELEASE := 0.40
 
+## On-screen thumb sticks report through here, so a touch-only pilot drives the
+## same vectors a physical pad does. The stick with the bigger deflection wins,
+## which means a pad in use is never fought over by a stray thumb.
+var thumb_controls_enabled := false
+var _thumb_flight := Vector2.ZERO
+var _thumb_aim := Vector2.ZERO
+var _thumb_throttle := 0.0
+var _thumb_free_look := false
+
 const ACTION_FLIGHT_LEFT := &"flight_left"
 const ACTION_FLIGHT_RIGHT := &"flight_right"
 const ACTION_FLIGHT_FORWARD := &"flight_forward"
@@ -128,6 +137,41 @@ func is_controller_ready() -> bool:
 	return active_device >= 0 and active_device in Input.get_connected_joypads()
 
 
+## True when something can actually fly the aircraft: a pad, or the thumb sticks
+## standing in for one. Controllers read this before pulling the stick vectors.
+func has_flight_input() -> bool:
+	return is_controller_ready() or thumb_controls_enabled
+
+
+func set_thumb_controls(enabled: bool) -> void:
+	thumb_controls_enabled = enabled
+	if not enabled:
+		set_thumb_input(Vector2.ZERO, Vector2.ZERO, 0.0)
+		set_thumb_free_look(false)
+		return
+	# Thumb sticks replace the controller the boot pause was waiting for.
+	if _paused_for_controller:
+		_paused_for_controller = false
+		get_tree().paused = _settings_open or (_tactical_open and _tactical_pauses)
+		controller_attention_changed.emit(false, "", "")
+
+
+func set_thumb_input(flight: Vector2, aim: Vector2, throttle: float) -> void:
+	_thumb_flight = flight if flight.length_squared() <= 1.0 else flight.normalized()
+	_thumb_aim = aim if aim.length_squared() <= 1.0 else aim.normalized()
+	_thumb_throttle = clampf(throttle, -1.0, 1.0)
+
+
+## The thumb stand-in for holding A: while it is down the right stick turns the
+## head instead of the helicopter's yaw and collective.
+func set_thumb_free_look(held: bool) -> void:
+	_thumb_free_look = held and thumb_controls_enabled
+
+
+static func _dominant(axis: Vector2, alternative: Vector2) -> Vector2:
+	return axis if axis.length_squared() >= alternative.length_squared() else alternative
+
+
 ## The menu and a disconnected controller independently keep flight paused.
 ## Reconnecting a pad must not resume flight underneath an open menu.
 func set_settings_open(is_open: bool) -> void:
@@ -136,23 +180,27 @@ func set_settings_open(is_open: bool) -> void:
 
 
 func get_flight_vector() -> Vector2:
-	if _settings_open or _tactical_open or not is_controller_ready():
+	if _settings_open or _tactical_open:
 		return Vector2.ZERO
-	var vector := Vector2(
-		binding_strength(ACTION_FLIGHT_RIGHT) - binding_strength(ACTION_FLIGHT_LEFT),
-		binding_strength(ACTION_FLIGHT_BACK) - binding_strength(ACTION_FLIGHT_FORWARD)
-	)
-	return apply_response_curve(apply_circular_deadzone(vector))
+	var axis := Vector2.ZERO
+	if is_controller_ready():
+		axis = Vector2(
+			binding_strength(ACTION_FLIGHT_RIGHT) - binding_strength(ACTION_FLIGHT_LEFT),
+			binding_strength(ACTION_FLIGHT_BACK) - binding_strength(ACTION_FLIGHT_FORWARD)
+		)
+	return apply_response_curve(apply_circular_deadzone(_dominant(axis, _thumb_flight)))
 
 
 func get_aim_vector() -> Vector2:
-	if _settings_open or _tactical_open or not is_controller_ready():
+	if _settings_open or _tactical_open:
 		return Vector2.ZERO
-	var vector := Vector2(
-		binding_strength(ACTION_AIM_RIGHT) - binding_strength(ACTION_AIM_LEFT),
-		binding_strength(ACTION_AIM_BACK) - binding_strength(ACTION_AIM_FORWARD)
-	)
-	return apply_response_curve(apply_circular_deadzone(vector))
+	var axis := Vector2.ZERO
+	if is_controller_ready():
+		axis = Vector2(
+			binding_strength(ACTION_AIM_RIGHT) - binding_strength(ACTION_AIM_LEFT),
+			binding_strength(ACTION_AIM_BACK) - binding_strength(ACTION_AIM_FORWARD)
+		)
+	return apply_response_curve(apply_circular_deadzone(_dominant(axis, _thumb_aim)))
 
 
 func get_raw_flight_vector() -> Vector2:
@@ -193,16 +241,23 @@ static func route_aim_input_to_flight(aim_input: Vector2, free_look_held: bool) 
 
 
 func is_free_look_held() -> bool:
-	return not _settings_open and not _tactical_open and is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
+	if _settings_open or _tactical_open:
+		return false
+	if _thumb_free_look:
+		return true
+	return is_controller_ready() and binding_strength(ACTION_FREE_LOOK) > 0.5
 
 
 ## B and A hold persistent throttle. They carry no other meaning in the jet --
 ## A is the helicopter's manual aim modifier and every jet reader of it is
 ## already gated on not flying the jet -- so neither needs a modifier.
 func get_jet_throttle_axis() -> float:
-	if _settings_open or _tactical_open or mapper_active or not is_controller_ready():
+	if _settings_open or _tactical_open or mapper_active:
 		return 0.0
-	return binding_strength(&"throttle_up") - binding_strength(&"throttle_down")
+	var axis := 0.0
+	if is_controller_ready():
+		axis = binding_strength(&"throttle_up") - binding_strength(&"throttle_down")
+	return axis if absf(axis) >= absf(_thumb_throttle) else _thumb_throttle
 
 
 ## Squeezing both rudder triggers engages the post-stall pitch envelope.
@@ -265,11 +320,21 @@ static func normalized_trigger(raw_value: float, rest_value: float) -> float:
 
 
 func requires_controller_attention() -> bool:
-	return not is_controller_ready() and (OS.get_name() == "Android" or _had_controller)
+	return not is_controller_ready() and not thumb_controls_enabled \
+		and (OS.get_name() == "Android" or _had_controller)
 
 
 func get_diagnostic_text() -> String:
 	if not is_controller_ready():
+		if thumb_controls_enabled:
+			# The Input monitor reads this: with no pad attached, the thumb
+			# vectors are the only live input worth showing.
+			return "THUMB STICKS\nL %+.2f %+.2f   R %+.2f %+.2f   THR %+.2f   LOOK %s" % [
+				_thumb_flight.x, _thumb_flight.y,
+				_thumb_aim.x, _thumb_aim.y,
+				_thumb_throttle,
+				"HELD" if _thumb_free_look else "-",
+			]
 		return "GAMEPAD: NOT CONNECTED"
 	var flight := get_flight_vector()
 	var aim := get_aim_vector()
@@ -367,7 +432,8 @@ func _clear_controller(disconnected_during_play: bool) -> void:
 	active_device_name = ""
 	active_device_guid = ""
 	connection_changed.emit(false, -1, "")
-	var must_pause := OS.get_name() == "Android" or disconnected_during_play or _had_controller
+	var must_pause := not thumb_controls_enabled \
+		and (OS.get_name() == "Android" or disconnected_during_play or _had_controller)
 	if must_pause:
 		_paused_for_controller = true
 		get_tree().paused = true

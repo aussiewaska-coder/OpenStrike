@@ -224,7 +224,7 @@ func _physics_process(delta: float) -> void:
 func _arcade_step(delta: float) -> void:
 	var flight := Vector2.ZERO
 	var right_stick := Vector2.ZERO
-	if GamepadInput.is_controller_ready():
+	if GamepadInput.has_flight_input():
 		flight = GamepadInput.get_flight_vector()
 		right_stick = GamepadInput.get_flight_yaw_collective_vector()
 	var sweep := orbit_input()
@@ -283,7 +283,7 @@ func _apply_arcade_altitude(right_stick: Vector2, delta: float) -> void:
 func _rotor_step(delta: float) -> void:
 	var cyclic := Vector2.ZERO
 	var pedals_collective := Vector2.ZERO
-	if GamepadInput.is_controller_ready():
+	if GamepadInput.has_flight_input():
 		cyclic = GamepadInput.get_flight_vector()
 		pedals_collective = GamepadInput.get_flight_yaw_collective_vector()
 

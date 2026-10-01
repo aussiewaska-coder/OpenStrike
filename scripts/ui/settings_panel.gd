@@ -10,12 +10,17 @@ signal quality_cycled
 signal time_cycled
 signal weather_cycled
 signal input_monitor_toggled(enabled: bool)
+signal thumb_controls_toggled(enabled: bool)
+signal tap_lock_toggled(enabled: bool)
 signal raid_restarted
 signal hostiles_toggled
 signal runway_start_toggled
 signal open_changed(is_open: bool)
 signal engine_volume_cycled
 signal weather_volume_cycled
+signal imagery_cycled
+signal precache_requested
+signal precache_cancelled
 
 const ACCENT := Color(0.40, 0.88, 0.79)
 const INK := Color(0.90, 0.94, 0.96)
@@ -28,6 +33,13 @@ var _theatre_box: VBoxContainer
 var _mode_button: Button
 var _aircraft_button: Button
 var _cache_label: Label
+var _imagery_button: Button
+var _token_label: Label
+var _precache_button: Button
+var _precache_cancel_button: Button
+var _precache_bar: ProgressBar
+var _precache_label: Label
+var _credits_label: Label
 var _quality_button: Button
 var _time_button: Button
 var _weather_button: Button
@@ -35,6 +47,8 @@ var _stats_label: Label
 var _engine_volume_button: Button
 var _weather_volume_button: Button
 var _monitor_button: CheckButton
+var _thumb_button: CheckButton
+var _tap_lock_button: CheckButton
 var _hostiles_button: Button
 var _runway_button: Button
 var _runway_card: VBoxContainer
@@ -163,13 +177,46 @@ func _ready() -> void:
 	_monitor_button.custom_minimum_size.y = 56
 	_monitor_button.toggled.connect(func(on: bool): input_monitor_toggled.emit(on))
 	hud.add_child(_monitor_button)
+	_thumb_button = CheckButton.new()
+	_thumb_button.text = "Thumb controls"
+	_thumb_button.custom_minimum_size.y = 56
+	_thumb_button.toggled.connect(func(on: bool): thumb_controls_toggled.emit(on))
+	hud.add_child(_thumb_button)
+	_tap_lock_button = CheckButton.new()
+	_tap_lock_button.text = "Tap to lock target"
+	_tap_lock_button.custom_minimum_size.y = 56
+	_tap_lock_button.toggled.connect(func(on: bool): tap_lock_toggled.emit(on))
+	hud.add_child(_tap_lock_button)
 
 	var cache := _card(_pages[3], "Downloaded maps", "Imagery and elevation stay available offline. Clearing the cache frees space; areas will download again when you fly there.")
 	_cache_label = _label("", ACCENT, 24)
 	cache.add_child(_cache_label)
 	cache.add_child(_button("Clear map cache", func(): cache_cleared.emit()))
+	var imagery := _card(_pages[3], "Imagery source",
+		"Satellite tiles sharpen the ground where the state mosaics soften. Needs a Mapbox token; without one the theatre falls back to the free government imagery.")
+	_imagery_button = _button("IMAGERY: GOVERNMENT", func(): imagery_cycled.emit())
+	imagery.add_child(_imagery_button)
+	_token_label = _label("", MUTED, 16)
+	imagery.add_child(_token_label)
+
+	var precache := _card(_pages[3], "Pre-download theatre",
+		"Fetches the whole theatre's imagery and elevation now so it never waits on the network mid-flight.")
+	_precache_label = _label("", MUTED, 16)
+	precache.add_child(_precache_label)
+	_precache_button = _button("PRE-DOWNLOAD (STANDARD)", func(): precache_requested.emit())
+	precache.add_child(_precache_button)
+	_precache_cancel_button = _button("CANCEL", func(): precache_cancelled.emit())
+	_precache_cancel_button.visible = false
+	precache.add_child(_precache_cancel_button)
+	_precache_bar = ProgressBar.new()
+	_precache_bar.custom_minimum_size.y = 18
+	_precache_bar.show_percentage = false
+	_precache_bar.visible = false
+	precache.add_child(_precache_bar)
+
 	var info := _card(_pages[3], "Location & map credits")
-	info.add_child(_label("Foreground location only. Coordinates are not saved.\nMap © OpenStreetMap contributors. Aerial © State of Queensland.", MUTED, 16))
+	_credits_label = _label("Foreground location only. Coordinates are not saved.\nMap © OpenStreetMap contributors. Aerial © State of Queensland.", MUTED, 16)
+	info.add_child(_credits_label)
 	_mapper = preload("res://scripts/ui/controller_mapper.gd").new()
 	_pages[4].add_child(_mapper)
 	_mapper.focus_layout_changed.connect(_refresh_focus_chain)
@@ -358,6 +405,14 @@ func set_quality_text(text: String) -> void:
 	_quality_button.text = text.trim_prefix("GRAPHICS: ")
 
 
+func set_thumb_controls_state(enabled: bool) -> void:
+	_thumb_button.set_pressed_no_signal(enabled)
+
+
+func set_tap_lock_state(enabled: bool) -> void:
+	_tap_lock_button.set_pressed_no_signal(enabled)
+
+
 func set_time_text(text: String) -> void:
 	_time_button.text = text.trim_prefix("TIME: ")
 
@@ -368,6 +423,31 @@ func set_weather_text(text: String) -> void:
 
 func set_cache_report(files: int, bytes: int) -> void:
 	_cache_label.text = "%.1f MB  ·  %d files" % [float(bytes) / 1048576.0, files]
+
+
+func set_imagery_text(source: String, has_token: bool) -> void:
+	match source:
+		"mapbox":
+			_imagery_button.text = "IMAGERY: MAPBOX SATELLITE"
+		"gov":
+			_imagery_button.text = "IMAGERY: GOVERNMENT"
+		_:
+			_imagery_button.text = "IMAGERY: AUTO (THEATRE DEFAULT)"
+	_token_label.text = "Mapbox token: %s" % ("stored" if has_token else "not set — add one with:  echo TOKEN > ~/.mapbox_token")
+	_credits_label.text = "Foreground location only. Coordinates are not saved.\nMap © OpenStreetMap contributors. Aerial © State of Queensland."
+	if source == "mapbox" or (source == "auto" and has_token):
+		_credits_label.text += "\nImagery © Mapbox © OpenStreetMap contributors."
+
+
+func set_precache_progress(done: int, total: int, message: String) -> void:
+	var running := total > 0 and done < total
+	_precache_bar.visible = running
+	_precache_cancel_button.visible = running
+	_precache_button.visible = not running
+	_precache_bar.max_value = maxi(total, 1)
+	_precache_bar.value = done
+	_precache_label.text = message if not message.is_empty() else (
+		"%d/%d tiles" % [done, total] if running else "Idle.")
 
 
 func set_region_text(text: String) -> void:
