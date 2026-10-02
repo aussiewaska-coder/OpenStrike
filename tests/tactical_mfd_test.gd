@@ -172,9 +172,13 @@ func _render(output: String) -> void:
 	var route := NAV.new()
 	route.add(Vector3(900, 0, -1400))
 	route.add(Vector3(2300, 0, -3200))
-	mfd.map.set_state(Vector3.ZERO, 0.45, [TRACKER.contact(1, TRACKER.Kind.AIR_JET, Vector3(-1600, 900, -1700), Vector3.ZERO, "BANDIT 01"), TRACKER.contact(2, TRACKER.Kind.GROUND_LAUNCHER, Vector3(1600, 0, 1800), Vector3.ZERO, "SAM 02")], 1, route)
+	mfd.map.set_state(Vector3.ZERO, 0.45, [TRACKER.contact(1, TRACKER.Kind.AIR_JET, Vector3(-1600, 900, -1700), Vector3.ZERO, "BANDIT 01"), TRACKER.contact(2, TRACKER.Kind.GROUND_LAUNCHER, Vector3(1600, 0, 1800), Vector3.ZERO, "SAM 02"), TRACKER.contact(3, TRACKER.Kind.GROUND_LAUNCHER, Vector3(2100, 0, 2200), Vector3.ZERO, "SAM 03")], 1, route)
 	mfd.open_panel()
 	mfd.map.set_range(5000)
+	# A tactical tap is the card a pilot actually reads before shooting, so the
+	# panel is photographed with one open rather than with its chrome empty.
+	mfd.map.select_at(mfd.map.world_to_screen(Vector2(-1600, -1700)))
+	check(mfd._card.visible and mfd._card_lines.text.contains("BANDIT 01"), "a tactical tap must open a card naming the track")
 	for viewport_size in [Vector2i(1280, 720), Vector2i(640, 360), Vector2i(360, 640)]:
 		root.content_scale_size = viewport_size
 		root.size = viewport_size
@@ -185,6 +189,18 @@ func _render(output: String) -> void:
 			await process_frame
 			await RenderingServer.frame_post_draw
 			check(root.get_texture().get_image().save_png("%s-%d-%d.png" % [output, viewport_size.x, style]) == OK, "MFD visual capture must save")
+		# Pull back to the density that merges the two launchers and photograph
+		# the other kind of card: a group report, with its own subject line.
+		mfd.map.set_range(20000)
+		mfd.map.select_at(mfd.map.world_to_screen(Vector2(1850, 2000)))
+		await process_frame
+		await RenderingServer.frame_post_draw
+		check(mfd._card.visible and mfd._card_lines.text.contains("2 TRACKS"), "a regional tap must open a group card, got %s" % mfd._card_lines.text)
+		check(root.get_texture().get_image().save_png("%s-%d-group.png" % [output, viewport_size.x]) == OK, "group card capture must save")
+		# Put the tactical selection back so every viewport's style frames show
+		# the same thing, rather than the last density's report leaking forward.
+		mfd.map.set_range(5000)
+		mfd.map.select_at(mfd.map.world_to_screen(Vector2(-1600, -1700)))
 	mfd.free()
 	var camera := Camera3D.new()
 	root.add_child(camera)

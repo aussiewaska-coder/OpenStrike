@@ -66,6 +66,10 @@ const ACTION_CAMERA_ORBIT_LEFT := &"camera_orbit_left"
 const ACTION_CAMERA_ORBIT_RIGHT := &"camera_orbit_right"
 const ACTION_RUDDER_LEFT := &"rudder_left"
 const ACTION_RUDDER_RIGHT := &"rudder_right"
+## The only two buttons the map lets through while it is open: Y closes it again,
+## and R3 means "put the camera back", which the battle map reads as north-up.
+## Nothing else carries a hold here, so releasing them stays silent.
+const MAP_BUTTON_ACTIONS: Array[StringName] = [ACTION_TACTICAL_MAP, ACTION_CAMERA_TRAVEL_TOGGLE]
 
 const BUTTON_ACTIONS: Array[StringName] = [
 	ACTION_TACTICAL_MAP,
@@ -109,7 +113,7 @@ func _process(_delta: float) -> void:
 		return
 	var now := Time.get_ticks_msec() / 1000.0
 	for action in BUTTON_ACTIONS:
-		if _tactical_open and action != ACTION_TACTICAL_MAP:
+		if _tactical_open and not MAP_BUTTON_ACTIONS.has(action):
 			_hold_started.erase(action)
 			_pressed_actions.erase(action)
 			continue
@@ -201,6 +205,41 @@ func get_aim_vector() -> Vector2:
 			binding_strength(ACTION_AIM_BACK) - binding_strength(ACTION_AIM_FORWARD)
 		)
 	return apply_response_curve(apply_circular_deadzone(_dominant(axis, _thumb_aim)))
+
+
+## The map borrows the sticks, but only while it is open. A stick that steers a
+## jet must never also steer the camera, so each of these reads as still with
+## the map closed and the flight getters keep their meaning with it open.
+func get_map_pan_vector() -> Vector2:
+	if _settings_open or not _tactical_open:
+		return Vector2.ZERO
+	var axis := Vector2.ZERO
+	if is_controller_ready():
+		axis = Vector2(
+			binding_strength(ACTION_FLIGHT_RIGHT) - binding_strength(ACTION_FLIGHT_LEFT),
+			binding_strength(ACTION_FLIGHT_BACK) - binding_strength(ACTION_FLIGHT_FORWARD)
+		)
+	return apply_response_curve(apply_circular_deadzone(_dominant(axis, _thumb_flight)))
+
+
+func get_map_look_vector() -> Vector2:
+	if _settings_open or not _tactical_open:
+		return Vector2.ZERO
+	var axis := Vector2.ZERO
+	if is_controller_ready():
+		axis = Vector2(
+			binding_strength(ACTION_AIM_RIGHT) - binding_strength(ACTION_AIM_LEFT),
+			binding_strength(ACTION_AIM_BACK) - binding_strength(ACTION_AIM_FORWARD)
+		)
+	return apply_response_curve(apply_circular_deadzone(_dominant(axis, _thumb_aim)))
+
+
+## Positive pulls the map in. The dpad has no analog travel, so a held direction
+## reads as a full rate and the map's own zoom smoothing does the rest.
+func get_map_zoom_axis() -> float:
+	if _settings_open or not _tactical_open or not is_controller_ready():
+		return 0.0
+	return clampf(binding_strength(ACTION_ZOOM_OUT) - binding_strength(ACTION_ZOOM_IN), -1.0, 1.0)
 
 
 func get_raw_flight_vector() -> Vector2:

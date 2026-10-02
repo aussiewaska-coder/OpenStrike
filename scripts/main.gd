@@ -121,6 +121,10 @@ const TACTICAL_NAV := preload("res://scripts/ui/tactical_navigation.gd")
 const WAYPOINT_HUD := preload("res://scripts/ui/waypoint_hud.gd")
 const THUMB_CONTROLS := preload("res://scripts/ui/thumb_controls.gd")
 const RUNWAYS := preload("res://scripts/world/runways.gd")
+const WAR_REGIONS := preload("res://scripts/war/war_regions.gd")
+const WAR_CONTROL := preload("res://scripts/war/war_control.gd")
+const WAR_OBJECTS := preload("res://scripts/war/war_objects.gd")
+const WAR_DIRECTOR := preload("res://scripts/war/war_director.gd")
 const STARTUP_PANEL := preload("res://scripts/ui/startup_panel.gd")
 ## Thumb sticks are the only way to fly without a gamepad, so the choice is
 ## worth keeping between runs. With no entry saved, the hardware decides.
@@ -196,6 +200,20 @@ var _startup: Control
 var _awaiting_startup := true
 var _pending_region := {}
 var _current_region := {}
+## The war over the ground the theatre draws: which districts the map is divided
+## into, and who holds them. RefCounted state rebuilt with the theatre, so opening
+## and closing the battle map does not re-derive the front.
+var _war_regions := WAR_REGIONS.new()
+var _war_control := WAR_CONTROL.new()
+## What the war is fought over, built from the world's own sources when a theatre
+## loads and refreshed off the live fields while the map is open. See
+## `scripts/war/war_objects.gd`: nothing here invents a position.
+var _war_objects := WAR_OBJECTS.new()
+## The campaign itself: the same two tables the map reads, run forward on its own
+## clock. It is never a per-frame caller -- `_process` hands it the frame time and it
+## answers with a tick every few seconds, with or without the battle map open and with
+## or without a pilot. See `scripts/war/war_director.gd`.
+var _war := WAR_DIRECTOR.new()
 var _runway_id := ""
 var _wreck_fire: Node3D
 var _threat_warning: Control
@@ -337,6 +355,7 @@ func _process(delta: float) -> void:
 		_wreck_fire.wind_mps = float(weather.current.get("wind_mps", 6.0))
 	_update_jet_audio(delta)
 	_update_enemy_combat(delta)
+	_update_war(delta)
 	_shot_frames += 1
 	if _shot_path != "" and _shot_frames == _shot_at_frame:
 		_save_shot_and_quit()
@@ -593,7 +612,7 @@ func _build_hud() -> void:
 	ui_layer.add_child(_waypoint_hud)
 	_tactical_mfd = TACTICAL_MFD.new()
 	ui_layer.add_child(_tactical_mfd)
-	_tactical_mfd.open_changed.connect(func(on: bool): GamepadInput.set_tactical_open(on, _tactical_mfd.pause_flight))
+	_tactical_mfd.open_changed.connect(_on_tactical_open_changed)
 	_tactical_mfd.contact_selected.connect(_select_map_contact)
 	_tactical_mfd.waypoint_requested.connect(_add_map_waypoint)
 	_tactical_mfd.route_skip_requested.connect(func(): _navigation.skip(); _sync_tactical_state())
@@ -797,6 +816,7 @@ func _update_targeting(delta: float, vehicle: Node3D, nose: Vector3, heading: fl
 		if _map_layers_timer >= 1.0:
 			_map_layers_timer = 0.0
 			_tactical_mfd.map.set_layers(streamed_terrain.tactical_map_layers())
+			_bind_strategic_state()
 	# The weapons need no wiring of their own: cannon_weapon.aim already reads
 	# `_orbit_target_point`, which already reads `_target_point`. Keeping those
 	# two in step with the lock is the whole integration.
@@ -1080,6 +1100,8 @@ func _load_streamed_region(region: Dictionary) -> void:
 		_strike_fire.clear()
 	if _tactical_mfd != null:
 		_tactical_mfd.map.set_layers({})
+		_tactical_mfd.map.set_war(null, null)
+		_tactical_mfd.map.set_objects(null)
 	_tracker.clear_lock()
 	launcher_field.clear()
 	enemy_squadron.clear()
@@ -1103,6 +1125,30 @@ func _load_streamed_region(region: Dictionary) -> void:
 	# catalog coordinate.
 	streamed_terrain.randomize_spawn()
 	_active_terrain = streamed_terrain
+	# The war layers are only as good as the theatre's own regions. A theatre with
+	# none authored gets an honestly empty layer rather than another coastline
+	# drawn over it, which is what the toggle panel reports as · NONE.
+	var authored := _war_regions.load_theatre(region)
+	if authored:
+		_war_control.setup(_war_regions)
+	# The objects are built whether or not the theatre has districts: they are real
+	# places either way, and ground no district claims is reported as no district
+	# rather than being given one. Nothing here has a position the war layer made up
+	# -- an airfield is the runway table, a site is the launcher layout, a tower is
+	# the model the terrain put on its footprint.
+	var populated := _war_objects.load_theatre(
+		region, _war_regions if authored else null, _war_control if authored else null)
+	# The campaign is seated on the same two tables the map reads, and a theatre with
+	# no districts of its own gets a director that refuses to start rather than one
+	# fighting over the previous theatre's ground. Without objects it still runs: the
+	# line moves over districts that have nothing standing in them.
+	var regions_ref: RefCounted = _war_regions if authored else null
+	var control_ref: RefCounted = _war_control if authored else null
+	var objects_ref: RefCounted = _war_objects if populated else null
+	_war.setup(control_ref, regions_ref, objects_ref)
+	if _tactical_mfd != null:
+		_tactical_mfd.map.set_war(regions_ref, control_ref)
+		_tactical_mfd.map.set_objects(objects_ref)
 	# Both aircraft need the terrain: whichever is parked still has to know the
 	# theatre's extent so it is not fenced into the wrong one when swapped to.
 	jet_anchor.set_terrain(streamed_terrain)
@@ -2009,6 +2055,8 @@ func _on_gamepad_action_pressed(action: StringName) -> void:
 		_toggle_tactical_map()
 		return
 	if _tactical_mfd != null and _tactical_mfd.visible:
+		if action == GamepadInput.ACTION_CAMERA_TRAVEL_TOGGLE:
+			_tactical_mfd.map.reset_view()
 		return
 	if settings_panel != null and settings_panel.visible:
 		return
@@ -2672,6 +2720,52 @@ func _toggle_tactical_map() -> void:
 		_sync_tactical_state()
 		_tactical_mfd.map.set_layers(streamed_terrain.tactical_map_layers())
 		_tactical_mfd.open_panel()
+
+
+## The map owns the controller buttons and usually the pause, so its own report
+## of opening is what the input layer has to hear it from -- and opening is also
+## the first frame the strategic layer needs its live answers in.
+func _on_tactical_open_changed(is_open: bool) -> void:
+	GamepadInput.set_tactical_open(is_open, _tactical_mfd.pause_flight)
+	if is_open:
+		_bind_strategic_state()
+
+
+## The campaign's own clock: seconds rather than frames, and it keeps running with the
+## battle map shut and with nobody in the cockpit at all. Two things pass from the flying
+## world into it, both at a tick boundary rather than every frame -- which launchers are
+## still standing at the sites the air is fought over, and where the aircraft is. A
+## sighting is intelligence and nothing else, which is the whole seam combat systems have
+## with this module. Both are collected after the tick that asked for them and so are read
+## by the next one: a war on an eight second clock is not late by one.
+func _update_war(delta: float) -> void:
+	if not _war.advance(delta):
+		return
+	_bind_launcher_state()
+	var vehicle := _vehicle()
+	if vehicle != null:
+		_war.report_sighting(
+			WAR_CONTROL.FRIENDLY,
+			Vector2(vehicle.global_position.x, vehicle.global_position.z), 1.0)
+
+
+## What is still standing at the launcher sites: the field's own report, handed over as
+## plain dictionaries, which is why the war may ask for it on its own clock.
+func _bind_launcher_state() -> void:
+	if not _war_objects.is_loaded() or launcher_field == null:
+		return
+	_war_objects.bind_launchers(launcher_field.launcher_positions() if _hostiles_enabled else [])
+
+
+## The other question the strategic layer asks: how much of each landmark is left. That
+## answer is a ray against the streaming collision world, and the index it is asked of is
+## only held while the map is up -- keeping it past that keeps a chunk alive after the
+## scene that owns it is gone, which the startup test reads as a leak at exit.
+func _bind_strategic_state() -> void:
+	_bind_launcher_state()
+	if not _war_objects.is_loaded():
+		return
+	_war_objects.bind_structures(_building_hit_index, _building_damage)
 
 
 func _sync_tactical_state() -> void:

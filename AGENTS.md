@@ -229,3 +229,413 @@ the file in the GitHub web UI. Never paste PATs in chat; revoke after use.
 - Tap-to-lock is off in controller-free mode (`_tap_lock_allowed`): a thumb
   reaching for a control must not grab an orbit target. Settings → Display →
   "Tap to lock target" restores it; the radar and the MFD still select contacts.
+
+## Building heights (2026-10-01)
+
+- The OSM extract writes a fallback when a way carries neither `height` nor
+  `building:levels`, and three quarters of a theatre is that fallback: 78.7% of
+  Sydney Harbour stood at exactly 7.5 m, so suburbs rendered as one flat plane
+  of rooftops. `tools/infer_building_heights.py` restates every fallback height
+  from the footprint's own area, the tagged heights nearby, and a jitter hashed
+  from `osm_id`. Sydney went from 3 distinct heights among guesses to 148; the
+  modal share is now 8.6%.
+- **Provenance is readable off the stored number**, which is why no re-fetch
+  was needed: the builder clamps `building:levels` to multiples of 3.15 m, so
+  anything that is not exactly 7.5/11.0/18.0 came from a real tag and is used as
+  reference data, never overwritten.
+- A big footprint is not a tall building. Footprints over 8000 m2 with no tower
+  nearby are warehouses, hangars and one mistagged airfield outline, and are
+  capped at 9 m (7 m over 40,000 m2) — otherwise a 213,000 m2 way at Bankstown
+  becomes a 20 m wall across three suburbs.
+- Inference is per *theatre*, indexed before anything is rewritten: a CBD
+  block's reference towers live in the chunk file to the east, not beside it in
+  its own file.
+- Idempotent by chunk marker `height_model`. Re-running is a no-op. Bumping the
+  model version treats the previous pass's output as reference data, so
+  `git checkout data/regions` first.
+- `tests/building_height_test.gd` asserts against the shipped JSON: no single
+  height may own more than 40% of a sampled theatre, and a theatre must contain
+  both something over 60 m and something under 4 m. It exists because the
+  render path is perfectly happy drawing a carpet of boxes and notices nothing.
+- `tools/check_building_heights.gd` is the pixel half: it builds the real
+  `BuildingMesh` for a set of chunk JSONs and photographs it, so a before/after
+  pair is two directories of the same files (`git show HEAD:<path>` gives the
+  old one). `--range=0.16` pulls the camera in far enough to read roof lines.
+- Building meshes are **not** cached on device — only imagery and heightfields
+  are, under `user://map_cache`. A new APK shows data changes immediately.
+
+## Battle map camera (2026-10-01, Battle Map V2 phase 1)
+
+- The map's camera lives in `scripts/battle_map/battle_map_view.gd`, its input in
+  `battle_map_gestures.gd`; `tactical_map_canvas.gd` composes them and draws
+  symbols through the same projection `shaders/tactical_map.gdshader` uses for
+  the terrain. Keep that split — the canvas must not grow maths of its own.
+- Pinhole over the ground plane, in "map space" (metres right/down, before
+  bearing rotation): `depth = L − my·sin t`,
+  `screen = size/2 + (mx, my·cos t)·F/depth`, `F = span/2/PERSPECTIVE`,
+  `L = range/PERSPECTIVE`, `PERSPECTIVE = tan(fov_y/2) = 0.268`. **At tilt 0 this
+  is algebraically identical to the old flat map.** Preserve that identity or the
+  existing picking/anchoring assertions break.
+- `bearing` is the camera heading: increasing turns right, which carries world
+  content counter-clockwise on screen. Ownship nose draws at
+  `sin(heading − bearing), −cos(heading − bearing)`.
+- Two opposite contracts, and mixing them is the classic drift bug: a **drag or
+  pinch grabs the ground** (`rotate_by(−twist)`, `pin_world`), a **stick, wheel or
+  two-finger lean looks at it** (`pan_pixels` moves the viewpoint east when pushed
+  right; the stick spins `+look.x`). Both read natural; each has one direction.
+- Tilt caps at `TILT_MAX = PI/3` and may never invert: `map_offset_at_screen`
+  returns `INF` above the horizon, so every projected point needs an
+  `is_finite()` guard before it reaches `draw_rect`/`draw_polygon` (an INF
+  vertex silently drops the whole polygon).
+- Two-finger gesture = spread→zoom, inter-finger angle→spin, midpoint **vertical
+  travel since the previous sample**→lean. `_pinch_point` stays fixed at the
+  press midpoint and the grabbed ground is re-pinned there every event: that is
+  what makes a vertical pair drag tilt *instead of* panning. Measuring travel
+  from the press tilts harder every frame.
+- `set_range` / `pan_pixels` are immediate; smoothness comes from fling inertia
+  and the 0.4–1.0 s `begin_glide` focus animation (`FOCUS_MIN/MAX_SECONDS`).
+  Existing tests assert instant range semantics — do not make zoom smoothing the
+  default. `animate_range()` is the opt-in.
+- The canvas keeps `centre`, `range_m`, `bearing`, `tilt`, `follow_player` as
+  property proxies onto the view so `tactical_mfd_test.gd` and
+  `tactical_places_test.gd` pass untouched. `_sync_viewport()` runs at the top of
+  every geometry entry point because those tests set `map.size` directly and call
+  methods without advancing a frame.
+- Controller: `MAP_BUTTON_ACTIONS` (Y and R3) is the only allow-list that reaches
+  `action_pressed` while the map is open, so no weapon or target button can fire
+  through the panel. `get_map_pan_vector/get_map_look_vector/get_map_zoom_axis`
+  return ZERO unless `_tactical_open`; `get_flight_vector` returns ZERO while it
+  is open. The sticks change owner, they never share. R3 = `reset_view()`
+  (north-up, overhead, ownship) and `main.gd` routes it before the map-visible
+  early return.
+- Android synthesises mouse events beside its touches; the 500 ms
+  `MOUSE_BLOCK_MILLISECONDS` in the gesture module stops the map panning twice
+  over. A double click's second *release* must not also emit `tapped`
+  (`_mouse_double`) or flying onto a contact would drop a waypoint under it.
+- `tactical_map.gdshader` is never compiled headless — a broken shader ships
+  silently. Pixel check: `xvfb-run -a -s "-screen 0 900x600x24" $GODOT_BIN --path .
+  --rendering-driver opengl3 --script tools/check_battle_map.gd -- --out=/tmp/bm`
+  (llvmpipe works here). It renders every camera state and fails if a frame is
+  empty. `flat` is reserved in GLSL, so name the level surface something else.
+  Terrain relief is weighted by `sin(tilt)` so a top-down view stays pixel-equal
+  to the CPU markers.
+- New tests: `battle_map_view_test.gd` (projection round-trip, limits, anchoring,
+  inertia, glide), `battle_map_gestures_test.gd` (every finger and mouse gesture),
+  `battle_map_controller_test.gd` (production routing).
+- Pre-existing suite flake, nothing to do with the map: any test that
+  instantiates `main.tscn` can exit with
+  `ERROR: 1 resources still in use at exit` naming
+  `assets/audio/jet_engine_loop.ogg::OggPacketSequence` (seen ~20-30% of runs on
+  `jet_audio_runtime`, `thumb_visibility` and `battle_map_controller`). Every
+  check passed and the PASS line printed first. Stopping the player, nulling the
+  stream and quitting a frame late were all measured and none of them fix it, so
+  do not add a teardown workaround — re-run the single test before chasing it.
+  `--verbose` prints which resource; that is how to tell this apart from a real
+  leak.
+
+## Battle map semantics (2026-10-02, Battle Map V2 phase 2)
+
+- Zooming has to change what the map *says*, not how big its symbols are. Three
+  densities -- THEATRE, REGIONAL, TACTICAL -- each with its own information set,
+  in `scripts/battle_map/battle_map_layers.gd` (the density, the layer table and
+  the persisted toggles) and `battle_map_markers.gd` (what to draw at each). The
+  canvas composes both and owns no clustering maths of its own.
+- Densities change on **hysteresis**, not thresholds: `TACTICAL_ENTER 6500` /
+  `TACTICAL_EXIT 8000`, `REGIONAL_ENTER 24000` / `REGIONAL_EXIT 29000`. A single
+  boundary makes the map flicker between two reports on consecutive frames of one
+  pinch. Layer fades run at `FADE_RATE` toward the alpha the density asks for.
+- Grouping is a property of the **ground**, not the camera: contacts are bucketed
+  into world-aligned cells (`CELL_METRES`) and adjacent buckets merge by
+  union-find while their centroids are within `cell * MERGE_FRACTION`. A cache
+  signature of handles, rounded positions and velocities gates the rebuild, so a
+  pan costs nothing and the same formation keeps its number as the map moves.
+- `MIN_GROUP` is 2 at **every** density: a lone track stays itself. Theatre was
+  once allowed to wrap a singleton in a report so it "would not vanish", which
+  produced `GROUND GROUP 1 · 1` over a named SAM site — an individual is drawn
+  and tappable at 40 km exactly as it is at 2 km, so nothing is lost.
+- Group records are **pooled and reused**, which makes aliasing the failure mode
+  to know: a record is free only when its count is zero *and* no cell is still
+  `registered` to it. Every live record is zeroed at the top of a rebuild, so
+  counting alone hands one formation's record to two markers -- the symptom was a
+  theatre view double-counting seven tracks as ten.
+- A headless `SceneTree` test never runs `_draw`, so nothing rebuilds the
+  clusters by itself: call `map.markers()` before reading
+  `map.cluster.live_groups()`, and copy `handles_of(group)` out *before* flying
+  in, because the glide rewrites the pooled record.
+- **No map-only target identity.** A group carries the tracker's own handles; a
+  group tap selects and reports but never locks; `ASSIGN` emits the same
+  `contact_selected` handle a tactical tap would, which reaches the weapon through
+  `main._select_map_contact`. `FLY TO` ends inside the tactical band so the
+  members become individually tappable -- the same contract as a double tap.
+- The selection card prints only fields the tracker can answer. There is no
+  track-confidence or last-update field anywhere in `target_tracker.gd`, so the
+  card does not have one either; an MFD that guesses is worse than one that says
+  nothing. Range is **ground** range, with the wasted altitude printed beside it
+  rather than folded into the number, so `RNG` and `ASSIGN` can never disagree.
+- The card refreshes at 4 Hz (`CARD_SECONDS`), not per frame, and clears when its
+  subject is destroyed or the panel closes. War layers with no intelligence
+  behind them are shown **disabled and labelled `· NONE`** rather than faked; the
+  Layers section sits at the head of the rail because a phone landscape shows two
+  of its twenty-odd rows and clutter is the reason to open it.
+- `tools/check_battle_map.gd` photographs the same six tracks at each density and
+  asserts the *report* changes: theatre says `AIR GROUP 1 of 6`, regional says
+  `AIR GROUP 1 of 5, SHEET`, tactical names all six. Frames are also compared
+  pixel-wise so a scale change cannot pass as a information change.
+- Tests: `battle_map_layers_test.gd` (density hysteresis, layer table, persistence),
+  `battle_map_markers_test.gd` (clustering, labels, cache, group picking),
+  `battle_map_zoom_test.gd` (what each density draws and taps),
+  `battle_map_card_test.gd` (card fields, refresh cadence, layer rail).
+
+## Battle map regions and the front (2026-10-02, Battle Map V2 phase 3)
+
+- Three modules, one direction of dependency: `scripts/war/war_regions.gd` (where
+  the districts are), `scripts/war/war_control.gd` (who holds them, and the front
+  that follows), `scripts/battle_map/battle_map_territory.gd` (what that looks
+  like). The renderer holds no camera and no facts; the geography holds no
+  ownership -- so Phase 5's WarDirector can replace `war_control`'s seeds with a
+  simulation without touching either of the other two.
+- No honeycomb: 32 districts from the coastline, the Broadwater, the river lines,
+  the escarpment and the McPherson Range, named for places `map_places.gd` already
+  knows. They are authored as **one shared lattice** (8 rows × 7 cells,
+  `GRID`/`LATS`/`BORDER`/`SHORE` in `war_regions.gd`) so neighbours repeat the same
+  corners and their common edge is identical to the metre. Gaps are impossible by
+  construction, which is what lets the front be derived rather than maintained.
+- Region polygons are world metres from `MAP_TILES.world_of` -- centred on zero,
+  ±`world_size_m`/2 at the edges -- while the lattice tables are absolute
+  lat/lon. `load_theatre()` clears **first** and then validates the theatre id, the
+  centre keys and the bounds, so an unauthored theatre is refused and leaves no
+  districts seated behind it: `scripts/war/war_director.gd` validates whatever
+  tables it is handed, so a stale lattice is a campaign fighting over ground the
+  world no longer contains. A second corridor needs its own authored grid.
+- The front is data, not art: `front()` returns each shared segment whose two
+  owners are not on the same side, with `kind` FRONT or CONTACT, a midpoint and a
+  unit pressure normal pointing at the weaker hold; cached, invalidated by
+  `set_owner`, and asserted in `war_control_test.gd` to move and to restore exactly.
+  A CONTACT edge is drawn thin with no chevron -- the hatch already says that
+  district is unsettled.
+- Contested ground is **both claims at once**: two hatch families in world space,
+  blue and red, placed by the same point-in-polygon rule the geography uses, over a
+  thinner wash than a held district. Fills cap at alpha `WASH` 0.17 (contested
+  0.07) because an overlay that hides the imagery is a choropleth, not a command
+  map; the render check measures the imagery's detail before and after.
+- `battle_map_layers.gd` gained a runtime source report (`set_source`/`has_source`)
+  and `load_settings()` now reads **every** layer, so a toggle left alone while a
+  layer was empty survives until its data arrives instead of being silently reset.
+  `main.gd` calls `_tactical_mfd.map.set_war(regions, control)` -- or two nulls for
+  a theatre with nothing authored -- beside the layer handover.
+- Gotcha: `_visible_ground()` used to clamp with `Rect2(-half, half)`, which is a
+  position **and a size**, so the theatre's box ended at its own centre and every
+  cull dropped the ground east and south of it. A `Rect2` is pos+extent, and its
+  printed `S:` is the size rather than the end corner -- print `.end` when a
+  culling test disagrees with what you think the box covers. It hid because the
+  flat default camera draws the screen-aligned grid instead of the ground grid
+  this box feeds; `battle_map_zoom_test.gd` now asserts the far side of a theatre
+  counts as visible.
+- Tests: `war_regions_test.gd` (coverage sampled between lattice lines: no gaps, no
+  overlaps; one ring per district; mutual adjacency with shared vertices; every
+  gazetteer place inside its namesake district; the refusal for Sydney),
+  `war_control_test.gd` (every field the brief's `RegionState` lists, the measures
+  among them as ratios, the derived front, `set_owner` moving it and restoring it),
+  and `battle_map_zoom_test.gd`'s new sections (the war arriving makes Territory
+  switchable and gives it fills, hatch, chevrons and contact edges; the layer fades
+  out below tactical; taking the war away makes the toggle refuse again).
+- `tools/check_battle_map_terrain.gd` photographs the same camera with the overlay
+  on and off and asserts the war is visible, the terrain's own detail survives it,
+  the hatch and chevrons are in the batch, and switching the layer off returns the
+  map that shipped before it.
+
+## Strategic objects on the map (2026-10-02, Battle Map V2 phase 4)
+
+- `scripts/war/war_objects.gd` builds the registry out of sources that exist for
+  their own sake, and nothing else: **airfields from `runways.gd`** (one object per
+  aerodrome, carrying its own authored strips, headings and lengths at the ARP the
+  airport table publishes), **SAM sites from `launcher_layout.gd`** (the same layout
+  `launcher_field.gd` scatters from, so a site is where hostiles actually spawn and
+  its faction is the enemy's whatever the districts say), **landmarks from
+  `hero_towers.gd`** (at the lat/lon the terrain places them). Six of the brief's
+  nine types have nothing in this world to correspond to, so they are **declared and
+  left unpopulated** and the layer reports `· NONE` rather than drawing an estimate.
+- No duplicate target identity: strategic ids start at `FIRST_ID = 300000`, above the
+  launcher (1+), drone (100000+) and jet (200000+) bands, because the card shows a
+  tracker handle for a site that has one. A site carries the launcher field's **own
+  entity ids** in `handles`; `tactical_map_canvas.select_at` asks contacts first, so a
+  live launcher under the finger is what a tap gives, and `ASSIGN TARGET` routes
+  through `contact_selected` into `main._select_map_contact` and the real tracker.
+  Airfields and towers are not shootable: their card refuses `ASSIGN` **in words**
+  (`NO LIVE TRACK`) instead of locking something that does not exist.
+- Every derived field has an owner: `region_id` from `war_regions.region_at`,
+  `intel_confidence` as that district's `intel_level`, `strategic_value` as a per-type
+  `WEIGHT` scaled by the district's authored value, `source` naming the file the row
+  came from. Ground outside the district lattice gets an empty `region_id` and the
+  middle of the scale, not a made-up district.
+- The two live bindings are the only state that changes by itself.
+  `bind_launchers(positions)` matches the field's reports to a site by the name prefix
+  it gives its own clusters; `bind_structures(hit_index, damage)` fires the real
+  vertical ray at the landmark's coordinate and measures what comes back against
+  `BuildingDamageSystem.SMOKE_THRESHOLD` (half = smoking, twice = nothing standing).
+  A chunk that is not streamed answers with nothing, and the object says
+  `streamed: false` and the card reads `FOOTPRINT NOT STREAMED` rather than claiming
+  damage. `main.gd` runs both on map open and at the 1 Hz layer refresh, never per
+  frame.
+- Gotcha: `DAMAGED` was unreachable at this theatre's launcher density. Health was
+  live-over-planned and a cluster holds one launcher, so the ratio could only be 1.0
+  or 0.0. A site is now measured against `detail.strongest` -- the most launchers ever
+  seen standing at it -- which is what makes "1 LAUNCHER OF 2" a state rather than a
+  sentence.
+- `UNCONFIRMED` is a real epistemic state, not a colour: a site the layout puts there
+  that has never reported in is drawn at `STRATEGY.UNCONFIRMED` 0.38 of the layer's
+  alpha, with a plain cross instead of its triangle, and is still selectable because
+  the card is exactly where "nothing seen there" belongs.
+- `scripts/battle_map/battle_map_strategy.gd` holds no camera and no facts: the canvas
+  hands it its own projection and `_visible_ground()`. An airfield's **pavement is in
+  world metres**, projected like any other ground line, so the map is the only place
+  the brief's "objects must correspond to actual world locations" can be measured --
+  the run check asserts the drawn strip is as long in pixels as the runway is in
+  metres at the map's scale. Glyphs stay upright: a symbol is a report, not a decal.
+- The density rule drops **names, not objects** (`levels: [0, 1, 2]`): the planning
+  loop wants the pilot to fly *into* a site and keep seeing what it is. Below
+  `DRAWN_VALUE` 0.3 nothing is symbolled at all and at theatre range only
+  `THEATRE_LABEL_VALUE` 0.6 and above is named, which is what keeps hundreds of
+  entities usable without a special case.
+- Selection seam: canvas `signal strategic_selected(id)` + `set_objects(registry)`,
+  `strategic_object(id)` for the card's live re-read, `focus_object` for FLY TO. The
+  MFD card renders `COOLANGATTA AIRPORT · AIRBASE · FRIENDLY`, `1 STRIP · 14 2492 m ·
+  HDG 140°` (the strip's own designator, its authored length and its heading), the
+  ARP's LAT/LON, the holding district and the `source` line.
+- Tests: `war_objects_test.gd` (every row traces to its source -- ARP lat/lon,
+  `SITES.clusters_for` centres, hero lat/lon, strip ends against `RUNWAYS.threshold_latlon`;
+  the §9 field set, id bands, a 1 m coordinate round trip, value bounded by `WEIGHT`,
+  confidence equal to the district's `intel_level`; the launcher lifecycle INTACT →
+  DAMAGED → DESTROYED → UNCONFIRMED; structure binding through the **real** damage
+  system including the unstreamed answer; Sydney with no geography), and
+  `battle_map_strategy_test.gd` (the layer coming online, symbols drawn exactly at
+  `world_to_screen`, red/blue by faction, culling and the value floor, a tap resolving
+  to contact-vs-object priority, the card's exact text, ASSIGN routing to the tracker's
+  `[21]`, and a theatre with no objects refusing its own toggle).
+- `tools/check_battle_map_terrain.gd`'s strategic pass is where the brief's "objects must
+  correspond to actual world locations" is answered in pixels: the drawn OOL runway
+  measures the authored 2 492 m at the map's own scale, every symbol sits within a pixel
+  of `world_to_screen` of its record, the theatre names only what is both confirmed and
+  above the labelling threshold (one of ten), and a tap on `CITY NORTH SITE` reaches the
+  registry's own row with its `source` and district -- on an object the exercise's own
+  tracks stay off of, because the corridor's gazetteer puts its COOLANGATTA AIRPORT
+  label on the ARP to the metre and a live track standing there must win the tap, which
+  the same pass asserts as the priority branch. Gotcha for any future single-glyph pixel
+  check: `_changed()` is a *fraction of the frame*, which is right for a theatre-wide
+  overlay (0.65 for territory, 0.017 for ten objects) and says nothing useful for one
+  glyph after a lean (~0.001). `_painted(one, two, at, radius)` counts the differing
+  samples in the symbol's own neighbourhood instead -- and dark backing over dark imagery
+  never crosses the 0.06 RGB threshold, so for a single symbol the *geometric* assertions
+  (drawn point within a pixel of `world_to_screen`, still tappable through the tilt) are
+  what carry the claim and the pixel count only proves it reached the screen.
+
+## The war director (2026-10-02, Battle Map V2 phase 5)
+
+- `scripts/war/war_director.gd` is §13's data half and nothing more: persistent region
+  state, air control, ground control, strategic ticks, ground battles, facility damage and
+  repair. It owns no rendering — it reads no node, camera or canvas item, and
+  `main.gd._update_war(delta)` only asks `advance(delta)`, which is a lookup plus one
+  addition until the eight-second clock rolls over. BattleMap displays what
+  `war_control`/`war_objects` hold; the director writes those two and no third thing. Full
+  write-up: `docs/2026-10-02-battle-map-war-director.md`.
+- One tick is seven stages in a fixed order — `_gather, _operate, _air, _fight, _reinforce,
+  _settle, _publish` — and the order is the argument: evidence is credited and decays first,
+  the fields work out what can fly before the air is computed, the air is computed before
+  anyone attacks across it, the fighting decides who is in contact (which is what
+  reinforcement may not thin), and only once the ground has moved is the map told.
+- **A strategic tick costs about two milliseconds** (200 ticks of the corridor: 1.75 min,
+  1.97 median, 2.07 p90, 3.64 worst) with 32 districts, ten objects, six sites and their
+  launchers bound. §14's no-per-frame rule is satisfied by the tick existing; do not
+  "optimise" it by caching arithmetic, and do not move any of it into `_process`.
+- Gotcha: **a refusal must clear, not keep.** `war_director.setup` and
+  `war_regions.load_theatre` both validate what they are handed and both now empty their
+  own tables *first*, because a caller that survives a refusal keeps whatever was seated
+  before it -- and the only thing that ever reads a geography is a campaign seated on it.
+  `main.gd._load_streamed_region` hands the director the same nulls it hands the map for an
+  unauthored theatre, so the war refuses to start rather than fighting over the last
+  theatre's ground. Related: `advance()` returns `false` until `setup` has succeeded, or an
+  unseated war ticks every frame forever.
+- Gotcha, and the phase's real lesson: **ownership is a feedback loop.** Deriving a
+  district's owner from the *ratio* of the two sides' presence made one hot corridor
+  district cross the contested boundary 62 times in 200 ticks — reporting it taken changes
+  who attacks it, which changes whether it is held, which changes the report. What fixed it,
+  in this order: presence-weighted balance plus `OWNED_MIN 0.25` (both sides standing in
+  strength ⇒ contested whatever the balance says), `OWNED_KEEP 0.10` hysteresis on leaving
+  that state, and `SETTLE_TICKS 3` so a new owner must survive its own first three ticks.
+  Final run: 37 announcements over 12 districts, busiest (`tweed_heads`) 11 — one move every
+  18 ticks. `SETTLE_TICKS` delays the owner and nothing else; presences, balances and fights
+  keep moving on all three ticks.
+- Gotcha: a stalemate can be *too expensive* rather than too quiet. At
+  `SUPPLY_UPKEEP 0.006` both pools pinned to the floor and ownership froze from tick 20 to
+  200 — a photograph of a front, which is the same failure as a landslide in the other
+  direction. Halving the standing cost to 0.002 is what made the front move again; the floor
+  stays 0.5 on purpose so an exhausted side fights at about two-thirds tempo instead of
+  stopping the war.
+- Gotcha: `damage_facility()` queues into the facility's `wear` and the *tick* applies it.
+  Reading `facility(id)` straight after the call returns damage 0 and looks like a refused
+  hit. A 0.35 hit reads 0.329 with five of eight parked on the next tick, `DAMAGED` until
+  tick 16, whole with its full complement at tick 29 — §10's "no field ended by one bomb".
+- Gotcha: `registry.bind_launchers()` matches on `site + " "` as a name *prefix*, so a
+  probe that invents launcher names binds nothing, silently produces zero air denial, and
+  reports a misleadingly blue campaign. Name them after the site, as the launcher field
+  does. Same trap in the data: the corridor's airbase type is `Type.AIRBASE`, not AIRFIELD.
+- The seam with the flying world is two functions wide on purpose:
+  `report_sighting(faction, world_position, weight)` — a *position*, because a position is
+  what a flight has; the director finds the district with the map's own `region_at` so a
+  pilot's track and a card's row cannot disagree — and `damage_facility`. Nothing about a
+  sighting changes ground. There is no third verb yet: a strike record from the cockpit is
+  Phase 6's loop, which is why `damage_facility` currently has one caller, the test.
+- Measured, not authored: blue's share of the theatre's airspace is 0.34 with the six
+  surviving SAM sites reported and 0.71 with `bind_launchers([])` (a cold start, which is
+  what the map sees before any hostile has spawned), finishing F16 E9 C6 against F17 E6 C8.
+  Six sites at 0.7 denial each outweigh one eight-aircraft field. That is Phase 6's SEAD
+  argument arriving out of the model, and `active_battles()` is what will say it.
+- `tools/check_battle_map_terrain.gd` grew `_campaign_drift`, the pixel proof: same camera,
+  territory on, two frames to measure the noise floor (0.0008), a director seated on the
+  very tables the canvas is drawing, 112 ticks, then the same camera asked again — 5/32
+  districts moved and 11.2 % of the frame repainted, with the toggles, overlay and cached
+  imagery untouched. Any future claim that the war reaches the screen belongs in this pass,
+  and has to beat its own noise floor.
+- Gotcha (`run_tests.sh`, again): an exit-time `ERROR:` fails a test that printed its
+  `*_TEST_PASS` line. The suite is 139/140 and the red file moves — `--verbose` puts it at
+  `assets/audio/jet_engine_loop.ogg::OggPacketSequence` with ten leaked ObjectDB instances.
+  It was measured rather than blamed on this phase: war wired in, 10 failures of 20 runs;
+  the same `main.gd` with the one `_update_war(delta)` call removed, 11 of 20. Do not
+  "fix" it by touching audio.
+- Gotcha (GDScript, and it bit twice in one phase): `%` binds tighter than `+`, so
+  `print("a " + "b: %d" % [x, y])` formats only the second literal and raises `String
+  formatting error: not all arguments converted`. Parenthesise the concatenation.
+- `tests/war_director_test.gd` is nine sections over the real corridor's 32 districts,
+  including the acceptance ("the line moves with nobody flying") and a rate-based churn
+  guard (`busiest * 8 <= ticks`) so the 62-times pathology cannot come back unnoticed. The
+  clock section advances `1.1` rather than `1.0` because 420 × 1/60 is 6.999999999999998 in
+  binary — a check that lands two femtoseconds short of its own tick tests floating point,
+  not a clock.
+
+## Real-theatre render check (2026-10-01)
+
+- `tools/check_battle_map_terrain.gd` is the geographic half of the pixel check:
+  it streams GOLD COAST // TWEED CORRIDOR through the production
+  `streamed_terrain.load_region()` and drives the battle map camera over it.
+  Same xvfb command as `check_battle_map.gd`, `-- --out=/tmp/bmt`. Cold it takes
+  ~70 s to reach the map (mostly overview imagery); with a warm
+  `user://map_cache` ~35 s, plus ~90 s more for detail chunks.
+- It exists because `check_battle_map.gd` cannot supply the two things only a
+  real theatre has: streamed `details` chunk quads, and geography to aim at.
+  Each state asserts projection invertibility at every town, contact picking at
+  each contact's own drawn position, and that the frame contains ground.
+- `preload()` of a script that names an autoload (`TileClient`) fails to compile
+  inside a `--script` run — the singletons exist by `_ready` but not by parse.
+  `load("res://scripts/terrain/streamed_terrain.gd")` at runtime works, which is
+  why the map's own tests do it that way. See the earlier "Test quirk" note.
+- A `--script` run whose `_run` dies to a script error does **not** exit: the
+  main loop keeps rendering at full CPU until the `timeout` fires, which looks
+  exactly like a slow load. Send the output to a file and `tail` it
+  (`> /tmp/x.log 2>&1`), never through `| tail` — a pipe buffers everything until
+  the process ends, so a hang shows no progress at all. Print elapsed seconds
+  with long-running steps.
+- Detail chunk quads are modulated flat (`Color(0.72, 0.88, 0.81)`) while the
+  overview goes through the map shader, so over dark ocean the chunk edge shows
+  as a seam. Pre-existing (the shipped map did the same); more visible under a
+  lean. Fixing it means matching the shader's satellite response, not the camera.
+
