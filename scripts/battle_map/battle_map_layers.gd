@@ -43,7 +43,11 @@ const LAYERS := [
 	{"id": &"radar", "label": "Radar coverage", "levels": [1, 2], "source": false},
 	{"id": &"sam", "label": "SAM coverage", "levels": [1, 2], "source": false},
 	{"id": &"ground", "label": "Ground forces", "levels": [0, 1], "source": false},
-	{"id": &"missions", "label": "Missions", "levels": [0, 1], "source": false},
+	## The board is drawn at every density for the objects' own reason, and one more: a
+	## tasking is flown from the map, so the mark a pilot tapped has to still be there when the
+	## camera arrives at the ground it was raised over. What comes off as the map closes in is
+	## the label's spare words, not the job.
+	{"id": &"missions", "label": "Missions", "levels": [0, 1, 2], "source": false},
 	{"id": &"intelligence", "label": "Intelligence", "levels": [0, 1], "source": false},
 ]
 

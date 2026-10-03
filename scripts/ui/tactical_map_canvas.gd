@@ -13,6 +13,11 @@ signal group_selected(handles: Array, title: String, centroid: Vector3)
 ## so a site whose launcher moves or dies is refreshed rather than frozen at the
 ## moment the finger came down.
 signal strategic_selected(id: int)
+## A tap landed on the staff's tasking rather than on the ground it is offered over. The id is
+## the mission's own, and the card reads the live record back out of the table with it, so an
+## offer that has since been taken, flown or settled by somebody else is not printed as the
+## suggestion it was when the finger came down.
+signal mission_selected(id: String)
 signal waypoint_requested(position: Vector2)
 signal range_changed(metres: float)
 signal level_changed(level: int)
@@ -28,6 +33,7 @@ const LEVELS := preload("res://scripts/battle_map/battle_map_layers.gd")
 const MARKERS := preload("res://scripts/battle_map/battle_map_markers.gd")
 const TERRITORY := preload("res://scripts/battle_map/battle_map_territory.gd")
 const STRATEGY := preload("res://scripts/battle_map/battle_map_strategy.gd")
+const TASKS := preload("res://scripts/battle_map/battle_map_tasks.gd")
 const RADAR := preload("res://scripts/ui/radar_scope.gd")
 const GREEN := Color(0.40, 0.91, 0.73)
 const CYAN := Color(0.38, 0.92, 1.0)
@@ -67,6 +73,10 @@ var territory := TERRITORY.new()
 ## layer that reports itself empty rather than drawing symbols with nothing behind
 ## them.
 var strategy := STRATEGY.new()
+## The board the war's staff is running, when this theatre has one. Same shape as the objects
+## and the territory: RefCounted state that reads the live table per frame, so a job raised,
+## taken or settled between draws needs no notification to appear or go away on the map.
+var tasks := TASKS.new()
 var _view := VIEW.new()
 var _gestures := GESTURES.new()
 var _items: Array = []
@@ -306,6 +316,49 @@ func strategic_object(id: int) -> Dictionary:
 	return strategy.of(id)
 
 
+## The staff's mission table, or null for a theatre with no war being run. The map holds the
+## table rather than a copy of the board: a job is offered, taken and settled on the campaign's
+## clock, and a mark that froze the board at the moment it was handed over would be a screenshot
+## of a decision rather than the decision.
+func set_missions(source: RefCounted) -> void:
+	tasks.load(source)
+	semantic.set_source(&"missions", tasks.is_ready())
+	war_changed.emit()
+	queue_redraw()
+
+
+## The live record for a selected job, or an empty Dictionary once the staff has dropped it.
+func mission_object(id: String) -> Dictionary:
+	return tasks.of(id)
+
+
+## Where a job's mark stands: the objective itself when the world has one, the middle of the
+## district when the job is over ground rather than a point on it. The table answers, so the
+## camera flies to the same place the symbol is drawn.
+func mission_position(id: String) -> Vector2:
+	return tasks.position_of(id)
+
+
+## What the map would select under this point if it were tapped on a tasking. This answers
+## before `strategic_at`: a mission mark is drawn over its objective, and the pilot who tapped
+## the bracket is asking the staff rather than the ground -- so the card it opens carries the
+## objective as a line the pilot can tap into, rather than the map silently refusing the job.
+func mission_at(point: Vector2) -> Dictionary:
+	if not semantic.visible(&"missions"):
+		return {}
+	_sync_viewport()
+	return tasks.pick(point, _projector())
+
+
+## The tasking under this point when the job is about this very contact, and nothing otherwise.
+## A bracket and a track are two readings of one object, and the map says which one a tap buys.
+func tasking_for(handle: int, point: Vector2) -> Dictionary:
+	var job := mission_at(point)
+	if job.is_empty():
+		return {}
+	return job if tasks.entity_of(String(job["id"])) == handle else {}
+
+
 ## What the map would select under this point if it were tapped: a symbol the objects
 ## layer is actually drawing here. Contacts answer first, so a launcher standing at a
 ## site is the thing you get when you tap it -- the site is the bigger picture, and
@@ -328,6 +381,14 @@ func _focus_at(point: Vector2) -> void:
 	if marker.has("handle"):
 		focus_contact(int(marker["handle"]))
 		return
+	var job := mission_at(point)
+	if not job.is_empty():
+		# Double tap on a tasking is the same planning gesture as on a place: go and look
+		# at what the staff wants flown, at the range where the ground around it is readable.
+		var objective := mission_position(String(job["id"]))
+		if objective.is_finite():
+			_focus_ground(objective)
+			return
 	var object := strategic_at(point)
 	if not object.is_empty():
 		# Flying the camera onto an airfield or a site is the planning gesture the
@@ -457,6 +518,15 @@ func select_at(point: Vector2) -> void:
 		return
 	var marker := marker_at(point)
 	if marker.has("handle"):
+		# A tasking bracket drawn on the very launcher it was raised against is the bigger
+		# question of the two, and the card that answers it hands the weapon the same handle
+		# the track would have: §25's one thing with two names, reached from either direction.
+		# The override is scoped to the job whose objective *is* this track, so an airframe
+		# that merely flies near somebody else's tasking is still just an airframe.
+		var job := tasking_for(int(marker["handle"]), point)
+		if not job.is_empty():
+			mission_selected.emit(String(job["id"]))
+			return
 		contact_selected.emit(int(marker["handle"]))
 		return
 	if marker.has("group"):
@@ -464,6 +534,10 @@ func select_at(point: Vector2) -> void:
 		# what a tap buys; ASSIGN TARGET on the card is what reaches the weapon.
 		var centroid: Vector3 = marker["group"]["centroid"]
 		group_selected.emit(marker["handles"], String(marker["title"]), centroid)
+		return
+	var job := mission_at(point)
+	if not job.is_empty():
+		mission_selected.emit(String(job["id"]))
 		return
 	var object := strategic_at(point)
 	if not object.is_empty():
@@ -568,6 +642,11 @@ func _draw() -> void:
 	var objects := semantic.alpha(&"objects")
 	if objects > 0.0:
 		_draw_objects(objects)
+	## The staff's tasking goes over the objects it was raised against: a bracket around a
+	## site is a request about that site, and it has to be readable wherever the symbol is not.
+	var jobs := semantic.alpha(&"missions")
+	if jobs > 0.0:
+		_draw_missions(jobs)
 	var origin := _ground_point(Vector2(player.x, player.z))
 	var step := pow(10.0, floor(log(_view.range_m) / log(10.0)))
 	var grid := semantic.alpha(&"grid")
@@ -640,6 +719,29 @@ func _draw_objects(alpha: float) -> void:
 		if String(item["sub"]).is_empty():
 			continue
 		_text(at + Vector2(reach + 6, 18), String(item["sub"]), Color(colour, 0.8), 11)
+
+
+## The board as it stands on the ground: a bracket over the objective and the call sign beside
+## it, and nothing else. The numbers a pilot needs before taking a job belong on the card, and
+## a map that printed all of them would be a list with a picture underneath it.
+func _draw_missions(alpha: float) -> void:
+	for item in tasks.batch(
+			_projector(), _visible_ground(), alpha, semantic.level(),
+			_view.pixels_per_metre()):
+		var at: Vector2 = item["at"]
+		var reach := float(item["reach"])
+		var colour: Color = item["colour"]
+		draw_circle(at, reach + 2.0, item["backing"])
+		for path in item["paths"]:
+			draw_polyline(path, colour, float(item["width"]), true)
+		var label := String(item["label"])
+		if label.is_empty():
+			continue
+		var width := ThemeDB.fallback_font.get_string_size(
+			label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+		draw_rect(Rect2(at + Vector2(reach + 4, -9), Vector2(width + 6, 18)),
+			Color(0.015, 0.025, 0.03, 0.78 * alpha))
+		_text(at + Vector2(reach + 6, 4), label, colour.lerp(Color.WHITE, 0.55), 12)
 
 
 func _draw_flat_grid(step: float, alpha: float) -> void:

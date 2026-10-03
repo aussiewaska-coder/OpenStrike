@@ -125,6 +125,7 @@ const WAR_REGIONS := preload("res://scripts/war/war_regions.gd")
 const WAR_CONTROL := preload("res://scripts/war/war_control.gd")
 const WAR_OBJECTS := preload("res://scripts/war/war_objects.gd")
 const WAR_DIRECTOR := preload("res://scripts/war/war_director.gd")
+const MISSION_STAFF := preload("res://scripts/war/mission_director.gd")
 const STARTUP_PANEL := preload("res://scripts/ui/startup_panel.gd")
 ## Thumb sticks are the only way to fly without a gamepad, so the choice is
 ## worth keeping between runs. With no entry saved, the hardware decides.
@@ -214,6 +215,12 @@ var _war_objects := WAR_OBJECTS.new()
 ## answers with a tick every few seconds, with or without the battle map open and with
 ## or without a pilot. See `scripts/war/war_director.gd`.
 var _war := WAR_DIRECTOR.new()
+## The staff on top of the campaign: it reads the same director and the same registry the
+## map reads and writes nothing but its own tasking table, so the board a pilot accepts a
+## mission from is the war's condition rather than a script that was waiting to fire. It
+## keeps no clock of its own either -- `_update_war` hands it the tick the director just
+## took. See `scripts/war/mission_director.gd`.
+var _tasks := MISSION_STAFF.new()
 var _runway_id := ""
 var _wreck_fire: Node3D
 var _threat_warning: Control
@@ -1098,10 +1105,15 @@ func _load_streamed_region(region: Dictionary) -> void:
 		_enemy_combat.clear()
 	if _strike_fire != null:
 		_strike_fire.clear()
+	# The board goes empty with the theatre it was raised on, whether or not anything is
+	# showing it: a staff that kept ticking over the last region's districts would offer a
+	# mission to fly into ground that is no longer loaded.
+	_tasks.setup(null, null, null)
 	if _tactical_mfd != null:
 		_tactical_mfd.map.set_layers({})
 		_tactical_mfd.map.set_war(null, null)
 		_tactical_mfd.map.set_objects(null)
+		_tactical_mfd.set_tasks(null)
 	_tracker.clear_lock()
 	launcher_field.clear()
 	enemy_squadron.clear()
@@ -1146,9 +1158,15 @@ func _load_streamed_region(region: Dictionary) -> void:
 	var control_ref: RefCounted = _war_control if authored else null
 	var objects_ref: RefCounted = _war_objects if populated else null
 	_war.setup(control_ref, regions_ref, objects_ref)
+	# The staff sits on the same two tables, so a mission on the board is the director's own
+	# reading of the ground rather than a second opinion. It is stricter than the campaign,
+	# which will run a front over districts with nothing standing in them: a tasking has to
+	# point at something, so a theatre with no objects or no districts gets an empty board.
+	_tasks.setup(_war, objects_ref, regions_ref)
 	if _tactical_mfd != null:
 		_tactical_mfd.map.set_war(regions_ref, control_ref)
 		_tactical_mfd.map.set_objects(objects_ref)
+		_tactical_mfd.set_tasks(_tasks)
 	# Both aircraft need the terrain: whichever is parked still has to know the
 	# theatre's extent so it is not fenced into the wrong one when swapped to.
 	jet_anchor.set_terrain(streamed_terrain)
@@ -2742,6 +2760,10 @@ func _update_war(delta: float) -> void:
 	if not _war.advance(delta):
 		return
 	_bind_launcher_state()
+	# The staff after the launcher field, not before: a site that has just stopped standing
+	# is the news a mission is judged on, and reading it a tick late would let the board
+	# offer a SEAD against a wreck the war has already counted down.
+	_tasks.tick(_war.tick_number())
 	var vehicle := _vehicle()
 	if vehicle != null:
 		_war.report_sighting(

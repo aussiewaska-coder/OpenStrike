@@ -11,6 +11,7 @@ const HUD := preload("res://scripts/ui/helmet_hud.gd")
 const NAV := preload("res://scripts/ui/tactical_navigation.gd")
 const LEVELS := preload("res://scripts/battle_map/battle_map_layers.gd")
 const WAR := preload("res://scripts/war/war_objects.gd")
+const MISSIONS := preload("res://scripts/war/mission_director.gd")
 const RANGES := [1000.0, 2000.0, 5000.0, 10000.0, 20000.0, 40000.0]
 ## A selection card is a readout of moving tracks, so it is refreshed on an
 ## interval rather than every frame: faster than a pilot can read it, and cheap
@@ -32,6 +33,15 @@ var _card: HBoxContainer
 var _card_lines: Label
 var _assign: Button
 var _fly: Button
+var _objective: Button
+## §19's third key on a tasking: the route is planned to the ground the job is about, through
+## the same waypoint seam a tap in Add WP mode uses, so a planned leg and a tasking are one
+## navigation solution rather than two.
+var _route: Button
+## The staff's table, when this theatre has a war being run. The card reads its fields out of
+## here and the two buttons write back into it, which is the only way a tasking on the map can
+## be accepted by the person it was offered to.
+var _tasks: RefCounted
 var _layer_buttons := {}
 var _subject := {}
 var _card_elapsed := 0.0
@@ -90,6 +100,7 @@ func _ready() -> void:
 	map.contact_selected.connect(_contact_selected)
 	map.group_selected.connect(_group_selected)
 	map.strategic_selected.connect(_strategic_selected)
+	map.mission_selected.connect(_mission_selected)
 	map.waypoint_requested.connect(func(point: Vector2): waypoint_requested.emit(point))
 	map.range_changed.connect(_range_changed)
 	map.level_changed.connect(_level_changed)
@@ -154,6 +165,7 @@ func _process(delta: float) -> void:
 	_card_elapsed = 0.0
 	_show_subject()
 
+
 func _button(text: String, callback: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
@@ -188,11 +200,29 @@ func _build_card() -> HBoxContainer:
 	row.add_child(_card_lines)
 	_assign = _button("Assign", _assign_target)
 	_fly = _button("Fly to", _fly_to)
+	# §19's third key. A tasking names an object, and the pilot who wants the target's own
+	# intelligence should not have to find it on the map again with a second, more careful tap.
+	_objective = _button("Target", _open_objective)
+	_objective.visible = false
+	_route = _button("Route", _plan_route)
+	_route.visible = false
 	_assign.custom_minimum_size.x = 62
 	_fly.custom_minimum_size.x = 62
+	_objective.custom_minimum_size.x = 62
+	_route.custom_minimum_size.x = 62
 	row.add_child(_assign)
 	row.add_child(_fly)
+	row.add_child(_route)
+	row.add_child(_objective)
 	return row
+
+
+## The staff's board, or null for a theatre with no war being run. The map is told so it can
+## draw the marks, and the panel is told so the card has something to write a decision back
+## into; both read the same table rather than a copy of it.
+func set_tasks(source: RefCounted) -> void:
+	_tasks = source
+	map.set_missions(source)
 
 
 func _contact_selected(handle: int) -> void:
@@ -218,6 +248,18 @@ func _group_selected(handles: Array, title: String, _centroid: Vector3) -> void:
 func _strategic_selected(id: int) -> void:
 	_subject = {"object": id}
 	_show_subject()
+
+
+## A tasking, held by its id for the same reason an object is: the record is live, and the job
+## may have been taken, flown or settled by the campaign between one refresh of the card and
+## the next.
+func _mission_selected(id: String) -> void:
+	_subject = {"mission": id}
+	_show_subject()
+
+
+func _mission() -> Dictionary:
+	return map.mission_object(String(_subject.get("mission", "")))
 
 
 func _clear_subject() -> void:
@@ -256,6 +298,9 @@ func _subject_tracks() -> Array:
 
 
 func _assign_target() -> void:
+	if _subject.has("mission"):
+		_accept_mission()
+		return
 	if _subject.has("object"):
 		_assign_object()
 		return
@@ -294,6 +339,9 @@ func _assign_object() -> void:
 
 
 func _fly_to() -> void:
+	if _subject.has("mission"):
+		_fly_mission()
+		return
 	if _subject.has("object"):
 		var object: Dictionary = map.strategic_object(int(_subject["object"]))
 		if object.is_empty():
@@ -315,6 +363,16 @@ func _fly_to() -> void:
 
 
 func _show_subject() -> void:
+	# The keys mean different things on a tasking and on a target, and a card that had kept the
+	# word off the last one opened would be a button doing something other than what it says.
+	_assign.text = "Assign"
+	_assign.disabled = false
+	_fly.text = "Fly to"
+	_objective.visible = false
+	_route.visible = false
+	if _subject.has("mission"):
+		_show_mission()
+		return
 	if _subject.has("object"):
 		_show_object()
 		return
@@ -357,6 +415,122 @@ func _show_subject() -> void:
 			_track_line(tracks), String(_nearest(tracks, own)["name"])])
 	_card_lines.text = "\n".join([title] + lines)
 	_card.visible = true
+
+
+## §19's card: the job, what it is aimed at, and the two decisions anybody can give the staff
+## about it. Every line is a field the table published, because a card that re-narrated the
+## campaign in its own words would be a second opinion on the war, and the war has one already.
+func _show_mission() -> void:
+	var mission := _mission()
+	if mission.is_empty() or _tasks == null:
+		_clear_subject()
+		return
+	var id := String(mission["id"])
+	var status := String(mission["status"])
+	var entity := int(_tasks.primary_entity(id))
+	var lines := [
+		"%s · %s · P%d · %s" % [
+			String(mission["callsign"]), String(mission["type"]),
+			int(mission["priority"]), status],
+		String(mission["briefing"]),
+		"PRIMARY %s · REGION %s · THREAT %s" % [
+			String(mission["target_name"]) if not String(mission["target_name"]).is_empty()
+				else "GROUND",
+			String(mission["region_name"]), String(mission["threat_level"])],
+		"%sEFFECT %s" % [
+			"" if entity < 0 else "TRACK %d · " % entity,
+			String(mission["strategic_effect"])],
+	]
+	# The window is part of the decision rather than a footnote to it: an offer with two ticks
+	# left on it is not the same card as one that was raised this tick, and the pilot is the one
+	# who has to say which is worth leaving the formation for.
+	if status in MISSIONS.OPEN:
+		lines.append("SECONDARY %d · WINDOW %d ticks" % [
+			(mission["secondary_targets"] as Array).size(),
+			maxi(0, int(mission["expires_at"]) - int(_tasks.tick_number()))])
+	else:
+		lines.append("OUTCOME %s · %s" % [status, String(mission.get("reason", ""))])
+	_assign.text = {"AVAILABLE": "Accept", "ASSIGNED": "Taken", "ACTIVE": "Flying"} \
+		.get(status, "Closed")
+	_assign.disabled = status != MISSIONS.AVAILABLE
+	_fly.text = "Fly"
+	_objective.visible = int(mission["primary_target"]) >= 0
+	_route.visible = status in MISSIONS.OPEN
+	_card_lines.text = "\n".join(lines)
+	_card.visible = true
+
+
+## Taking a job is the player's answer to the staff, and nothing more: the campaign goes on
+## whether or not anybody flies it, and the mission's own expiry is what makes that true.
+func _accept_mission() -> void:
+	var mission := _mission()
+	if mission.is_empty():
+		_clear_subject()
+		return
+	if _tasks != null and _tasks.accept(String(mission["id"])):
+		_show_subject()
+		return
+	_status.text = "%s · NOT RELEASED · the board no longer has this as an offer" \
+		% String(mission["callsign"])
+
+
+## FLY is one decision rather than three. The pilot who means to work a job has taken it, is
+## committed to it, and wants the thing itself shot at -- so the key accepts if it has to,
+## commits the sortie, hands the weapon the launcher standing at the objective when the world
+## has one, and points the camera at the ground it is all about. What it does not do is invent
+## a target the registry does not have in order to complete the gesture.
+func _fly_mission() -> void:
+	var mission := _mission()
+	if mission.is_empty() or _tasks == null:
+		_clear_subject()
+		return
+	var id := String(mission["id"])
+	if String(mission["status"]) == MISSIONS.AVAILABLE and not _tasks.accept(id):
+		_status.text = "%s · NOT RELEASED · take it from the board first" \
+			% String(mission["callsign"])
+		return
+	if not _tasks.launch(id):
+		_status.text = "%s · ALREADY FLOWN · the sortie is committed" \
+			% String(mission["callsign"])
+		return
+	var entity := int(_tasks.primary_entity(id))
+	if entity >= 0:
+		contact_selected.emit(entity)
+	var at: Vector2 = _tasks.position_of(id)
+	if at.is_finite():
+		map.focus_object(at)
+	_show_subject()
+
+
+## The target, as the intelligence card rather than as a name on a tasking: §20 asks for the
+## primary to be reachable from the mission, and the map is where both of them live.
+func _open_objective() -> void:
+	var mission := _mission()
+	if mission.is_empty():
+		_clear_subject()
+		return
+	var target := int(mission["primary_target"])
+	if target < 0:
+		_status.text = "%s · NO OBJECTIVE · this job is over ground rather than a point on it" \
+			% String(mission["callsign"])
+		return
+	_strategic_selected(target)
+
+
+## PLAN ROUTE, §19's middle key. The leg is laid onto the ground the job is about -- the
+## objective itself when there is one, the middle of the district when the tasking is over
+## ground rather than a point on it -- and it goes in through the waypoint seam a tap in Add WP
+## mode already uses, so there is one route on the map rather than a planning copy of it.
+func _plan_route() -> void:
+	var mission := _mission()
+	if mission.is_empty() or _tasks == null:
+		_clear_subject()
+		return
+	var at: Vector2 = _tasks.position_of(String(mission["id"]))
+	if not at.is_finite():
+		_status.text = "%s · NO GROUND · the board has dropped this job" % String(mission["callsign"])
+		return
+	waypoint_requested.emit(at)
 
 
 ## The strategic card. Every number on it came out of the registry and the registry
