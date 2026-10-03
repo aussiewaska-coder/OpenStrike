@@ -177,6 +177,14 @@ func is_loaded() -> bool:
 	return _loaded
 
 
+## The save contract's name for the same answer. `campaign_save` asks every module it writes out
+## whether it is actually holding a theatre, because a capture taken of an empty table would be
+## saved over a good campaign; this module has had its own word for that since phase 3, and the two
+## say the same thing rather than tracking different facts.
+func is_ready() -> bool:
+	return _loaded
+
+
 func theatre() -> String:
 	return _theatre
 
@@ -372,6 +380,110 @@ func bind_structures(index: RefCounted, reported: RefCounted) -> void:
 			object["operational_state"] = DAMAGED
 		else:
 			object["operational_state"] = DESTROYED
+
+
+## ------------------------------------------------------------------ remembering
+
+## The registry's own memory: what the launcher field reported about each site, kept for the
+## campaign that has to outlive the quit. §28's acceptance is that damage and its consequences are
+## still there after a reload, and for an airfield the war carries that itself -- it owns the
+## facility table and publishes it back over the map on the tick it is restored. A launcher site's
+## state is the other half of the corridor's cover, and nothing re-derives it: the health of a site
+## is a function of how many launchers are standing at it, and the launchers are the flying world's
+## business, gone the moment the mission is. So the field's *last report* is what is worth keeping
+## -- not the report's contents, since a launcher's entity id is as transient as a round in the
+## air and §28 says plainly that this layer does not save those.
+##
+## Which also says what the restored state means: a site written down as destroyed stays destroyed
+## until the field reports a launcher standing at it again, at which point the field wins exactly
+## as it does every other tick. This is the campaign's memory of the ground, not a second authority
+## over it.
+const SAVED_SITE := ["health", "operational_state", "discovered", "seen", "strongest"]
+
+const SAVED_STATES := [INTACT, DAMAGED, DESTROYED, UNCONFIRMED]
+
+
+func export_state() -> Dictionary:
+	var sites := []
+	for record in _objects:
+		var object: Dictionary = record
+		if int(object["type"]) != Type.SAM_SITE:
+			continue
+		var detail: Dictionary = object["detail"]
+		sites.append({
+			"id": int(object["id"]),
+			"health": float(object["health"]),
+			"operational_state": String(object["operational_state"]),
+			"discovered": bool(object["discovered"]),
+			"seen": bool(detail["seen"]),
+			"strongest": int(detail["strongest"]),
+		})
+	return {"theatre": _theatre, "sites": sites}
+
+
+## Take it back. Every site on the authored layout has to be named in the file and every site in
+## the file has to be standing on the layout, because a save applied to a theatre whose launcher
+## positions moved would be a save that decided for itself which cover the corridor has. The
+## records are written into in place rather than replaced, since the war, the map and the mission
+## cards all hold these same dictionaries and read the live state through them.
+func import_state(state: Dictionary) -> bool:
+	if not _loaded or state.is_empty():
+		return false
+	if String(state.get("theatre", "")) != _theatre:
+		return false
+	var saved: Variant = state.get("sites", [])
+	if not (saved is Array):
+		return false
+	var records := saved as Array
+	var standing := _sites_present()
+	if records.is_empty() or records.size() != standing:
+		return false
+	var by_id := {}
+	for record in records:
+		if not (record is Dictionary):
+			return false
+		var entry := record as Dictionary
+		if not entry.has("id") or not _holds(entry, SAVED_SITE):
+			return false
+		var id := int(entry["id"])
+		var object: Dictionary = _by_id.get(id, {})
+		if by_id.has(id) or object.is_empty() or int(object["type"]) != Type.SAM_SITE:
+			return false
+		var health := float(entry["health"])
+		if health < 0.0 or health > 1.0 or not String(entry["operational_state"]) in SAVED_STATES:
+			return false
+		if int(entry["strongest"]) < 0:
+			return false
+		by_id[id] = entry
+	# Checked above that every saved id is a live site; the counts agreeing is what makes that
+	# every live site is saved, so nothing is left holding an authored state that was never written.
+	for record in _objects:
+		var object: Dictionary = record
+		if int(object["type"]) != Type.SAM_SITE:
+			continue
+		var entry: Dictionary = by_id[int(object["id"])]
+		object["health"] = float(entry["health"])
+		object["operational_state"] = String(entry["operational_state"])
+		object["discovered"] = bool(entry["discovered"])
+		var detail: Dictionary = object["detail"]
+		detail["seen"] = bool(entry["seen"])
+		detail["strongest"] = int(entry["strongest"])
+	return true
+
+
+func _sites_present() -> int:
+	var count := 0
+	for record in _objects:
+		if int((record as Dictionary)["type"]) == Type.SAM_SITE:
+			count += 1
+	return count
+
+
+func _holds(entry: Dictionary, terms: Array) -> bool:
+	for term in terms:
+		if not entry.has(String(term)):
+			return false
+	return true
 
 
 ## The airfields, one per aerodrome, from the runways the game already flies

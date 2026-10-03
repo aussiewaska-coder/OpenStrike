@@ -90,8 +90,19 @@ func _check_the_damage_outlives_the_quit(save: SAVE) -> void:
 	check(float(damaged["damage"]) > float(before["damage"]),
 		"the field must be measurably worse for it (%s -> %s)" % [
 			str(before["damage"]), str(damaged["damage"])])
-	var written := save.capture(String(war.theatre()), war, first["own"], first["foe"],
-		first["own_board"], first["foe_board"])
+	# The other half of the same sentence, which the war does not own: an airfield's damage lives in
+	# the campaign's facility table and comes back with it, while a launcher site's is a function of
+	# how many launchers are standing at it -- a report from the flying world, which a quit takes
+	# away. So the registry is asked to remember what the field last said, and the acceptance here is
+	# that a site whose launcher is gone is still a wreck after the reload rather than a battery that
+	# has quietly re-formed.
+	var field := _launcher_field(first["registry"])
+	check(field.size() >= 2, "and the corridor must have launchers enough to be covered")
+	(first["registry"] as OBJECTS).bind_launchers(field.slice(0, field.size() - 1))
+	var wrecked := _silenced_site(first["registry"])
+	check(not wrecked.is_empty(), "and dropping one launcher must put one site out of action")
+	var written := save.capture(String(war.theatre()), first["registry"], war, first["own"],
+		first["foe"], first["own_board"], first["foe_board"])
 	check(not written.is_empty(), "the campaign must write out")
 	check(save.write(written), "and the file must go to the disk")
 	check(save.read() != {}, "and come back off it")
@@ -100,8 +111,8 @@ func _check_the_damage_outlives_the_quit(save: SAVE) -> void:
 	var second := _campaign(2001)
 	var back: DIRECTOR = second["director"]
 	var restored := save.read()
-	check(save.apply(restored, back, second["own"], second["foe"],
-		second["own_board"], second["foe_board"]),
+	check(save.apply(restored, second["registry"], back, second["own"], second["foe"],
+			second["own_board"], second["foe_board"]),
 		"the save must be accepted by a freshly seated corridor: %s" % save.refusal())
 	var after: Dictionary = back.facility(object_id)
 	for term in DIRECTOR.SAVED_FIELD:
@@ -119,6 +130,18 @@ func _check_the_damage_outlives_the_quit(save: SAVE) -> void:
 			str(damaged["damage"]), str(detail["damage"])])
 	check(String(seen["operational_state"]) == String(damaged["state"]),
 		"and so must the state word that goes with it")
+	# The site whose launcher the field stopped reporting, read off the reloaded registry by the id
+	# it was authored with. Positions are not in the file and are not wanted: the layout puts the
+	# wreck back on the same ground it was standing on, and only what happened to it comes over.
+	var silenced: Dictionary = registry.of(int(wrecked["id"]))
+	check(not silenced.is_empty(), "and the wrecked site must still be a site the map knows")
+	var memory: Dictionary = silenced["detail"]
+	var left: Dictionary = wrecked["detail"]
+	for term in OBJECTS.SAVED_SITE:
+		var reported: bool = term == "seen" or term == "strongest"
+		check(_close(memory[term] if reported else silenced[term],
+				left[term] if reported else wrecked[term]),
+			"the site's %s must come back as the field left it" % String(term))
 	for record: Variant in back.districts():
 		var id := String(record)
 		var kept: Dictionary = war.district(id)
@@ -158,13 +181,13 @@ func _check_the_decision_outlives_the_quit(save: SAVE) -> void:
 	check(not red.operations().is_empty(), "Red must be running operations by now")
 	check(not blue.operations().is_empty(), "and so must Blue")
 	check(not red_board.missions().is_empty(), "and a board must have cards on it")
-	var written := save.capture(String(war.theatre()), war, blue, red,
+	var written := save.capture(String(war.theatre()), first["registry"], war, blue, red,
 		first["own_board"], red_board)
 	check(save.write(written), "the campaign with its decisions in it must write")
 
 	var second := _campaign(2002)
 	var back: DIRECTOR = second["director"]
-	check(save.apply(save.read(), back, second["own"], second["foe"],
+	check(save.apply(save.read(), second["registry"], back, second["own"], second["foe"],
 		second["own_board"], second["foe_board"]),
 		"and reload: %s" % save.refusal())
 	_against(second["foe"], red, "Red")
@@ -195,16 +218,17 @@ func _check_the_disk_round_trip_is_exact(save: SAVE) -> void:
 	var first := _campaign(2003)
 	var war: DIRECTOR = first["director"]
 	_run_campaign(first, RUN_TICKS)
-	var written := save.capture(String(war.theatre()), war, first["own"], first["foe"],
-		first["own_board"], first["foe_board"])
+	var written := save.capture(String(war.theatre()), first["registry"], war, first["own"],
+		first["foe"], first["own_board"], first["foe_board"])
 	check(save.write(written), "the campaign must write")
 	var again := _campaign(2003)
-	check(save.apply(save.read(), again["director"], again["own"], again["foe"],
+	check(save.apply(save.read(), again["registry"], again["director"], again["own"], again["foe"],
 		again["own_board"], again["foe_board"]),
 		"the file must apply to a fresh seating: %s" % save.refusal())
-	var second := save.capture(String(again["director"].theatre()), again["director"],
-		again["own"], again["foe"], again["own_board"], again["foe_board"])
+	var second := save.capture(String(again["director"].theatre()), again["registry"],
+		again["director"], again["own"], again["foe"], again["own_board"], again["foe_board"])
 	_identical(second["war"], written["war"], "war")
+	_identical(second["objects"], written["objects"], "objects")
 	for key in ["own", "foe", "own_board", "foe_board"]:
 		_identical(second[key], written[key], key)
 	# A file is only worth what its worst reader makes of it: hand the JSON text itself through
@@ -213,11 +237,12 @@ func _check_the_disk_round_trip_is_exact(save: SAVE) -> void:
 	var parsed: Variant = JSON.parse_string(text)
 	check(parsed is Dictionary, "the written form must parse back to an object")
 	var third := _campaign(2003)
-	check(save.apply(parsed as Dictionary, third["director"], third["own"], third["foe"],
-		third["own_board"], third["foe_board"]),
+	check(save.apply(parsed as Dictionary, third["registry"], third["director"], third["own"],
+		third["foe"], third["own_board"], third["foe_board"]),
 		"and the parsed text must apply as well as the dictionary did: %s" % save.refusal())
-	_identical(save.capture(String(third["director"].theatre()), third["director"], third["own"],
-		third["foe"], third["own_board"], third["foe_board"])["war"], written["war"], "war")
+	_identical(save.capture(String(third["director"].theatre()), third["registry"],
+		third["director"], third["own"], third["foe"], third["own_board"],
+		third["foe_board"])["war"], written["war"], "war")
 
 
 ## A file from another theatre, or another build, or none at all.
@@ -225,21 +250,22 @@ func _check_a_foreign_file_is_refused(save: SAVE) -> void:
 	var campaign := _campaign(2004)
 	var war: DIRECTOR = campaign["director"]
 	_run_campaign(campaign, 6)
-	var written := save.capture(String(war.theatre()), war, campaign["own"], campaign["foe"],
-		campaign["own_board"], campaign["foe_board"])
+	var written := save.capture(String(war.theatre()), campaign["registry"], war, campaign["own"],
+		campaign["foe"], campaign["own_board"], campaign["foe_board"])
 	check(save.write(written), "the corridor campaign must write")
 
 	var future := written.duplicate(true)
 	future["version"] = SAVE.VERSION + 1
 	var other := _campaign(2004)
-	check(not save.apply(future, other["director"], other["own"], other["foe"],
-		other["own_board"], other["foe_board"]), "a later save format must be refused")
+	check(not save.apply(future, other["registry"], other["director"], other["own"],
+		other["foe"], other["own_board"], other["foe_board"]),
+		"a later save format must be refused")
 	check(not save.refusal().is_empty(), "with a reason a player can be shown")
 
 	var island := written.duplicate(true)
 	island["theatre"] = "somewhere_else_entirely"
 	var atsea := _campaign(2004)
-	check(not save.apply(island, atsea["director"], atsea["own"], atsea["foe"],
+	check(not save.apply(island, atsea["registry"], atsea["director"], atsea["own"], atsea["foe"],
 		atsea["own_board"], atsea["foe_board"]),
 		"and a save naming a different theatre must be refused by this one")
 	check(save.refusal().find("theatre") >= 0,
@@ -249,7 +275,7 @@ func _check_a_foreign_file_is_refused(save: SAVE) -> void:
 	broken["war"] = {}
 	var third := _campaign(2004)
 	var kept: Dictionary = third["director"].export_state()
-	check(not save.apply(broken, third["director"], third["own"], third["foe"],
+	check(not save.apply(broken, third["registry"], third["director"], third["own"], third["foe"],
 		third["own_board"], third["foe_board"]), "a campaign missing its war must be refused")
 	_identical(third["director"].export_state(), kept, "war")
 
@@ -259,19 +285,20 @@ func _check_a_foreign_file_is_refused(save: SAVE) -> void:
 	check(save.read() == {}, "and a read with nothing there is no campaign, not an error")
 
 
-## The failure mode a save layer has by construction: it applies to five modules in a row, so it
+## The failure mode a save layer has by construction: it applies to six modules in a row, so it
 ## can stop halfway and leave a campaign made of two different wars. Every refusal below must
 ## leave the module it was aimed at exactly as it was.
 func _check_a_refusal_changes_nothing(save: SAVE) -> void:
 	var campaign := _campaign(2005)
 	var war: DIRECTOR = campaign["director"]
 	_run_campaign(campaign, RUN_TICKS)
-	var written := save.capture(String(war.theatre()), war, campaign["own"], campaign["foe"],
-		campaign["own_board"], campaign["foe_board"])
+	var written := save.capture(String(war.theatre()), campaign["registry"], war, campaign["own"],
+		campaign["foe"], campaign["own_board"], campaign["foe_board"])
 
 	var target := _campaign(2005)
 	_run_campaign(target, 9)
 	var before := {
+		"objects": target["registry"].export_state(),
 		"war": target["director"].export_state(),
 		"own": target["own"].export_state(),
 		"foe": target["foe"].export_state(),
@@ -282,20 +309,31 @@ func _check_a_refusal_changes_nothing(save: SAVE) -> void:
 	# Wrong side's slice, handed to the wrong commander.
 	var swapped := written.duplicate(true)
 	swapped["own"] = written["foe"]
-	check(not save.apply(swapped, target["director"], target["own"], target["foe"],
-		target["own_board"], target["foe_board"]),
+	check(not save.apply(swapped, target["registry"], target["director"], target["own"],
+		target["foe"], target["own_board"], target["foe_board"]),
 		"Blue must refuse Red's operations")
 	# Red's board is the one that carries enemy cards; the war's districts are still the corridor's,
 	# so this refuses on faction rather than on geography.
 	var muddled := written.duplicate(true)
 	muddled["foe_board"] = written["own_board"]
-	check(not save.apply(muddled, target["director"], target["own"], target["foe"],
-		target["own_board"], target["foe_board"]), "and a staff must refuse the other side's board")
+	check(not save.apply(muddled, target["registry"], target["director"], target["own"],
+		target["foe"], target["own_board"], target["foe_board"]),
+		"and a staff must refuse the other side's board")
 
 	var torn := written.duplicate(true)
 	torn["war"] = {}
-	check(not save.apply(torn, target["director"], target["own"], target["foe"],
-		target["own_board"], target["foe_board"]), "and a warless state must be refused outright")
+	check(not save.apply(torn, target["registry"], target["director"], target["own"],
+		target["foe"], target["own_board"], target["foe_board"]),
+		"and a warless state must be refused outright")
+
+	# The registry is the sixth name in the file, and its part can be the torn one too: a save
+	# that lost its launcher sites is a save that would put a battery back on the ground without
+	# anybody reporting it there.
+	var maimed := written.duplicate(true)
+	maimed["objects"] = {}
+	check(not save.apply(maimed, target["registry"], target["director"], target["own"],
+		target["foe"], target["own_board"], target["foe_board"]),
+		"and a state with no sites in it must be refused by the registry itself")
 
 	for key in before:
 		_identical(_module(target, key).export_state(), before[key], key)
@@ -313,28 +351,33 @@ func _check_an_unseated_module_is_refused(save: SAVE) -> void:
 	check(stray.export_state().is_empty() or stray.export_state()["operations"].is_empty(),
 		"an unseated commander has no operations to write")
 	var other := _campaign(2006)
-	var through_stray := save.capture(other["director"].theatre(), other["director"], stray,
-		other["foe"], other["own_board"], other["foe_board"])
+	var through_stray := save.capture(other["director"].theatre(), other["registry"],
+		other["director"], stray, other["foe"], other["own_board"], other["foe_board"])
 	check(through_stray.is_empty(), "a capture through an unseated module must be refused")
 	check(not save.refusal().is_empty(), "and the reason must be kept for the caller: %s"
 		% save.refusal())
-	check(save.capture("", other["director"], other["own"], other["foe"],
+	check(save.capture("", other["registry"], other["director"], other["own"], other["foe"],
 		other["own_board"], other["foe_board"]).is_empty(),
 		"and a campaign that names no theatre is not a campaign either")
 	var naked := _campaign(2006)
 	naked["director"] = DIRECTOR.new()
-	check(not save.apply(save.capture(other["director"].theatre(), other["director"],
-		other["own"], other["foe"], other["own_board"], other["foe_board"]),
-		naked["director"], naked["own"], naked["foe"], naked["own_board"], naked["foe_board"]),
+	check(not save.apply(save.capture(other["director"].theatre(), other["registry"],
+		other["director"], other["own"], other["foe"], other["own_board"], other["foe_board"]),
+		naked["registry"], naked["director"], naked["own"], naked["foe"],
+		naked["own_board"], naked["foe_board"]),
 		"and a restore onto an unseated war must be refused")
 
 
 ## ------------------------------------------------------------------------ harness
 
 ## The module a section of the save belongs to. The campaign dictionary names the director
-## `director`, and the save names the same thing `war`.
+## `director` and the registry `registry`, while the save calls those two `war` and `objects`.
 func _module(campaign: Dictionary, key: String) -> RefCounted:
-	return campaign["director"] if key == "war" else campaign[key]
+	if key == "war":
+		return campaign["director"]
+	if key == "objects":
+		return campaign["registry"]
+	return campaign[key]
 
 
 ## The three terms of one commander's memory, compared.
@@ -463,13 +506,7 @@ func _campaign(seed_value: int) -> Dictionary:
 	var registry := OBJECTS.new()
 	check(registry.load_theatre(CORRIDOR, geography, control),
 		"and the corridor must have its fields, sites and towers in it")
-	var handle := 1
-	var positions := []
-	for record in registry.of_type(OBJECTS.Type.SAM_SITE):
-		var site: Dictionary = record
-		positions.append({"id": handle, "name": "%s LAUNCHER" % String(site["detail"]["site"])})
-		handle += 1
-	registry.bind_launchers(positions)
+	registry.bind_launchers(_launcher_field(registry))
 	var director := DIRECTOR.new()
 	check(director.setup(control, geography, registry), "and the war must take the theatre")
 	director.set_seed(seed_value)
@@ -506,6 +543,30 @@ func _airfields(war: DIRECTOR) -> Array:
 		if int(field["type"]) == OBJECTS.Type.AIRBASE:
 			found.append(int(field["object_id"]))
 	return found
+
+
+## The launcher field's own report of the corridor: one launcher standing at every site the layout
+## authored, named the way the tracker names it, because `bind_launchers` matches a site to its
+## launchers by that name and nothing else.
+func _launcher_field(registry: RefCounted) -> Array:
+	var positions := []
+	var handle := 1
+	for record in (registry as OBJECTS).of_type(OBJECTS.Type.SAM_SITE):
+		var site: Dictionary = record
+		positions.append({"id": handle, "name": "%s LAUNCHER" % String(site["detail"]["site"])})
+		handle += 1
+	return positions
+
+
+## The site the field has stopped reporting -- the one a sortie put out of action and the campaign
+## has to remember that way.
+func _silenced_site(registry: RefCounted) -> Dictionary:
+	for record in (registry as OBJECTS).of_type(OBJECTS.Type.SAM_SITE):
+		var site: Dictionary = record
+		if (site["handles"] as Array).is_empty() \
+				and String(site["operational_state"]) == OBJECTS.DESTROYED:
+			return site
+	return {}
 
 
 ## The registry's own view of one field -- the map's copy of the fact, not the war's.

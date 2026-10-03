@@ -237,7 +237,7 @@ var _foe_commander := COMMANDER.new()
 var _foe_tasks := MISSION_STAFF.new()
 ## The campaign in a file. §28 asks for one thing -- break an airbase, quit, reload, find the
 ## damage and its consequences still there -- and this is the only object in the project that
-## touches the disk on the war's behalf. It writes the five modules above and hands them back, it
+## touches the disk on the war's behalf. It writes the six modules above and hands them back, it
 ## refuses a save that names a different theatre, and it refuses to write anything a module says
 ## it does not own. See `scripts/war/campaign_save.gd`.
 var _campaign_save := CAMPAIGN_SAVE.new()
@@ -1205,7 +1205,7 @@ func _load_streamed_region(region: Dictionary) -> void:
 	_foe_tasks.setup(_war, objects_ref, regions_ref)
 	_foe_tasks.set_commander(_foe_commander if _foe_commander.is_ready() else null)
 	# The campaign comes back before anything is drawn over it: the map, the MFD's board and the
-	# enemy's intent are all read off these five tables, and a reload that restored them after the
+	# enemy's intent are all read off these six tables, and a reload that restored them after the
 	# first frame would show one tick of a war that had already happened.
 	_restore_campaign()
 	if _tactical_mfd != null:
@@ -2935,8 +2935,8 @@ func _fly_enemy_intent(at: Vector3) -> void:
 func _capture_campaign() -> void:
 	if not _war.is_ready():
 		return
-	var written := _campaign_save.capture(_war.theatre(), _war, _own_commander,
-		_foe_commander, _tasks, _foe_tasks)
+	var written := _campaign_save.capture(_war_objects.theatre(), _war_objects, _war,
+			_own_commander, _foe_commander, _tasks, _foe_tasks)
 	if not written.is_empty() and _campaign_save.write(written):
 		print("CAMPAIGN_SAVED ", _campaign_save.path())
 		return
@@ -2951,7 +2951,7 @@ func _restore_campaign() -> bool:
 	var state := _campaign_save.read()
 	if state.is_empty():
 		return false
-	if not _campaign_save.apply(state, _war, _own_commander, _foe_commander,
+	if not _campaign_save.apply(state, _war_objects, _war, _own_commander, _foe_commander,
 			_tasks, _foe_tasks):
 		print("CAMPAIGN_NOT_RESTORED ", _campaign_save.refusal())
 		return false

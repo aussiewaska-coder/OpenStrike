@@ -3,14 +3,14 @@ extends RefCounted
 ## The campaign, in a file.
 ##
 ## §28's acceptance is a specific story: destroy airbase assets, quit, reload, and find the
-## damage and its consequences still there. Everything that story needs is already computed by
-## the four modules this writes between -- the war owns the ground, the air and the facilities;
-## the two commanders own the decisions and the memory those decisions were made from; the two
-## staffs own the cards the pilot was offered and what came of them. None of them is asked to
-## explain itself here: each is handed to through `export_state`/`import_state`, which is where
-## its own idea of what is worth remembering lives. That is the only reason this file can survive
-## the phases still to come -- a new module with a save pair of its own is one more line here,
-## not a rewrite of the format.
+## damage and its consequences still there. Everything that story needs is already computed by the
+## six modules this writes between -- the registry owns what the launcher field last reported
+## about the sites, the war owns the ground, the air and the facilities; the two commanders own
+## decisions and the memory those decisions were made from; the two staffs own the cards the pilot
+## was offered and what came of them. None of them is asked to explain itself here: each is handed
+## to through `export_state`/`import_state`, which is where its own idea of what is worth
+## remembering lives. That is the only reason this file can survive the phases still to come -- a
+## new module with a save pair of its own is one more line here, not a rewrite of the format.
 ##
 ## What is deliberately not here: anything the flying world owns. No aircraft in the air, no
 ## weapon on a rail, no particle, no node path, and no position that the theatre's own data does
@@ -26,10 +26,13 @@ extends RefCounted
 ## print, and the current version is refused too if it names a theatre other than the one seated:
 ## the corridor's war reloaded onto the islands would move ground nobody can see.
 
-## The shape this build writes. Bump it when a field changes meaning, not merely when one is
-## added: a save that is missing a term the loader requires is refused by the modules themselves,
-## which is the same guard with less bookkeeping.
-const VERSION := 1
+## The shape this build writes. Bump it when a field changes meaning or when a module joins the
+## table, not merely when one is added to a module that is already here: a save that is missing a
+## term the loader requires is refused by the modules themselves, which is the same guard with less
+## bookkeeping. Version 2 is the registry's sites: an airfield's damage was always recoverable from
+## the war, but a launcher site's is a function of what is standing at it, and after a quit nothing
+## is standing anywhere until the flying world says so.
+const VERSION := 2
 
 const PATH := "user://campaign_save.json"
 
@@ -105,14 +108,15 @@ func read() -> Dictionary:
 
 ## -------------------------------------------------------------------- capture / apply
 
-## Assemble the whole campaign from the five modules that hold it. The theatre name comes from
-## the registry -- it is the region the map loaded, and the only identifier both the war and the
-## boards agree on.
+## Assemble the whole campaign from the six modules that hold it. The theatre name comes from the
+## registry -- it is the region the map loaded, and the only identifier both the war and the boards
+## agree on.
 func capture(
-		theatre: String, war: RefCounted, own: RefCounted, foe: RefCounted,
-		own_board: RefCounted, foe_board: RefCounted) -> Dictionary:
+		theatre: String, objects: RefCounted, war: RefCounted, own: RefCounted,
+		foe: RefCounted, own_board: RefCounted, foe_board: RefCounted) -> Dictionary:
 	_refusal = ""
 	var parts := {
+		"objects": objects,
 		"war": war,
 		"own": own,
 		"foe": foe,
@@ -130,6 +134,7 @@ func capture(
 		"version": VERSION,
 		"theatre": theatre,
 		"saved_at": int(Time.get_unix_time_from_system()),
+		"objects": objects.export_state(),
 		"war": war.export_state(),
 		"own": own.export_state(),
 		"foe": foe.export_state(),
@@ -139,12 +144,14 @@ func capture(
 
 
 ## Hand each part back to the module that authored it, in the order the campaign is built: the
-## war first, because the commanders read their districts off it and the boards read their cards
-## off them. One refusal stops the whole thing -- a campaign restored except for the red
-## commander is a campaign where the enemy has forgotten why it was attacking.
+## objects first, because the sites' cover is a fact the war reads on its next tick; the war next,
+## because it publishes its own airfields over the registry's and the commanders read their
+## districts off it; then the two staffs, whose cards are ranked from the rest. One refusal stops
+## the whole thing -- a campaign restored except for the red commander is a campaign where the
+## enemy has forgotten why it was attacking.
 func apply(
-		state: Dictionary, war: RefCounted, own: RefCounted, foe: RefCounted,
-		own_board: RefCounted, foe_board: RefCounted) -> bool:
+		state: Dictionary, objects: RefCounted, war: RefCounted, own: RefCounted,
+		foe: RefCounted, own_board: RefCounted, foe_board: RefCounted) -> bool:
 	_refusal = ""
 	if state.is_empty():
 		_refusal = "there is no campaign to restore"
@@ -162,13 +169,14 @@ func apply(
 		_refusal = "the save is %s, the loaded theatre is %s" % [saved, seated]
 		return false
 	var order := [
+		["objects", state.get("objects", {}), objects],
 		["war", state.get("war", {}), war],
 		["own", state.get("own", {}), own],
 		["foe", state.get("foe", {}), foe],
 		["own_board", state.get("own_board", {}), own_board],
 		["foe_board", state.get("foe_board", {}), foe_board],
 	]
-	# Five modules restored in a row is five chances to stop halfway, and a campaign made of two
+	# Six modules restored in a row is six chances to stop halfway, and a campaign made of two
 	# wars is the failure this layer exists to prevent. Each module is asked for its own state
 	# before it is overwritten, and a later refusal puts those back in reverse order: the same
 	# `import_state` that restored the campaign is what un-restores it, so a rollback cannot

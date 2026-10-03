@@ -699,14 +699,25 @@ the file in the GitHub web UI. Never paste PATs in chat; revoke after use.
 ## The campaign in a file (2026-10-03, Battle Map V2 phase 8)
 
 `scripts/war/campaign_save.gd` (§32's name) is the only thing in the project that touches the
-disk for the war: version 1, `user://campaign_save.json`, `capture`/`apply` over the five
+disk for the war: version 2, `user://campaign_save.json`, `capture`/`apply` over the six
 strategic modules and `write`/`read`/`exists`/`erase` around the file. Every module owns its own
 shape through a new `export_state()`/`import_state()` pair — the director's is districts, battles,
 contact edges, facility fields, purses, losses, tick/elapsed/length/seed; each commander's is its
 operations, focus, habit windows and the last reading it differences against; each staff's is its
-cards, callsign counters and serial. The save layer therefore has to know five names and nothing
+cards, callsign counters and serial. The save layer therefore has to know six names and nothing
 about their contents, which is what §28's "later campaign changes do not immediately invalidate
 saves" actually buys.
+
+- Version 2 is `war_objects`' launcher-site memory, which the §35 demonstration below needed. An
+  airfield's damage was always recoverable from the war (it owns the facility table and publishes
+  it back over the map), but a site's health is a function of how many launchers the flying world
+  is reporting at it, and launchers are gone the moment the mission is — so the campaign came back
+  with every site intact and re-denied the air it had just been taught was clear. What is stored
+  is the field's *last report* (`health`/`operational_state`/`discovered`/`seen`/`strongest`), not
+  a launcher list: an entity id is as transient as a round in the air, and §28 says this layer does
+  not save those. The field outranks the memory on its next report, exactly as it outranks it on
+  every other tick. `objects` is applied first because the sites' cover is a fact the war reads;
+  the war publishes its own airfields over the registry's afterwards.
 
 - The whole of §28's list is covered, and the derivation is why some of it is not stored: airbase
   health *is* strategic-object health and destroyed-object state, `aircraft` at the ramp *is*
@@ -763,6 +774,51 @@ saves" actually buys.
   term-for-term identical, through the JSON text as well as the dictionary), the refusals (later
   version, foreign theatre, warless state, empty capture, erase), the rollback, and the unseated
   modules.
+
+## The one convincing loop (2026-10-03, Battle Map V2 §35)
+
+`tests/campaign_demo_test.gd` is §35's demonstration scenario, run over the corridor the game
+actually ships with rather than over the three invented regions the brief sketches. It is not a test
+of a module; it is the claim that a pilot's sortie reaches all the way down the chain to the front
+line, phrased as something that can fail.
+
+- The method is two campaigns — same seed (4242), same authored ground, same commanders, same
+  staffs, same number of ticks — in one of which somebody flies. Phase 5 already established that
+  the line moves with nobody flying at all, so "the ground changed" proves nothing without the
+  counterfactual, and the simulation's determinism is what makes the counterfactual free: every
+  difference between the two wars at the end is the sorties and nothing else.
+- What it measures, over 240 ticks: six SEAD sorties, one per launcher site the corridor authors, at
+  a gap of two ticks so the pilot has a campaign behind him rather than one busy minute. Over the
+  district the chain started in — `surfers` — the flown war ends at 1.00 friendly air against the
+  mirror's 0.19. `CLEAR_AIR` is 0.55 and `DENIED_AIR` 0.45, so the twins sit on opposite sides of
+  the staff's own two lines, and the assertion is made against those constants rather than a figure
+  invented in the test. Ground over the same district ends 0.89 against 0.80; five districts
+  (`banora`, `lennbrook`, `neurum`, `pointer`, `tweed_heads`) belong to somebody different; and the
+  war nobody flew is still offering the job that was flown. Blue holds 17 districts in both — the
+  line moved in five places and did not, on balance, advance, which is what six sorties over a
+  32-district front are worth and is recorded here rather than smoothed over.
+- The quit lands at tick 12: the last site is down, the staff has written its success, and the air
+  bought over it is 0.79. The reload comes back with the same owner, the same ground and air to
+  the term, no launcher standing, the same cards carrying the same results — and then runs twelve
+  more ticks and moves ground, which is the difference between a save and a recording of one. That
+  is the campaign that needed the registry in the file (version 2, above): without the sites' last
+  report, the reloaded war re-derived every launcher from an empty field, put the cover back and
+  took the air away again.
+- §35's order of battle is one the corridor does not have, and the third section is the honest
+  version of the gap: it counts what `war_objects` really authors (6 launcher sites, airfields, and
+  RADAR / SUPPLY_DEPOT / COMMAND_POST all exactly zero) and then asserts the consequence — across
+  240 ticks the staff's board never once raises a STRIKE. A live launcher is a SEAD by §17's own
+  rule and a dead one is not a target, so §35's MISSION 3 has nothing to be flown against in this
+  theatre. INTERCEPT and GROUND_INTERDICTION cards do appear; a bomb package never does. Padding the
+  theatre so the demonstration reads better is the thing that section exists to catch (§25, §38).
+- Gotcha (the first draft passed while asserting nothing): the sortie helper rebuilt the launcher
+  field from the whole authored site list every time it flew, which put every killed site straight
+  back up. The campaign now carries a `standing` handle-to-name dictionary and a sortie erases from
+  it, because the field's report is what the sites' health is derived from and a flown sortie has to
+  still be flown the next tick.
+- Gotcha: §33's board is a rolling window, so by tick 240 the cards the staff called off have been
+  pushed out of it. Successes have to be accumulated while they are published (`_note` every turn),
+  not reconstructed at the end.
 
 ## Real-theatre render check (2026-10-01)
 
