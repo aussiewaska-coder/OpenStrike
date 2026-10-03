@@ -863,12 +863,25 @@ eleven answers is how that happens without anybody meaning it to.
   changes (ticks 56, 74, 81, 98, 101, 105, 107, 113 — all of them `neurum` and `springbrook`, the
   two the commanders were actually fighting over), blue running 4 operations off 8 cards and red 4
   off 5, and the longest line exactly `PANEL_WIDTH` 100 columns.
-- Gotchas: `war_control.front()`'s `pressure` is a Vector2, not the float the first draft cast; front
-  rows go out as `[x, y]` pairs because a Vector2 has no JSON encoding the socket could carry;
+- Gotchas: `war_control.front()`'s `pressure` is a Vector2, not the float the first draft cast;
+  front rows go out as `[x, y]` pairs because a Vector2 has no JSON encoding the socket could
+  carry;
   Godot's `visibility_changed` is *deferred*, so a test that shows the overlay and awaits a frame
   still sees the empty panel it started with — drive `_process(REFRESH_SECONDS)` instead; and
   truncating both sides of a screen-versus-socket comparison with `.left(40)` makes it pass for the
   wrong reason, which is how the "they disagree" failure was first misread as a real one.
+- `tools/check_war_overlay.gd` is the pixel half: the headless test can prove the screen and the
+  socket carry the same text, but only a drawn frame says whether that text is legible over a live
+  world. It boots `scenes/main.tscn`, presses the same START the player presses (so the theatre
+  streams for real — ~40 s cold), drives Settings → Display → the switch, and photographs the
+  result: `xvfb-run -a -s "-screen 0 900x600x24" $GODOT_BIN --path . --rendering-driver opengl3
+  --script tools/check_war_overlay.gd -- --out=/tmp/wov`. Measured on the shipped corridor at
+  tick 0: 11 lines, 693 characters, a 560×215 plate at the top-left of a 900×600 screen, over half
+  of whose pixels the switch visibly changes.
+- Gotchas found by that check: Godot 4's `BaseButton` has no `toggle()` (the frame that should have
+  proved the panel appeared instead aborted the script — use `set_pressed(not is_pressed())`), and
+  comparing the overlay's text with the report's is a race unless the war is held still for one
+  refresh, because the campaign ticks on its own clock and the panel on a faster one.
 - `FAIL jet_audio_test.gd (exit 0)` — the documented "1 resources still in use at exit" flake — came
   up once in the §37 suite run (145/146). Re-running it alone reproduced it, and re-running it again
   identically passed, so per the rule above no teardown workaround was added. `--check-only` on
