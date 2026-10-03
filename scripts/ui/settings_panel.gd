@@ -12,6 +12,7 @@ signal weather_cycled
 signal input_monitor_toggled(enabled: bool)
 signal thumb_controls_toggled(enabled: bool)
 signal tap_lock_toggled(enabled: bool)
+signal war_overlay_toggled(enabled: bool)
 signal raid_restarted
 signal hostiles_toggled
 signal runway_start_toggled
@@ -49,6 +50,7 @@ var _weather_volume_button: Button
 var _monitor_button: CheckButton
 var _thumb_button: CheckButton
 var _tap_lock_button: CheckButton
+var _war_overlay_button: CheckButton
 var _hostiles_button: Button
 var _runway_button: Button
 var _runway_card: VBoxContainer
@@ -187,6 +189,16 @@ func _ready() -> void:
 	_tap_lock_button.custom_minimum_size.y = 56
 	_tap_lock_button.toggled.connect(func(on: bool): tap_lock_toggled.emit(on))
 	hud.add_child(_tap_lock_button)
+
+	# §37's panel is a developer's instrument, not a control, and it is filed under that word so a
+	# player looking at this page knows nothing in it changes how the aircraft flies.
+	var developer := _card(display, "Developer",
+		"Read-only views of the simulation. Nothing here changes the flight or the fight.")
+	_war_overlay_button = CheckButton.new()
+	_war_overlay_button.text = "Debug war overlay"
+	_war_overlay_button.custom_minimum_size.y = 56
+	_war_overlay_button.toggled.connect(func(on: bool): war_overlay_toggled.emit(on))
+	developer.add_child(_war_overlay_button)
 
 	var cache := _card(_pages[3], "Downloaded maps", "Imagery and elevation stay available offline. Clearing the cache frees space; areas will download again when you fly there.")
 	_cache_label = _label("", ACCENT, 24)
@@ -411,6 +423,10 @@ func set_thumb_controls_state(enabled: bool) -> void:
 
 func set_tap_lock_state(enabled: bool) -> void:
 	_tap_lock_button.set_pressed_no_signal(enabled)
+
+
+func set_war_overlay_state(enabled: bool) -> void:
+	_war_overlay_button.set_pressed_no_signal(enabled)
 
 
 func set_time_text(text: String) -> void:

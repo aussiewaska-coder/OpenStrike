@@ -820,6 +820,61 @@ line, phrased as something that can fail.
   pushed out of it. Successes have to be accumulated while they are published (`_note` every turn),
   not reconstructed at the end.
 
+## The debug read-out of the war (2026-10-03, Battle Map V2 §37)
+
+`scripts/war/war_report.gd` answers §37's list — tick, ownership, air and ground control, what each
+commander is doing, what each staff has on its board, the purse, object state, and why a mission or
+a district changed — in one place, and the telemetry socket, the on-screen overlay and
+`tests/war_report_test.gd` all read that one place. It was worth stating because `main.gd` already
+carried a `_war_sample` and a `_command_sample` that answered eleven of the same questions a second
+time: those are gone, and the delegate to `war_report.sample()`. A debug panel that disagrees with
+the game about what the campaign is doing is worse than no panel, and two copies formatting the same
+eleven answers is how that happens without anybody meaning it to.
+
+- What the report does *not* do is measure anything or decide anything. Every value is one a module
+  already publishes, nothing is written back, and nothing is smoothed or picked between: a district
+  is printed with its signed balance (what the director fights over) *and* its 0..1 shares (what the
+  control table publishes), because those are two different published facts and a panel that quietly
+  chooses one is what makes an emergent bug unreadable.
+- "Why the territory changed" is the only genuinely new surface, and it belongs to the director, not
+  the panel: `_settle()` records a change into a bounded log (`CHANGE_KEEP := 8`) at the instant it
+  latches an owner, with the reason naming the thresholds that actually fired — `"... turned to
+  FRIENDLY after 3 settled ticks: FRIENDLY holds 0.60 of the ground against 0.05, a balance of +0.53
+  past the 0.50 band, with the weaker side under the 0.10 ownership floor."` Written at flip time
+  rather than reconstructed later, because §33's board is a rolling window and by then the numbers
+  that flipped the district are gone.
+- The saved row (`SAVED_CHANGE`) deliberately carries no district name: the registry's own record is
+  the one author of what a place is called, so the report looks the name up when it prints (§25).
+  `changes` is optional on import, so files written before §37 still load, and a row naming a
+  district that is not on the map is refused.
+- Held is counted over the regions the map knows and the rows printed beside it are the districts the
+  war fights over, which are not the same set: this corridor authors 32 regions and seats 31
+  districts, because `war_director._seat()` skips a region owned by NEUTRAL — open sea takes no part
+  in a land war. The panel therefore says "over 31 of 32 regions" rather than reconciling the two
+  into one number that would be a lie about a perfectly ordinary fact.
+- `scripts/ui/war_debug_overlay.gd` is a code-built `PanelContainer` at `z_index 32`, mouse-ignored,
+  hidden at boot, doing no work at all while hidden (no paint on `read_from`, `_process` returns
+  early), refreshing every 0.5 s once shown. It is reached from Settings → Display → Developer →
+  "Debug war overlay" and remembered through `_save_ui_flag("war_overlay")` — filed under that word
+  on purpose, so a player on that page can see that nothing in it changes how the aircraft flies
+  (§30).
+- Measured on the shipped corridor, seed 4242, 120 ticks: 31 districts over 32 regions, held
+  FRIENDLY 16 / ENEMY 10 / CONTESTED 5 / NEUTRAL 1, 17 front segments, 10 objects, 8 remembered
+  changes (ticks 56, 74, 81, 98, 101, 105, 107, 113 — all of them `neurum` and `springbrook`, the
+  two the commanders were actually fighting over), blue running 4 operations off 8 cards and red 4
+  off 5, and the longest line exactly `PANEL_WIDTH` 100 columns.
+- Gotchas: `war_control.front()`'s `pressure` is a Vector2, not the float the first draft cast; front
+  rows go out as `[x, y]` pairs because a Vector2 has no JSON encoding the socket could carry;
+  Godot's `visibility_changed` is *deferred*, so a test that shows the overlay and awaits a frame
+  still sees the empty panel it started with — drive `_process(REFRESH_SECONDS)` instead; and
+  truncating both sides of a screen-versus-socket comparison with `.left(40)` makes it pass for the
+  wrong reason, which is how the "they disagree" failure was first misread as a real one.
+- `FAIL jet_audio_test.gd (exit 0)` — the documented "1 resources still in use at exit" flake — came
+  up once in the §37 suite run (145/146). Re-running it alone reproduced it, and re-running it again
+  identically passed, so per the rule above no teardown workaround was added. `--check-only` on
+  `main.gd` always reports `Identifier not found: LocationService` because autoloads are invisible to
+  it; that is true of HEAD too and is not a §37 regression.
+
 ## Real-theatre render check (2026-10-01)
 
 - `tools/check_battle_map_terrain.gd` is the geographic half of the pixel check:

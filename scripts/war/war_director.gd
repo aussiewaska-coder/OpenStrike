@@ -76,6 +76,13 @@ const CONTESTED_HOLD := 0.5
 ## keep moving on every one of those three ticks.
 const SETTLE_TICKS := 3
 
+## How many changes the war remembers. §37's overlay reads this to answer "why did that district
+## just flip", which is a question about the last thing that happened rather than about the whole
+## campaign -- and a campaign that has been running for an hour does not need a longer list to
+## answer it. It is kept in the save for the same reason the operations are: a reloaded war that
+## had forgotten its own front line would be a war with nothing to explain.
+const CHANGE_KEEP := 8
+
 ## Below this neither side is meaningfully present and the district keeps the ground it
 ## had, rather than being claimed by whichever fraction happened to survive. Open
 ## country is not a trophy.
@@ -256,6 +263,12 @@ var _sites := []
 var _neighbours := {}
 var _resources := {}
 var _losses := {}
+## The last few times a district changed hands, with the numbers that did it. §37 asks for
+## "reason territory changed", and a reason is only available at the moment of the change: the
+## balance, both presences and how long the candidate had been latched are all overwritten by the
+## next tick. This is a record of what happened rather than a second copy of what is true -- the
+## district table above stays the only authority on who holds what.
+var _changes := []
 var _tick := 0
 var _elapsed := 0.0
 var _length := TICK_DEFAULT
@@ -282,6 +295,7 @@ func setup(control: RefCounted, geography: RefCounted, objects: RefCounted = nul
 	_sites = []
 	_resources = {}
 	_losses = {}
+	_changes = []
 	_tick = 0
 	_elapsed = 0.0
 	if control == null or geography == null:
@@ -311,6 +325,7 @@ func setup(control: RefCounted, geography: RefCounted, objects: RefCounted = nul
 	_sites = []
 	_resources = {}
 	_losses = {}
+	_changes = []
 	_rng.seed = OPENING_SEED
 	_seat()
 	_register()
@@ -457,6 +472,12 @@ func losses(faction: String) -> Dictionary:
 
 func battles() -> Array:
 	return _battles.values()
+
+
+## The last districts that changed hands, oldest first, each with the arithmetic that did it. Read
+## from the end for the most recent; §37's overlay prints the tail.
+func changes() -> Array:
+	return _changes
 
 
 ## The fights, hardest first. This is what a mission director is handed: not a list of
@@ -768,9 +789,12 @@ func _settle() -> void:
 		elif String(own["pending"]) == candidate:
 			own["pending_ticks"] = int(own["pending_ticks"]) + 1
 			if int(own["pending_ticks"]) >= SETTLE_TICKS:
+				var was := String(own["owner"])
+				var latched := int(own["pending_ticks"])
 				own["owner"] = candidate
 				own["pending"] = ""
 				own["pending_ticks"] = 0
+				_record_change(district_id, own, was, candidate, blue, red, latched)
 		else:
 			own["pending"] = candidate
 			own["pending_ticks"] = 1
@@ -778,6 +802,55 @@ func _settle() -> void:
 		if not (holding in CONTROL.BLOCS):
 			holding = _stronger_side(own, blue, red)
 		own["supply"] = clampf(supply(holding) * (1.0 - 0.45 * fire), 0.0, 1.0)
+
+
+## The change, written down at the only moment it can be explained. Every term here is one the
+## settle had already computed for the owner test; nothing is measured again, and the district's own
+## row stays the only statement of who holds it.
+func _record_change(district_id: String, own: Dictionary, was: String, now: String,
+		blue: float, red: float, latched: int) -> void:
+	_changes.append({
+		"tick": _tick,
+		"id": district_id,
+		"from": was,
+		"to": now,
+		"ground": float(own["ground"]),
+		"air": float(own["air"]),
+		"blue": blue,
+		"red": red,
+		"latched": latched,
+		"reason": _change_reason(own, was, now, blue, red, latched),
+	})
+	while _changes.size() > CHANGE_KEEP:
+		_changes.pop_front()
+
+
+## The rule that fired, in the numbers it fired on. Which threshold is named depends on what the
+## district was called beforehand -- both tests are wider to leave than to enter, and a reason that
+## quoted the entering floor for a district that was already contested would be a reason that did
+## not match the arithmetic that was actually done.
+func _change_reason(own: Dictionary, was: String, now: String, blue: float, red: float,
+		latched: int) -> String:
+	var title := String(own["name"])
+	var balance := float(own["ground"])
+	var weaker := minf(blue, red)
+	# The same `held` test `_derive_owner` ran: what the district was called beforehand decides
+	# which of each pair of thresholds it was measured against.
+	var keep := was == CONTROL.CONTESTED
+	var entry := OWNED_KEEP if keep else OWNED_MIN
+	var band := CONTESTED_HOLD if keep else CONTESTED_BAND
+	if now == CONTROL.CONTESTED:
+		var shared := "%s holds %.2f of the ground there and %s %.2f" % [
+			CONTROL.FRIENDLY, blue, CONTROL.ENEMY, red]
+		if weaker >= entry:
+			return "%s is contested: %s, and %.2f on the weaker side is over the %.2f a district " \
+				% [title, shared, weaker, entry] + "needs to be held rather than shared."
+		return "%s is contested: %s, and the balance closed to %+.2f, inside the %.2f band either " \
+			% [title, shared, balance, band] + "side has to clear to call it its own."
+	var won := "%s turned to %s after %d settled ticks" % [title, now, latched]
+	return "%s: %s holds %.2f of the ground against %.2f, a balance of %+.2f past the %.2f band, " \
+		% [won, now, maxf(blue, red), weaker, balance, band] \
+		+ "with the weaker side under the %.2f ownership floor." % entry
 
 
 ## What the brief says every district must carry, written into the table the map reads.
@@ -963,6 +1036,7 @@ func export_state() -> Dictionary:
 			CONTROL.FRIENDLY: {"ground": float(_losses[CONTROL.FRIENDLY]["ground"])},
 			CONTROL.ENEMY: {"ground": float(_losses[CONTROL.ENEMY]["ground"])},
 		},
+		"changes": _changes,
 	}
 
 
@@ -994,6 +1068,17 @@ func import_state(state: Dictionary) -> bool:
 	for key in saved_battles:
 		if not _holds(saved_battles[key], SAVED_BATTLE):
 			return false
+	# The change log is the one term a file written before §37 does not carry, and its absence is
+	# not a reason to refuse a campaign: no memory of the front's history is exactly what such a
+	# file describes. What is refused is a half-written entry, or one about a district this theatre
+	# does not have.
+	var recorded: Variant = state.get("changes", [])
+	if not (recorded is Array):
+		return false
+	for record in recorded as Array:
+		if not (record is Dictionary) or not _holds(record, SAVED_CHANGE) \
+				or not _districts.has(String((record as Dictionary)["id"])):
+			return false
 	var saved_fields := _table(state, "facilities")
 	for object_id in _facilities:
 		var record: Variant = saved_fields.get(str(int(object_id)))
@@ -1021,6 +1106,9 @@ func import_state(state: Dictionary) -> bool:
 	_contact = {}
 	for edge in state.get("contact", []):
 		_contact[String(edge)] = true
+	_changes = []
+	for record in recorded as Array:
+		_changes.append(_kept(record as Dictionary, SAVED_CHANGE))
 	for object_id in _facilities:
 		var saved_field: Dictionary = saved_fields.get(str(int(object_id)), {})
 		if saved_field.is_empty():
@@ -1057,6 +1145,13 @@ const SAVED_BATTLE := ["id", "from", "to", "attacker", "defender", "front_m", "t
 const SAVED_PURSE := ["supply", "spent"]
 
 const SAVED_LOSSES := ["ground"]
+
+## The shape of a remembered change. `reason` is in here because it is the answer §37 asks for and
+## it cannot be recomputed later: the balance and the two presences it was read off are gone by the
+## next tick. `name` is not, since the geography the map loaded already knows what the district is
+## called -- which is the §25 rule, applied to a log line.
+const SAVED_CHANGE := ["tick", "id", "from", "to", "ground", "air", "blue", "red", "latched",
+	"reason"]
 
 
 ## A section of the file that must be a table. Read through a helper rather than cast straight

@@ -120,6 +120,7 @@ const TACTICAL_MFD := preload("res://scripts/ui/tactical_mfd.gd")
 const TACTICAL_NAV := preload("res://scripts/ui/tactical_navigation.gd")
 const WAYPOINT_HUD := preload("res://scripts/ui/waypoint_hud.gd")
 const THUMB_CONTROLS := preload("res://scripts/ui/thumb_controls.gd")
+const WAR_OVERLAY := preload("res://scripts/ui/war_debug_overlay.gd")
 const RUNWAYS := preload("res://scripts/world/runways.gd")
 const WAR_REGIONS := preload("res://scripts/war/war_regions.gd")
 const WAR_CONTROL := preload("res://scripts/war/war_control.gd")
@@ -128,6 +129,7 @@ const WAR_DIRECTOR := preload("res://scripts/war/war_director.gd")
 const MISSION_STAFF := preload("res://scripts/war/mission_director.gd")
 const COMMANDER := preload("res://scripts/war/faction_commander.gd")
 const CAMPAIGN_SAVE := preload("res://scripts/war/campaign_save.gd")
+const WAR_REPORT := preload("res://scripts/war/war_report.gd")
 const STARTUP_PANEL := preload("res://scripts/ui/startup_panel.gd")
 ## Thumb sticks are the only way to fly without a gamepad, so the choice is
 ## worth keeping between runs. With no entry saved, the hardware decides.
@@ -235,6 +237,13 @@ var _foe_commander := COMMANDER.new()
 ## commander has committed to, and the only reason a wave of hostile jets arrives the size and
 ## at the hour that a pattern of flying earns.
 var _foe_tasks := MISSION_STAFF.new()
+## §37's read-out. It is seated on the six modules above and writes nothing to any of them: the
+## panel, the telemetry socket and the test that checks both all ask this one object the same
+## question, so there is only ever one place the campaign's own numbers could have been rounded,
+## filtered or invented. See `scripts/war/war_report.gd`.
+var _war_report := WAR_REPORT.new()
+## The panel `war_report` writes, when the developer has asked for it. See `_ready`.
+var _war_overlay: Control
 ## The campaign in a file. §28 asks for one thing -- break an airbase, quit, reload, find the
 ## damage and its consequences still there -- and this is the only object in the project that
 ## touches the disk on the war's behalf. It writes the six modules above and hands them back, it
@@ -323,6 +332,7 @@ func _ready() -> void:
 	settings_panel.input_monitor_toggled.connect(func(on: bool): gamepad_diagnostic.get_parent().visible = on)
 	settings_panel.thumb_controls_toggled.connect(_on_thumb_controls_toggled)
 	settings_panel.tap_lock_toggled.connect(_on_tap_lock_toggled)
+	settings_panel.war_overlay_toggled.connect(_on_war_overlay_toggled)
 	settings_panel.raid_restarted.connect(_start_raid)
 	settings_panel.hostiles_toggled.connect(_on_hostiles_toggled)
 	_mission.raid_ended.connect(_on_raid_ended)
@@ -650,6 +660,14 @@ func _build_hud() -> void:
 	_tracker.set_range(_radar.range_m())
 	_tape = BEARING_TAPE.new()
 	ui_layer.add_child(_tape)
+	# §37's read-out, on the screen as well as on the socket. It is built before any theatre is
+	# loaded and it stays hidden until asked for; the report it reads is seated later, per theatre,
+	# by the same call that seats the commanders.
+	_war_overlay = WAR_OVERLAY.new()
+	_war_overlay.name = "WarDebugOverlay"
+	ui_layer.add_child(_war_overlay)
+	_war_overlay.read_from(_war_report.text)
+	_war_overlay.visible = _load_ui_flag("war_overlay", false)
 	# The input monitor is opt-in from settings now, not a fixture.
 	gamepad_diagnostic.get_parent().visible = false
 	_thumb = THUMB_CONTROLS.new()
@@ -696,6 +714,15 @@ func _on_thumb_controls_toggled(enabled: bool) -> void:
 func _on_tap_lock_toggled(enabled: bool) -> void:
 	_tap_lock_enabled = enabled
 	_save_ui_flag("tap_to_lock", enabled)
+	_refresh_settings()
+
+
+## The overlay is the war's own text, so turning it on asks for no new state anywhere: the panel it
+## shows is the panel the telemetry socket is already sending. A developer leaves it on between
+## flights for the same reason nobody leaves a stopwatch switched off mid-race.
+func _on_war_overlay_toggled(enabled: bool) -> void:
+	_war_overlay.visible = enabled
+	_save_ui_flag("war_overlay", enabled)
 	_refresh_settings()
 
 
@@ -1204,6 +1231,12 @@ func _load_streamed_region(region: Dictionary) -> void:
 	_foe_tasks.set_faction(WAR_CONTROL.ENEMY)
 	_foe_tasks.setup(_war, objects_ref, regions_ref)
 	_foe_tasks.set_commander(_foe_commander if _foe_commander.is_ready() else null)
+	# The debug read-out is seated last and on all six of them, because it is the only consumer
+	# that has to see the campaign the way the whole chain ended up looking rather than the way one
+	# of its links describes itself. It holds references and writes nothing: re-seating it on a new
+	# theatre is the same one line.
+	_war_report.setup(_war, _war_control, _war_objects, _own_commander, _foe_commander,
+		_tasks, _foe_tasks)
 	# The campaign comes back before anything is drawn over it: the map, the MFD's board and the
 	# enemy's intent are all read off these six tables, and a reload that restored them after the
 	# first frame would show one tick of a war that had already happened.
@@ -1814,94 +1847,24 @@ func _telemetry_sample() -> Dictionary:
 	return sample
 
 
-## §37's window onto the strategic layer, on the same socket as the frame counters: what the
-## front looks like, what each commander has committed to and the sentence it gave for it, and
-## what each staff has on its board. Nothing in it is measured for the overlay -- every field is
-## a table that was already published for somebody else -- so when the map and the numbers
-## disagree, the disagreement is real and the war is the thing that is wrong. A theatre with no
-## districts seated reports nothing rather than the last theatre's answers.
+## §37's window onto the strategic layer, on the same socket as the frame counters. The document is
+## written by `war_report.gd`, which is also what the overlay on the screen prints, so the two
+## cannot disagree about what the campaign said -- and every field in it is a table that was already
+## published for somebody else, which is what makes a disagreement here worth chasing. The one term
+## added below is `hostile_effort`: how much of the enemy's air is committed over the ground the
+## pilot is standing on, the only question on this document the campaign's own tables cannot answer
+## because it is a question about where the aircraft is. A theatre with no districts reports
+## nothing rather than the last theatre's answers.
 func _war_sample() -> Dictionary:
-	var ids: Array = _war.districts()
-	if ids.is_empty():
+	var report: Dictionary = _war_report.sample()
+	if report.is_empty():
 		return {}
-	var ground := []
-	for id in ids:
-		var state: Dictionary = _war.district(String(id))
-		ground.append({
-			"id": String(state["id"]),
-			"name": String(state["name"]),
-			"owner": String(state["owner"]),
-			"value": float(state["value"]),
-			"air": float(state["air"]),
-			"ground": float(state["ground"]),
-			"fire": clampf(float(state["under_fire"]), 0.0, 1.0),
-		})
-	var fields := []
-	for record: Dictionary in _war.facilities():
-		fields.append({
-			"name": String(record["name"]),
-			"faction": String(record["faction"]),
-			"region": String(record["region_id"]),
-			"state": String(record["state"]),
-			"operational": float(record["operational"]),
-			"aircraft": int(record["aircraft"]),
-			"capacity": int(record["capacity"]),
-			"sorties": float(record["sorties"]),
-		})
 	var where := Vector2.ZERO
 	var vehicle := _vehicle()
 	if vehicle != null:
 		where = Vector2(vehicle.global_position.x, vehicle.global_position.z)
-	return {
-		"tick": _war.tick_number(),
-		"districts": ground,
-		"airbases": fields,
-		"friendly": _command_sample(_own_commander, _tasks),
-		"enemy": _command_sample(_foe_commander, _foe_tasks),
-		"hostile_effort": _foe_commander.effort_at(where),
-	}
-
-
-## One side, told twice: what its commander is doing and what its staff is offering because of
-## it. The factors ride along because a score that cannot be taken apart is not a reason.
-func _command_sample(commander: COMMANDER, staff: MISSION_STAFF) -> Dictionary:
-	var operations := []
-	for record: Dictionary in commander.operations():
-		var factors: Dictionary = record["factors"]
-		operations.append({
-			"id": String(record["id"]),
-			"label": String(record["label"]),
-			"score": float(record["score"]),
-			"held": int(record["held"]),
-			"air": bool(record["air_effort"]),
-			"reason": String(record["reason"]),
-			"value": float(factors["value"]),
-			"urgency": float(factors["urgency"]),
-			"exposure": float(factors["exposure"]),
-			"force": float(factors["force"]),
-			"priority": float(factors["priority"]),
-			"reserve": float(factors["reserve"]),
-		})
-	var remembered: Dictionary = commander.snapshot()["pattern"]
-	var offers := []
-	for record: Dictionary in staff.board():
-		offers.append({
-			"id": String(record["id"]),
-			"callsign": String(record["callsign"]),
-			"type": String(record["type"]),
-			"region": String(record["region_name"]),
-			"priority": int(record["priority"]),
-			"score": float(record["score"]),
-			"operation": String(record.get("operation", "")),
-			"reason": String(record.get("reason", "")),
-		})
-	return {
-		"ready": commander.is_ready(),
-		"force": commander.available_force(),
-		"operations": operations,
-		"pattern": remembered,
-		"board": offers,
-	}
+	report["hostile_effort"] = _foe_commander.effort_at(where)
+	return report
 
 
 func _map_diagnostic_text() -> String:
@@ -2383,6 +2346,7 @@ func _refresh_settings() -> void:
 	settings_panel.set_weather_text("WEATHER: %s" % weather.preset_name())
 	settings_panel.set_thumb_controls_state(_thumb_enabled)
 	settings_panel.set_tap_lock_state(_tap_lock_enabled)
+	settings_panel.set_war_overlay_state(_war_overlay.visible)
 	var report: Dictionary = TileClient.cache_report()
 	settings_panel.set_cache_report(int(report["files"]), int(report["bytes"]))
 	settings_panel.set_imagery_text(TileClient.imagery_override, TileClient.mapbox_ready())
