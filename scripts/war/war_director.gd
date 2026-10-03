@@ -317,6 +317,13 @@ func setup(control: RefCounted, geography: RefCounted, objects: RefCounted = nul
 	return not _districts.is_empty()
 
 
+## Whether this war is actually being fought over something. A director that refused its region
+## has no districts to move, and a save layer that wrote one out would replace a campaign with an
+## empty table carrying the same name.
+func is_ready() -> bool:
+	return _control != null and not _districts.is_empty()
+
+
 ## The campaign's clock, clamped to the band the brief sets so that a caller cannot
 ## accidentally ask this module for per-frame work.
 func set_tick_length(seconds: float) -> void:
@@ -394,6 +401,14 @@ func simulate(seconds: float) -> int:
 
 func districts() -> Array:
 	return _districts.keys()
+
+
+## Which ground this war is being fought over, read off the registry that seated it. A save file
+## names the theatre it was written in, and this is the answer it has to match -- the one question
+## a restored campaign cannot be asked twice.
+func theatre() -> String:
+	return String(_objects.call("theatre")) \
+		if _objects != null and _objects.has_method("theatre") else ""
 
 
 ## A district's simulated state. The signed balances are here and not in the published
@@ -867,6 +882,231 @@ func snapshot() -> Dictionary:
 		},
 		"losses": _losses,
 		"facilities": _facilities.values(),
+	}
+
+
+## ---------------------------------------------------------------------- §28's save
+
+## The fields a save owns about a facility: everything the campaign computes for a field, and
+## none of the things the registry authors for it -- its name, its type, the faction it belongs
+## to, where it stands. A reload writes these onto a field the theatre put back there.
+const SAVED_FIELD := ["damage", "wear", "repair_rate", "operational", "aircraft", "fuel",
+	"sorties", "radar_support", "state"]
+
+
+## The campaign written out, in the same shapes it is held in. Every field here is one of the
+## list §28 asks for -- ownership, air control, ground control, facility health and repair
+## progress, aircraft losses, ground-force strength, supply and campaign time -- and nothing
+## outside it is: no particles, no projectiles, no node paths, no positions. A field's own
+## `world_position` and its name are not saved because the registry authors those from the
+## theatre's data on the way back up, and a save that carried them would be a second copy of a
+## thing that already has one home (§25).
+func export_state() -> Dictionary:
+	var districts := {}
+	for id in _districts:
+		var district_id := String(id)
+		var own: Dictionary = _districts[district_id]
+		districts[district_id] = {
+			"owner": String(own["owner"]),
+			"ground": float(own["ground"]),
+			"air": float(own["air"]),
+			"infrastructure": float(own["infrastructure"]),
+			"intel": float(own["intel"]),
+			"supply": float(own["supply"]),
+			"under_fire": float(own["under_fire"]),
+			"presence": _both(own["presence"]),
+			"seen": _both(own["seen"]),
+			"pending": String(own["pending"]),
+			"pending_ticks": int(own["pending_ticks"]),
+		}
+	var fighting := {}
+	for key in _battles:
+		var battle: Dictionary = _battles[key]
+		fighting[String(key)] = {
+			"id": String(battle["id"]),
+			"from": String(battle["from"]),
+			"to": String(battle["to"]),
+			"attacker": String(battle["attacker"]),
+			"defender": String(battle["defender"]),
+			"front_m": float(battle["front_m"]),
+			"target_value": float(battle["target_value"]),
+			"target_region": String(battle["target_region"]),
+			"odds": float(battle["odds"]),
+			"intensity": float(battle["intensity"]),
+			"momentum": float(battle["momentum"]),
+			"opened": int(battle["opened"]),
+			"last": int(battle["last"]),
+			"exhausted": bool(battle["exhausted"]),
+			"status": String(battle["status"]),
+		}
+	var worn := {}
+	for object_id in _facilities:
+		var field: Dictionary = _facilities[object_id]
+		var kept := {}
+		for term in SAVED_FIELD:
+			kept[term] = field[term]
+		worn[str(int(object_id))] = kept
+	return {
+		"tick": _tick,
+		"elapsed": _elapsed,
+		"length": _length,
+		"seed": _rng.seed,
+		"districts": districts,
+		"battles": fighting,
+		"contact": _contact.keys(),
+		"facilities": worn,
+		"resources": {
+			CONTROL.FRIENDLY: _purse(CONTROL.FRIENDLY),
+			CONTROL.ENEMY: _purse(CONTROL.ENEMY),
+		},
+		"losses": {
+			CONTROL.FRIENDLY: {"ground": float(_losses[CONTROL.FRIENDLY]["ground"])},
+			CONTROL.ENEMY: {"ground": float(_losses[CONTROL.ENEMY]["ground"])},
+		},
+	}
+
+
+## Read it back. The rule is the one every other entry point in this module already keeps: a
+## state that does not belong to the theatre currently seated is refused outright rather than
+## partly applied, because a war holding last corridor's districts would move ground nobody can
+## see and report an owner nobody can reach. What is applied is applied whole, on top of the
+## seated opening, so a save from an earlier tick of the same corridor reloads exactly.
+func import_state(state: Dictionary) -> bool:
+	if _control == null or _districts.is_empty() or state.is_empty():
+		return false
+	var saved_districts := _table(state, "districts")
+	if saved_districts.is_empty() or saved_districts.size() != _districts.size():
+		return false
+	for id in saved_districts:
+		var district_id := String(id)
+		var saved: Variant = saved_districts[id]
+		if not _districts.has(district_id) or not _holds(saved, SAVED_DISTRICT):
+			return false
+		var owner := String((saved as Dictionary)["owner"])
+		if not owner in CONTROL.OWNERS:
+			return false
+	for faction in CONTROL.BLOCS:
+		var bloc := String(faction)
+		if not _holds(_purse_of(state, bloc), SAVED_PURSE) \
+				or not _holds(_loss_of(state, bloc), SAVED_LOSSES):
+			return false
+	var saved_battles := _table(state, "battles")
+	for key in saved_battles:
+		if not _holds(saved_battles[key], SAVED_BATTLE):
+			return false
+	var saved_fields := _table(state, "facilities")
+	for object_id in _facilities:
+		var record: Variant = saved_fields.get(str(int(object_id)))
+		if record != null and not _holds(record, SAVED_FIELD):
+			return false
+	# Everything above either holds or the campaign is untouched; from here the state goes on
+	# whole.
+	for district_id in _districts:
+		var own: Dictionary = _districts[String(district_id)]
+		var saved: Dictionary = saved_districts[String(district_id)]
+		own["owner"] = String(saved["owner"])
+		own["ground"] = float(saved["ground"])
+		own["air"] = float(saved["air"])
+		own["infrastructure"] = float(saved["infrastructure"])
+		own["intel"] = float(saved["intel"])
+		own["supply"] = float(saved["supply"])
+		own["under_fire"] = float(saved["under_fire"])
+		own["presence"] = _both(saved["presence"])
+		own["seen"] = _both(saved["seen"])
+		own["pending"] = String(saved["pending"])
+		own["pending_ticks"] = int(saved["pending_ticks"])
+	_battles = {}
+	for key in saved_battles:
+		_battles[String(key)] = _kept(saved_battles[key] as Dictionary, SAVED_BATTLE)
+	_contact = {}
+	for edge in state.get("contact", []):
+		_contact[String(edge)] = true
+	for object_id in _facilities:
+		var saved_field: Dictionary = saved_fields.get(str(int(object_id)), {})
+		if saved_field.is_empty():
+			continue
+		var field: Dictionary = _facilities[object_id]
+		for term in SAVED_FIELD:
+			field[term] = saved_field[term]
+	for faction in CONTROL.BLOCS:
+		var bloc := String(faction)
+		var purse: Dictionary = _purse_of(state, bloc)
+		_resources[bloc] = {"supply": float(purse["supply"]), "spent": float(purse["spent"])}
+		var lost: Dictionary = _loss_of(state, bloc)
+		_losses[bloc] = {"ground": float(lost["ground"])}
+	_length = clampf(float(state.get("length", _length)), TICK_MIN, TICK_MAX)
+	_tick = int(state.get("tick", 0))
+	_elapsed = clampf(float(state.get("elapsed", 0.0)), 0.0, _length)
+	set_seed(int(state.get("seed", _rng.seed)))
+	# The registry and the control table are the map's copies of these facts, and `_publish` is
+	# the one place this module writes them. A reload that hand-rolled its own version of that
+	# write would be a second author of the same ground (§25), and would drift.
+	_publish()
+	return true
+
+
+## The terms a district must arrive with. A file missing one is not a campaign with that term
+## left at its opening -- the read below would index straight through to a crash or, worse,
+## silently carry an opening strength a save never described -- so the whole state is refused.
+const SAVED_DISTRICT := ["owner", "ground", "air", "infrastructure", "intel", "supply",
+	"under_fire", "presence", "seen", "pending", "pending_ticks"]
+
+const SAVED_BATTLE := ["id", "from", "to", "attacker", "defender", "front_m", "target_value",
+	"target_region", "odds", "intensity", "momentum", "opened", "last", "exhausted", "status"]
+
+const SAVED_PURSE := ["supply", "spent"]
+
+const SAVED_LOSSES := ["ground"]
+
+
+## A section of the file that must be a table. Read through a helper rather than cast straight
+## onto a typed variable, because a JSON document that arrived with a string where the districts
+## belong must be refused, not turned into a runtime error halfway through applying it.
+func _table(state: Dictionary, key: String) -> Dictionary:
+	var section: Variant = state.get(key, {})
+	return section if section is Dictionary else {}
+
+
+func _holds(record: Variant, terms: Array) -> bool:
+	if not (record is Dictionary):
+		return false
+	for term in terms:
+		if not (record as Dictionary).has(term):
+			return false
+	return true
+
+
+## Copy a saved record through its own list, so a key the file invented cannot walk into the
+## live campaign and be printed as a fact about the front.
+func _kept(record: Dictionary, terms: Array) -> Dictionary:
+	var copy := {}
+	for term in terms:
+		copy[term] = record[term]
+	return copy
+
+
+func _purse_of(state: Dictionary, faction: String) -> Dictionary:
+	return state.get("resources", {}).get(faction, {})
+
+
+func _loss_of(state: Dictionary, faction: String) -> Dictionary:
+	return state.get("losses", {}).get(faction, {})
+
+
+## A {FRIENDLY, ENEMY} pair, copied rather than shared, so a save file's dictionary and the
+## war's are never the same table.
+func _both(source: Dictionary) -> Dictionary:
+	return {
+		CONTROL.FRIENDLY: float(source.get(CONTROL.FRIENDLY, 0.0)),
+		CONTROL.ENEMY: float(source.get(CONTROL.ENEMY, 0.0)),
+	}
+
+
+func _purse(faction: String) -> Dictionary:
+	var purse: Dictionary = _resources.get(faction, {})
+	return {
+		"supply": float(purse.get("supply", 0.0)),
+		"spent": float(purse.get("spent", 0.0)),
 	}
 
 

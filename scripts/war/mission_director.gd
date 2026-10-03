@@ -339,6 +339,109 @@ func snapshot() -> Dictionary:
 	return {"tick": _tick, "faction": _faction, "serial": _serial, "missions": list}
 
 
+## ---------------------------------------------------------------------- §28's save
+
+## The board as it stands: every card still on it, with the outcome the flying world reported
+## against it, plus the calling-forward counter and the serial the next id comes from. A
+## resolved strike is part of the campaign's memory -- it is the reason a district is quiet --
+## and §28 asks for the strategic consequences to survive a reload, which they do not if the
+## staff forgets what it already flew.
+func export_state() -> Dictionary:
+	var list := []
+	for record: Dictionary in _missions:
+		list.append(record.duplicate(true))
+	var words := {}
+	for word in _words:
+		words[String(word)] = int(_words[word])
+	return {
+		"faction": _faction,
+		"tick": _tick,
+		"serial": _serial,
+		"words": words,
+		"missions": list,
+	}
+
+
+## Read it back onto the seated staff. Refused whole, as everywhere else in this module: a board
+## carrying another side's missions would task flights over districts its own war does not name,
+## and half a board restored is the failure mode nobody can see. `_by_id` is not saved because it
+## is the same dictionaries as `_missions`; the prune at the end of a tick rebuilds it from the
+## list and so does this.
+func import_state(state: Dictionary) -> bool:
+	if not _ready or state.is_empty():
+		return false
+	if String(state.get("faction", "")) != _faction:
+		return false
+	var list: Variant = state.get("missions", [])
+	if not (list is Array):
+		return false
+	for record in list:
+		if not _holds(record, SAVED_MISSION):
+			return false
+		var mission := record as Dictionary
+		if String(mission["faction"]) != _faction:
+			return false
+		if _district(String(mission["region_id"])).is_empty():
+			return false
+	var words := _section(state, "words")
+
+	_missions = []
+	_by_id = {}
+	for record in list:
+		var mission: Dictionary = _carried(record as Dictionary)
+		_missions.append(mission)
+		_by_id[String(mission["id"])] = mission
+	_words = {}
+	for word in words:
+		_words[String(word)] = int(words[word])
+	_tick = int(state.get("tick", _tick))
+	_serial = int(state.get("serial", _serial))
+	return true
+
+
+## The terms a card must arrive with. Everything the board prints comes off this list, so a save
+## that carries these carries the same card the pilot was offered.
+const SAVED_MISSION := ["id", "callsign", "type", "kind", "faction", "region_id", "region_name",
+	"primary_target", "target_name", "secondary_targets", "priority", "status", "threat_level",
+	"created_at", "expires_at", "outcome", "reason", "score", "operation", "basis", "briefing",
+	"strategic_effect"]
+
+
+## A card, put back the way the staff holds it. JSON has one number type, and this table keeps a
+## kind, a priority, two clock marks, a target id and a list of them as ints -- an id that came
+## back as `4013.0` would not match the registry's `4013`, and a `%d` on either prints the drift.
+func _carried(record: Dictionary) -> Dictionary:
+	var copy := record.duplicate(true)
+	for term in SAVED_WHOLE:
+		copy[term] = int(record[term])
+	var secondaries := []
+	for target in record["secondary_targets"]:
+		secondaries.append(int(target))
+	copy["secondary_targets"] = secondaries
+	if record.has("closed_at"):
+		copy["closed_at"] = int(record["closed_at"])
+	return copy
+
+
+const SAVED_WHOLE := ["kind", "priority", "created_at", "expires_at", "primary_target"]
+
+
+func _holds(record: Variant, terms: Array) -> bool:
+	if not (record is Dictionary):
+		return false
+	for term in terms:
+		if not (record as Dictionary).has(term):
+			return false
+	return true
+
+
+## A section of the file that must be a table: a string where the callsign counts belong reads
+## as an empty table, so a malformed save is refused rather than crashed on halfway through.
+func _section(state: Dictionary, key: String) -> Dictionary:
+	var found: Variant = state.get(key, {})
+	return found if found is Dictionary else {}
+
+
 ## ---------------------------------------------------------------- what it is offered over
 
 ## The eight questions the board is built from. Each returns the ground, and the thing on

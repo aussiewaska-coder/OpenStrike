@@ -696,6 +696,74 @@ the file in the GitHub web UI. Never paste PATs in chat; revoke after use.
   `jet_audio_runtime_test`), which flake 2 of 6 runs here against the 10 of 20 recorded in
   phase 5, and both print their `*_TEST_PASS` line first.
 
+## The campaign in a file (2026-10-03, Battle Map V2 phase 8)
+
+`scripts/war/campaign_save.gd` (§32's name) is the only thing in the project that touches the
+disk for the war: version 1, `user://campaign_save.json`, `capture`/`apply` over the five
+strategic modules and `write`/`read`/`exists`/`erase` around the file. Every module owns its own
+shape through a new `export_state()`/`import_state()` pair — the director's is districts, battles,
+contact edges, facility fields, purses, losses, tick/elapsed/length/seed; each commander's is its
+operations, focus, habit windows and the last reading it differences against; each staff's is its
+cards, callsign counters and serial. The save layer therefore has to know five names and nothing
+about their contents, which is what §28's "later campaign changes do not immediately invalidate
+saves" actually buys.
+
+- The whole of §28's list is covered, and the derivation is why some of it is not stored: airbase
+  health *is* strategic-object health and destroyed-object state, `aircraft` at the ramp *is*
+  aircraft losses, `presence` *is* ground-force strength, mission `status`/`outcome` *is* the
+  player's results. Nothing transient is written, and no position is: the registry re-authors
+  every field, site and tower from the region's own data, so a save carrying a `Vector2` would be
+  a second copy of a fact (§25) — and `JSON.stringify`, already used by the telemetry server,
+  cannot encode one anyway.
+- Reload goes back through the module's own front door: `import_state` ends with `_publish()`,
+  which is the one place the war writes the control table and the registry. An earlier draft
+  hand-rolled `refresh_situation()` + `refresh_airbases()` at the end of the read; that is the
+  same fact with two authors, and the second author had the wrong argument shape (`refresh_airbases`
+  wants a per-object dictionary, not the float that was passed).
+- `apply()` rolls back. Five modules restored in sequence is five chances to stop halfway, and the
+  first version did exactly that in the test: a swapped-faction board was refused *last*, by
+  which time the war and both commanders had already taken the new state. Now each module's own
+  `export_state()` is taken before it is overwritten and a later refusal replays those in reverse
+  through `import_state`, so a refusal cannot leave a campaign made of two wars.
+- Gotcha (found by the acceptance, not by reading): the owner guard rejected `CONTESTED`.
+  `CONTROL.OWNERS` is the four-token list; `BLOCS` is only the two that fight, and a third of the
+  corridor's districts are authored `CONTESTED`, so validating an owner against `BLOCS` refuses a
+  perfectly good save. Use `OWNERS`.
+- Gotcha: JSON has one number type. Every int comes back a float, and this campaign reads ints
+  without converting — `%d` on a restored operation printed `3.0`, and an `object_id` of `4013.0`
+  does not match the registry's `4013`. Each module therefore has a `SAVED_WHOLE` list and coerces
+  those terms on the way in.
+- Gotcha: `war.facility(id)` hands out the live Dictionary. Two reads of one field are two names
+  for the same numbers, so `damaged["damage"] > before["damage"]` in a test is comparing a table
+  with itself and can never be true. `.duplicate(true)` on the "before" read.
+- Gotcha: `String(value)` is not a general cast in 4.x — it raised `Invalid call 'String'
+  constructor` on region ids read out of a snapshot dictionary. `str(x) == str(y)` compares them
+  fine.
+- `damage_facility()` adds to `wear`; `_operate()` folds wear into damage on the next tick. A test
+  that strikes a field and reads `damage` without ticking measures nothing, which is how the first
+  draft of the acceptance passed while asserting nothing.
+- Import is whole-or-nothing at every level: the director requires the file's districts to be
+  exactly the seated 32, names a legal owner and carry every `SAVED_DISTRICT` term; a battle must
+  carry its 15; a facility record its 9; each commander refuses a state written for the other
+  faction, and so does each staff. `_table`/`_holds` return "no table" for a JSON value of the
+  wrong shape so a hand-edited file is refused rather than crashed on halfway through.
+- main.gd: `NOTIFICATION_WM_CLOSE_REQUEST` (capture, then quit) and
+  `NOTIFICATION_APPLICATION_PAUSED` (capture — a phone that loses focus can lose its process a
+  second later); `_restore_campaign()` runs at the end of seating, before the MFD is wired to the
+  tables it is about to draw. It deliberately does **not** capture on a region swap: changing
+  theatre inside a run is not the end of one, and a swap-time write would both overwrite the
+  campaign a player quit with and leave a stale file behind in every headless test that swaps
+  regions — the suite shares one `user://`.
+- `tests/campaign_save_test.gd` is six sections: the acceptance (break a field, quit, rebuild every
+  module from the corridor's data, apply, compare all nine facility terms plus every district term
+  plus supply and losses and the clock, and check the *registry's* copy came back broken too),
+  the decisions (both commanders' operations/scores/reasons/habits/focus, both boards' cards and
+  serials, and the enemy's intent over the worked district — then eight more ticks to prove it is
+  still commanding rather than playing back), the disk round trip (re-capture must be
+  term-for-term identical, through the JSON text as well as the dictionary), the refusals (later
+  version, foreign theatre, warless state, empty capture, erase), the rollback, and the unseated
+  modules.
+
 ## Real-theatre render check (2026-10-01)
 
 - `tools/check_battle_map_terrain.gd` is the geographic half of the pixel check:

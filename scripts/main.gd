@@ -127,6 +127,7 @@ const WAR_OBJECTS := preload("res://scripts/war/war_objects.gd")
 const WAR_DIRECTOR := preload("res://scripts/war/war_director.gd")
 const MISSION_STAFF := preload("res://scripts/war/mission_director.gd")
 const COMMANDER := preload("res://scripts/war/faction_commander.gd")
+const CAMPAIGN_SAVE := preload("res://scripts/war/campaign_save.gd")
 const STARTUP_PANEL := preload("res://scripts/ui/startup_panel.gd")
 ## Thumb sticks are the only way to fly without a gamepad, so the choice is
 ## worth keeping between runs. With no entry saved, the hardware decides.
@@ -234,6 +235,12 @@ var _foe_commander := COMMANDER.new()
 ## commander has committed to, and the only reason a wave of hostile jets arrives the size and
 ## at the hour that a pattern of flying earns.
 var _foe_tasks := MISSION_STAFF.new()
+## The campaign in a file. §28 asks for one thing -- break an airbase, quit, reload, find the
+## damage and its consequences still there -- and this is the only object in the project that
+## touches the disk on the war's behalf. It writes the five modules above and hands them back, it
+## refuses a save that names a different theatre, and it refuses to write anything a module says
+## it does not own. See `scripts/war/campaign_save.gd`.
+var _campaign_save := CAMPAIGN_SAVE.new()
 var _runway_id := ""
 var _wreck_fire: Node3D
 var _threat_warning: Control
@@ -1123,6 +1130,10 @@ func _load_streamed_region(region: Dictionary) -> void:
 	# mission to fly into ground that is no longer loaded. The commanders go with it for the
 	# same reason -- an operation is a commitment over particular ground, and a pattern of
 	# where the other side has been flying is a memory of particular ground too.
+	#
+	# Nothing is written here. Changing theatre inside a run is not the end of one, and a save
+	# taken on every swap would overwrite the campaign a player quit with -- and leave a file
+	# behind in every headless run that swaps regions, which the suite shares.
 	_tasks.setup(null, null, null)
 	_foe_tasks.setup(null, null, null)
 	_own_commander.clear()
@@ -1193,6 +1204,10 @@ func _load_streamed_region(region: Dictionary) -> void:
 	_foe_tasks.set_faction(WAR_CONTROL.ENEMY)
 	_foe_tasks.setup(_war, objects_ref, regions_ref)
 	_foe_tasks.set_commander(_foe_commander if _foe_commander.is_ready() else null)
+	# The campaign comes back before anything is drawn over it: the map, the MFD's board and the
+	# enemy's intent are all read off these five tables, and a reload that restored them after the
+	# first frame would show one tick of a war that had already happened.
+	_restore_campaign()
 	if _tactical_mfd != null:
 		_tactical_mfd.map.set_war(regions_ref, control_ref)
 		_tactical_mfd.map.set_objects(objects_ref)
@@ -2909,6 +2924,52 @@ func _update_war(delta: float) -> void:
 func _fly_enemy_intent(at: Vector3) -> void:
 	enemy_squadron.intent = _foe_commander.effort_at(Vector2(at.x, at.z)) \
 		if _foe_commander.is_ready() else -1.0
+
+
+## ------------------------------------------------------------------------ §28's file
+
+## Write the campaign out. Called on the ways a run ends: the window closed, the phone
+## backgrounded, the theatre swapped under the pilot's feet. Not on a timer -- a campaign that is
+## merely running has nothing in it that the next tick will not rewrite, and a save written every
+## few seconds is a save that can be interrupted halfway.
+func _capture_campaign() -> void:
+	if not _war.is_ready():
+		return
+	var written := _campaign_save.capture(_war.theatre(), _war, _own_commander,
+		_foe_commander, _tasks, _foe_tasks)
+	if not written.is_empty() and _campaign_save.write(written):
+		print("CAMPAIGN_SAVED ", _campaign_save.path())
+		return
+	print("CAMPAIGN_NOT_SAVED ", _campaign_save.refusal())
+
+
+## Put it back, if the file describes the ground that was just seated. A save from another theatre
+## is refused by the layer that reads it rather than half applied to this one, and the reason is
+## printed because a pilot who reloads to an airbase they already destroyed deserves to know why
+## it is standing again.
+func _restore_campaign() -> bool:
+	var state := _campaign_save.read()
+	if state.is_empty():
+		return false
+	if not _campaign_save.apply(state, _war, _own_commander, _foe_commander,
+			_tasks, _foe_tasks):
+		print("CAMPAIGN_NOT_RESTORED ", _campaign_save.refusal())
+		return false
+	print("CAMPAIGN_RESTORED ", _war.theatre(), " at tick ", _war.tick_number())
+	return true
+
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_WM_CLOSE_REQUEST:
+			# The one place a desktop quit is caught: the campaign is written before the process
+			# goes, which is the whole of "quit. reload." from the brief.
+			_capture_campaign()
+			get_tree().quit()
+		NOTIFICATION_APPLICATION_PAUSED:
+			# A phone that loses focus can lose its process a second later, and a player who
+			# took a call mid-sortie should come back to the war they left.
+			_capture_campaign()
 
 
 ## What is still standing at the launcher sites: the field's own report, handed over as

@@ -396,6 +396,181 @@ func snapshot() -> Dictionary:
 	}
 
 
+## ---------------------------------------------------------------------- §28's save
+
+## The decisions and the memory behind them, written out. What is here is what a commander *is*:
+## the operations it is standing, which districts it has chosen to lean on, how often the enemy
+## was seen where, and the last reading of every level and airfield it is differencing against.
+## What is not here is anything the war itself owns -- no district state, no facility health, no
+## supply. The reload hands this back to a module already seated on a restored war, and a save
+## that carried the map twice would be a second copy of a thing that has one home (§25).
+func export_state() -> Dictionary:
+	var operations := []
+	for record: Dictionary in _operations:
+		operations.append(record.duplicate(true))
+	var remembered := {}
+	for district_id in _pattern:
+		var memory: Dictionary = _pattern[district_id]
+		remembered[String(district_id)] = {
+			"weight": float(memory["weight"]),
+			"recent": Array(memory["recent"]).duplicate(),
+		}
+	var before := {}
+	for district_id in _then:
+		before[String(district_id)] = _levels(_then[district_id])
+	var slipping := {}
+	for district_id in _trends:
+		slipping[String(district_id)] = _levels(_trends[district_id])
+	return {
+		"faction": _faction,
+		"tick": _tick,
+		"serial": _serial,
+		"operations": operations,
+		"focus": _focus.duplicate(true),
+		"pattern": remembered,
+		"then": before,
+		"trends": slipping,
+		"wear": _numbers(_wear),
+		"hits": _numbers(_hits),
+	}
+
+
+## Hand it back. The rule the director keeps and the staff keeps: refuse a state that does not
+## belong to the side seated here rather than apply part of it, because a BLUE commander given
+## RED's operations would task a staff over districts its own war does not name. `_live` is not
+## saved -- it is the same dictionaries as `_operations`, indexed by the key this module derives
+## from them, so rebuilding the index is the only honest way to restore it.
+func import_state(state: Dictionary) -> bool:
+	if not _ready or state.is_empty():
+		return false
+	if String(state.get("faction", "")) != _faction:
+		return false
+	var operations: Variant = state.get("operations", [])
+	if not (operations is Array):
+		return false
+	for record in operations:
+		if not _holds(record, SAVED_OPERATION):
+			return false
+		var operation := record as Dictionary
+		if _district(String(operation["region_id"])).is_empty():
+			return false
+	var pattern := _table(state, "pattern")
+	for district_id in pattern:
+		if not _holds(pattern[district_id], SAVED_MEMORY):
+			return false
+		if _district(String(district_id)).is_empty():
+			return false
+
+	var focus := _table(state, "focus")
+	var levels := _table(state, "then")
+	var rates := _table(state, "trends")
+	for district_id in levels:
+		if not _holds(levels[district_id], SAVED_LEVEL) \
+				or _district(String(district_id)).is_empty():
+			return false
+	for district_id in rates:
+		if not _holds(rates[district_id], SAVED_LEVEL) \
+				or _district(String(district_id)).is_empty():
+			return false
+
+	_operations = []
+	_live = {}
+	for record in operations:
+		var operation: Dictionary = _kept(record as Dictionary, SAVED_OPERATION)
+		_operations.append(operation)
+		if String(operation["status"]) == "ACTIVE":
+			_live[_key_of(operation)] = operation
+	_focus = {}
+	for district_id in focus:
+		_focus[String(district_id)] = float(focus[district_id])
+	_pattern = {}
+	for district_id in pattern:
+		var memory: Dictionary = pattern[district_id]
+		var window := []
+		for visit in memory["recent"]:
+			window.append(int(visit))
+		_pattern[String(district_id)] = {"weight": float(memory["weight"]), "recent": window}
+	_then = {}
+	for district_id in levels:
+		_then[String(district_id)] = _levels(levels[district_id] as Dictionary)
+	_trends = {}
+	for district_id in rates:
+		_trends[String(district_id)] = _levels(rates[district_id] as Dictionary)
+	_wear = _restore(_table(state, "wear"))
+	_hits = _restore(_table(state, "hits"))
+	_tick = int(state.get("tick", _tick))
+	_serial = int(state.get("serial", _serial))
+	return true
+
+
+## The terms an operation must arrive with. `target` is an object id the registry puts back
+## itself, and `factors` is the six published numbers the reason sentence was made of.
+const SAVED_OPERATION := ["id", "faction", "objective", "objective_name", "label", "region_id",
+	"region_name", "target", "target_name", "air_effort", "score", "factors", "reason",
+	"status", "opened_at", "held", "quiet"]
+
+const SAVED_MEMORY := ["weight", "recent"]
+
+const SAVED_LEVEL := ["air", "ground", "hostile"]
+
+
+## One reading of a district, copied through the three terms it is made of.
+func _levels(level: Dictionary) -> Dictionary:
+	return {
+		"air": float(level["air"]),
+		"ground": float(level["ground"]),
+		"hostile": float(level["hostile"]),
+	}
+
+
+## A table keyed by object id, written with the keys the file can carry.
+func _numbers(table: Dictionary) -> Dictionary:
+	var written := {}
+	for object_id in table:
+		written[str(int(object_id))] = float(table[object_id])
+	return written
+
+
+## ...and read back through the ids this module actually indexes by.
+func _restore(written: Dictionary) -> Dictionary:
+	var table := {}
+	for object_id in written:
+		table[int(object_id)] = float(written[object_id])
+	return table
+
+
+func _holds(record: Variant, terms: Array) -> bool:
+	if not (record is Dictionary):
+		return false
+	for term in terms:
+		if not (record as Dictionary).has(term):
+			return false
+	return true
+
+
+## Copy a saved record through its own list, so a key the file invented cannot walk into the live
+## campaign. The whole-number terms are put back as ints, because JSON has one number type and
+## this module holds an objective, a target id and four counters: `%d` on a float prints `3.0`,
+## and an operation whose `held` came back as a float is the same operation printed wrongly.
+func _kept(record: Dictionary, terms: Array) -> Dictionary:
+	var copy := {}
+	for term in terms:
+		copy[term] = int(record[term]) if term in SAVED_WHOLE else record[term]
+	if record.has("closed_at"):
+		copy["closed_at"] = int(record["closed_at"])
+	return copy
+
+
+const SAVED_WHOLE := ["objective", "target", "opened_at", "held", "quiet"]
+
+
+## The same guard the director's read keeps: a section that is not a table reads as an empty one,
+## so a malformed file is refused rather than crashed on halfway through.
+func _table(state: Dictionary, key: String) -> Dictionary:
+	var section: Variant = state.get(key, {})
+	return section if section is Dictionary else {}
+
+
 ## ------------------------------------------------------------------------ remembering
 
 ## Fold this tick's evidence into the pattern and take the differences the scoring reads as
