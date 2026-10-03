@@ -35,6 +35,12 @@ var _next_encounter_in := FIRST_ENCOUNTER_SECONDS
 var kills := 0
 var waves := 0
 var ground_height := Callable()
+## How much enemy air the campaign has committed over the ground this flight is standing on,
+## 0.0 to 1.0. Set from `scripts/war/faction_commander.gd` through main, and read by nobody in
+## the war: the only thing a commander gets to say to the flying world is how hard to push.
+## Negative means nobody is commanding, which is every scenario and test written before the war
+## existed and keeps the rhythm those had.
+var intent := -1.0
 
 
 func jets() -> Array:
@@ -63,6 +69,7 @@ func clear() -> void:
 	_jets.clear()
 	hit_index.clear()
 	_next_encounter_in = FIRST_ENCOUNTER_SECONDS
+	intent = -1.0
 	kills = 0
 	waves = 0
 
@@ -73,10 +80,26 @@ func advance_encounters(delta: float, around: Vector3, forward: Vector3) -> void
 	if jet_count() > 0:
 		return
 	_next_encounter_in -= delta
-	if _next_encounter_in <= 0.0:
-		spawn(randi_range(1, 2), around, forward)
-		waves += 1
-		_next_encounter_in = randf_range(30.0, 45.0)
+	if _next_encounter_in > 0.0:
+		return
+	spawn(_wave_size(), around, forward)
+	waves += 1
+	_next_encounter_in = randf_range(30.0, 45.0) * _breather()
+
+
+## The campaign's answer to how many jets come: the two ship patrol this always flew, plus as
+## many more as the enemy has committed air over this ground. A four ship is what flying into
+## the same district for half an hour buys, and it is still built on the old roll rather than
+## replacing it, so a quiet front feels like the flight it always was.
+func _wave_size() -> int:
+	var base := randi_range(1, 2)
+	return clampi(base + (int(round(intent * 2.0)) if intent >= 0.0 else 0), 1, 4)
+
+
+## Committed air arrives sooner as well as in more force, but never on top of the pilot: the
+## breather shrinks by under half at the hardest.
+func _breather() -> float:
+	return 1.0 if intent < 0.0 else clampf(1.0 - 0.45 * intent, 0.55, 1.0)
 
 
 ## A forward direction requests a nearby dogfight encounter. Without one,

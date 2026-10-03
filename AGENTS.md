@@ -612,6 +612,90 @@ the file in the GitHub web UI. Never paste PATs in chat; revoke after use.
   binary — a check that lands two femtoseconds short of its own tick tests floating point,
   not a clock.
 
+## AI commanders on top of the war (2026-10-03, Battle Map V2 phase 7)
+
+- `scripts/war/faction_commander.gd` is §15 arrived at in data: two commanders, one per side,
+  reading the director's published state, scoring the nine things a commander could be trying
+  to do, and committing to the best few it can afford. The score is the brief's term for term —
+  `strategic_value x urgency x vulnerability x available_force x commander_priority` — and all
+  six printed factors multiply back to the score that ranked the operation, which is what
+  allows §37's overlay to print a number beside a sentence. Doctrine is the only term in the
+  product that is not a fact about the world; the band is narrow (0.80–1.30) so it settles a
+  contest between near-equals and cannot put a quiet district on top by itself.
+- **A turn of command costs about 1.8 ms** (200 ticks, 32 districts: 1.73 min, 1.77 median,
+  1.83 p90, 2.23 worst). Two commanders and the enemy's own staff add roughly 4 ms to the
+  eight-second strategic tick, which is the same order as the director's own 2 ms tick and
+  three orders below a frame. §14's rule is untouched: nothing here is called from `_process`.
+- Read-only, and measured rather than asserted: six commander turns move no district record,
+  no facility and no resource total (string compare of the whole published table before and
+  after), and there is not one `randf`/`randi` in the module. §13's two verbs into the war
+  belong to the flying world; a commander that reported its own intentions as evidence would
+  be inventing a fact about the sky, and a commander that needed a random number would be the
+  scripted encounters §16 exists to replace.
+- The pattern memory is the phase. The director decays a sighting on purpose (`EVIDENCE_DECAY
+  0.55`), so a district the pilot has left stops being news within about five ticks — which
+  means "repeated behaviour" cannot be read off the campaign at all, and slowing that decay to
+  make a test pass would corrupt what the war knows. So the habit is kept here instead, where
+  it can be as long-lived as a habit needs to be, keyed by the director's own district ids.
+- Measured, and it retuned the constants twice: a tick of presence is worth **0.155** of habit
+  weight, not 0.1, because the commander reads the fresh `+0.1` *and* the `0.055` tail the
+  director left after decaying — hence `HABIT_FULL 2.4`. And the visit window has to outlast
+  the weight it explains: at `PATTERN_WINDOW 20` the reason printed "worked TWEED HEADS in 0 of
+  the last 20 ticks" while the habit was still 0.78/1.6, so the window is 32 and `SEEN_MIN` is
+  0.08 (above the decay tail, below a real visit).
+- The acceptance, measured on the corridor with one pilot flying into the enemy's richest
+  district for 40 ticks and nobody else in the air: `INTERCEPT OVER TWEED HEADS`, score 0.4621,
+  factors v 0.70 u 1.00 x 0.90 f 0.56 p 1.30 r 1.00, reason "FRIENDLY aircraft have worked
+  TWEED HEADS in 32 of the last 32 ticks + they keep coming through here". Priority 1.45 over
+  the worked ground against 0.72 everywhere else, effort 1.00 under the pilot against 0.00 over
+  ground no operation stands on. Stop flying there and the war's own `seen` falls under
+  `SEEN_MIN` in five ticks while the habit is still 0.78 at 25 — then the operation stands
+  down, and after a full window of absence the pattern is dropped rather than kept forever.
+- The A/B the whole phase is the claim for: same seed, same sightings, same eight questions,
+  and the enemy's own board moves from `P2 0.318` to `P3 0.462` with the operation named on the
+  mission record. With `set_commander(null)` the board is byte-for-byte the phase 6 board,
+  which is what lets a theatre with no campaign still have missions to fly.
+- One float crosses into the flying world: `enemy_squadron.intent`, from the foe commander's
+  `effort_at` under the aircraft. §26 says wrap the tactical AI rather than replace it, so
+  intent adds to the shipped rhythm instead of standing in for it — `randi_range(1, 2)` plus
+  `round(intent * 2)` jets, breather `randf_range(30, 45) x (1 - 0.45 * intent)` floored at
+  0.55 — and **negative intent means nobody is commanding**, which is every scenario and test
+  written before the war existed, untouched. Moving SAM launchers, authoring enemy airframes
+  or having the commander write sightings were each ruled out: the first two rewrite working
+  combat systems, the third uses the wrong verb for a coefficient that cannot be felt.
+- `main.gd` seats four objects per theatre (own commander, foe commander, own staff, foe staff)
+  and clears all four in `_load_streamed_region` beside the board, because a phase 5 refusal
+  that keeps the last theatre's table now also keeps a *memory* of it. `_update_war` order is
+  launchers, the pilot's own sighting, both commanders, both staffs — and inside the commander
+  the trends snapshot before the levels are stored, because a difference measured against this
+  tick is always zero.
+- Gotcha: `faction_commander._war` is a duck-typed `RefCounted`, so the readiness gate has to be
+  in `available_force()` itself. The debug overlay and a future save file read a commander that
+  refused its theatre, and an unguarded `_war.supply` is `Invalid call. Nonexistent function
+  'supply' in base 'Nil'`. Same reason `priority_for` answers 1.0 and `effort_at` answers 0.0
+  when nothing is seated: an unseated commander must be indistinguishable from no commander.
+- Gotcha: the preload consts in `main.gd` are named `MISSION_STAFF` and `COMMANDER`, and those
+  are the only spellings usable as type annotations there. Copying `staff: MISSIONS` out of a
+  test parses as `Could not find type "MISSIONS" in the current scope`.
+- Gotcha (test hygiene, and it made a false pass): `enemy_squadron.jets()` returns the live
+  array, so `for jet in squadron.jets(): squadron.destroy_jet(jet.id)` erases out from under
+  the walk, leaves a wingman standing, and then reads that survivor as the next wave. Iterate
+  `.duplicate()` and assert `jet_count() == 0` before starting the clock. Every bound in
+  `_check_intent_reaches_the_squadron` is the shortest or longest of the band rather than a
+  roll, so no run of it can fail by being unlucky.
+- Blue's commander never raises INTERCEPT, and that is a fact about the world rather than a
+  bug: nothing in the corridor reports `seen[ENEMY]`, because the enemy flies its own patterns
+  and the campaign is not told about them. It is documented in the module rather than faked
+  with an invented sighting.
+- `tools/probe_commander.gd` measured all of the above and is deleted: the constants are set off
+  numbers, and the numbers are in this file.
+- `tests/faction_commander_test.gd` is nine sections over the real corridor — the refusals, no
+  intercept without a pattern, the acceptance, memory outliving news, discounting elsewhere,
+  writing nothing, determinism, the A/B on the staff's board, and the bound on the squadron's
+  wave. Suite: 141/143 with only the two known exit-flake files red (`f22_startup_test`,
+  `jet_audio_runtime_test`), which flake 2 of 6 runs here against the 10 of 20 recorded in
+  phase 5, and both print their `*_TEST_PASS` line first.
+
 ## Real-theatre render check (2026-10-01)
 
 - `tools/check_battle_map_terrain.gd` is the geographic half of the pixel check:

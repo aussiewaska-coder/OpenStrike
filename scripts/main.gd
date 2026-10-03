@@ -126,6 +126,7 @@ const WAR_CONTROL := preload("res://scripts/war/war_control.gd")
 const WAR_OBJECTS := preload("res://scripts/war/war_objects.gd")
 const WAR_DIRECTOR := preload("res://scripts/war/war_director.gd")
 const MISSION_STAFF := preload("res://scripts/war/mission_director.gd")
+const COMMANDER := preload("res://scripts/war/faction_commander.gd")
 const STARTUP_PANEL := preload("res://scripts/ui/startup_panel.gd")
 ## Thumb sticks are the only way to fly without a gamepad, so the choice is
 ## worth keeping between runs. With no entry saved, the hardware decides.
@@ -221,6 +222,18 @@ var _war := WAR_DIRECTOR.new()
 ## keeps no clock of its own either -- `_update_war` hands it the tick the director just
 ## took. See `scripts/war/mission_director.gd`.
 var _tasks := MISSION_STAFF.new()
+## The two minds on top of the campaign. A commander is the only thing in the war that has a
+## point of view: it reads the director's facts, remembers what the other side has actually been
+## doing, and decides which of them is worth an operation this tick. The staff then asks eight
+## questions of the ground, and the commander is what makes its answers come out in a different
+## order for the district that keeps getting flown into. Both are read-only over the campaign;
+## nothing here moves a launcher or flies a jet. See `scripts/war/faction_commander.gd`.
+var _own_commander := COMMANDER.new()
+var _foe_commander := COMMANDER.new()
+## The enemy's own tasking table. It is not the board the pilot sees -- it is what the enemy
+## commander has committed to, and the only reason a wave of hostile jets arrives the size and
+## at the hour that a pattern of flying earns.
+var _foe_tasks := MISSION_STAFF.new()
 var _runway_id := ""
 var _wreck_fire: Node3D
 var _threat_warning: Control
@@ -1107,8 +1120,13 @@ func _load_streamed_region(region: Dictionary) -> void:
 		_strike_fire.clear()
 	# The board goes empty with the theatre it was raised on, whether or not anything is
 	# showing it: a staff that kept ticking over the last region's districts would offer a
-	# mission to fly into ground that is no longer loaded.
+	# mission to fly into ground that is no longer loaded. The commanders go with it for the
+	# same reason -- an operation is a commitment over particular ground, and a pattern of
+	# where the other side has been flying is a memory of particular ground too.
 	_tasks.setup(null, null, null)
+	_foe_tasks.setup(null, null, null)
+	_own_commander.clear()
+	_foe_commander.clear()
 	if _tactical_mfd != null:
 		_tactical_mfd.map.set_layers({})
 		_tactical_mfd.map.set_war(null, null)
@@ -1163,6 +1181,18 @@ func _load_streamed_region(region: Dictionary) -> void:
 	# which will run a front over districts with nothing standing in them: a tasking has to
 	# point at something, so a theatre with no objects or no districts gets an empty board.
 	_tasks.setup(_war, objects_ref, regions_ref)
+	_own_commander.setup(_war, objects_ref, regions_ref)
+	_own_commander.set_faction(WAR_CONTROL.FRIENDLY)
+	_foe_commander.setup(_war, objects_ref, regions_ref)
+	_foe_commander.set_faction(WAR_CONTROL.ENEMY)
+	_tasks.set_commander(_own_commander if _own_commander.is_ready() else null)
+	# The enemy's staff is seated on the same campaign with the same discipline, and its own
+	# commander seated on it. Nothing here shows on the pilot's board -- this table is read for
+	# one thing only: how much air the enemy has committed over the ground the pilot is flying
+	# over, which is what sizes the next hostile wave.
+	_foe_tasks.set_faction(WAR_CONTROL.ENEMY)
+	_foe_tasks.setup(_war, objects_ref, regions_ref)
+	_foe_tasks.set_commander(_foe_commander if _foe_commander.is_ready() else null)
 	if _tactical_mfd != null:
 		_tactical_mfd.map.set_war(regions_ref, control_ref)
 		_tactical_mfd.map.set_objects(objects_ref)
@@ -1704,6 +1734,7 @@ func _telemetry_sample() -> Dictionary:
 		"cache_hits": TileClient.cache_hits,
 		"net_fetches": TileClient.network_fetches,
 		"tile_failures": TileClient.failures,
+		"war": _war_sample(),
 	}
 	sample.merge(GamepadInput.controller_input_report(), true)
 	if _flying_jet:
@@ -1766,6 +1797,96 @@ func _telemetry_sample() -> Dictionary:
 		"rain_intensity": weather.rain_intensity,
 	}, true)
 	return sample
+
+
+## §37's window onto the strategic layer, on the same socket as the frame counters: what the
+## front looks like, what each commander has committed to and the sentence it gave for it, and
+## what each staff has on its board. Nothing in it is measured for the overlay -- every field is
+## a table that was already published for somebody else -- so when the map and the numbers
+## disagree, the disagreement is real and the war is the thing that is wrong. A theatre with no
+## districts seated reports nothing rather than the last theatre's answers.
+func _war_sample() -> Dictionary:
+	var ids: Array = _war.districts()
+	if ids.is_empty():
+		return {}
+	var ground := []
+	for id in ids:
+		var state: Dictionary = _war.district(String(id))
+		ground.append({
+			"id": String(state["id"]),
+			"name": String(state["name"]),
+			"owner": String(state["owner"]),
+			"value": float(state["value"]),
+			"air": float(state["air"]),
+			"ground": float(state["ground"]),
+			"fire": clampf(float(state["under_fire"]), 0.0, 1.0),
+		})
+	var fields := []
+	for record: Dictionary in _war.facilities():
+		fields.append({
+			"name": String(record["name"]),
+			"faction": String(record["faction"]),
+			"region": String(record["region_id"]),
+			"state": String(record["state"]),
+			"operational": float(record["operational"]),
+			"aircraft": int(record["aircraft"]),
+			"capacity": int(record["capacity"]),
+			"sorties": float(record["sorties"]),
+		})
+	var where := Vector2.ZERO
+	var vehicle := _vehicle()
+	if vehicle != null:
+		where = Vector2(vehicle.global_position.x, vehicle.global_position.z)
+	return {
+		"tick": _war.tick_number(),
+		"districts": ground,
+		"airbases": fields,
+		"friendly": _command_sample(_own_commander, _tasks),
+		"enemy": _command_sample(_foe_commander, _foe_tasks),
+		"hostile_effort": _foe_commander.effort_at(where),
+	}
+
+
+## One side, told twice: what its commander is doing and what its staff is offering because of
+## it. The factors ride along because a score that cannot be taken apart is not a reason.
+func _command_sample(commander: COMMANDER, staff: MISSION_STAFF) -> Dictionary:
+	var operations := []
+	for record: Dictionary in commander.operations():
+		var factors: Dictionary = record["factors"]
+		operations.append({
+			"id": String(record["id"]),
+			"label": String(record["label"]),
+			"score": float(record["score"]),
+			"held": int(record["held"]),
+			"air": bool(record["air_effort"]),
+			"reason": String(record["reason"]),
+			"value": float(factors["value"]),
+			"urgency": float(factors["urgency"]),
+			"exposure": float(factors["exposure"]),
+			"force": float(factors["force"]),
+			"priority": float(factors["priority"]),
+			"reserve": float(factors["reserve"]),
+		})
+	var remembered: Dictionary = commander.snapshot()["pattern"]
+	var offers := []
+	for record: Dictionary in staff.board():
+		offers.append({
+			"id": String(record["id"]),
+			"callsign": String(record["callsign"]),
+			"type": String(record["type"]),
+			"region": String(record["region_name"]),
+			"priority": int(record["priority"]),
+			"score": float(record["score"]),
+			"operation": String(record.get("operation", "")),
+			"reason": String(record.get("reason", "")),
+		})
+	return {
+		"ready": commander.is_ready(),
+		"force": commander.available_force(),
+		"operations": operations,
+		"pattern": remembered,
+		"board": offers,
+	}
 
 
 func _map_diagnostic_text() -> String:
@@ -2760,15 +2881,34 @@ func _update_war(delta: float) -> void:
 	if not _war.advance(delta):
 		return
 	_bind_launcher_state()
-	# The staff after the launcher field, not before: a site that has just stopped standing
-	# is the news a mission is judged on, and reading it a tick late would let the board
-	# offer a SEAD against a wreck the war has already counted down.
-	_tasks.tick(_war.tick_number())
 	var vehicle := _vehicle()
 	if vehicle != null:
 		_war.report_sighting(
 			WAR_CONTROL.FRIENDLY,
 			Vector2(vehicle.global_position.x, vehicle.global_position.z), 1.0)
+	# Everything below reads the news of this tick rather than the last one: a site that has
+	# just stopped standing is the fact a mission is judged on, and reading it a tick late
+	# would let the board offer a SEAD against a wreck the war has already counted down. The
+	# pilot's own report goes in ahead of the commanders for the same reason -- a commander's
+	# memory is of where the other side has been flying.
+	_own_commander.tick(_war.tick_number())
+	_foe_commander.tick(_war.tick_number())
+	_tasks.tick(_war.tick_number())
+	_foe_tasks.tick(_war.tick_number())
+	if vehicle != null:
+		_fly_enemy_intent(vehicle.global_position)
+
+
+## The one thing the enemy commander says to the flying world. It writes no mission and picks
+## no target: it says how much air the enemy has committed to the ground the pilot is standing
+## on this second, and the squadron turns that into how big the next wave is and how soon.
+## Negative means nobody is commanding it -- no campaign, or a theatre the commander refused to
+## seat on -- and the squadron keeps the random rhythm it has always had. That is the whole of
+## the seam: §26 wraps the tactical AI, it does not drive it from the strategic layer.
+## See `scripts/entities/enemy_squadron.gd`.
+func _fly_enemy_intent(at: Vector3) -> void:
+	enemy_squadron.intent = _foe_commander.effort_at(Vector2(at.x, at.z)) \
+		if _foe_commander.is_ready() else -1.0
 
 
 ## What is still standing at the launcher sites: the field's own report, handed over as

@@ -131,6 +131,7 @@ const RESOLVED_KEEP := 10
 var _war: RefCounted
 var _objects: RefCounted
 var _geography: RefCounted
+var _commander: RefCounted
 var _faction := CONTROL.FRIENDLY
 var _missions := []
 var _by_id := {}
@@ -153,6 +154,7 @@ func setup(director: RefCounted, objects: RefCounted, geography: RefCounted = nu
 	_war = null
 	_objects = null
 	_geography = null
+	_commander = null
 	if director == null or not director.has_method("air_balance") \
 			or not director.has_method("active_battles"):
 		return false
@@ -174,6 +176,21 @@ func is_ready() -> bool:
 func set_faction(faction: String) -> void:
 	if faction in CONTROL.BLOCS:
 		_faction = faction
+
+
+## Hand the board to a commander, or take it away again. This is §15's chain arriving in the
+## only place it can: the staff is still the one writing missions for reasons the war publishes,
+## and the commander only gets a vote on which of those reasons it cares about first. Null is
+## the pre-phase-7 board back, unchanged, which is what lets the staff be seated before a
+## commander exists and a theatre with no campaign still have a board.
+func set_commander(commander: RefCounted) -> void:
+	_commander = commander \
+			if commander != null and commander.has_method("priority_for") \
+			and commander.has_method("operations_in") else null
+
+
+func commander() -> RefCounted:
+	return _commander
 
 
 func faction() -> String:
@@ -310,6 +327,7 @@ func snapshot() -> Dictionary:
 			"secondary_targets": (mission["secondary_targets"] as Array).duplicate(),
 			"priority": int(mission["priority"]),
 			"status": String(mission["status"]),
+			"operation": String(mission.get("operation", "")),
 			"briefing": String(mission["briefing"]),
 			"threat_level": String(mission["threat_level"]),
 			"strategic_effect": String(mission["strategic_effect"]),
@@ -326,6 +344,13 @@ func snapshot() -> Dictionary:
 ## The eight questions the board is built from. Each returns the ground, and the thing on
 ## it, that a sortie would be sent to -- scored by how much the published state says it
 ## matters -- and none of them looks at a script.
+##
+## The commander is heard between the questions and the ranking, on §15's own term: a district
+## it has committed operations over is worth more than the raw state says, and a district it has
+## deliberately left alone is worth less. The scaling happens here rather than inside each
+## question because the questions are the war's arithmetic and belong to nobody else -- a SEAD
+## builder that knew about doctrine would stop being a description of the ground, and the eight
+## would turn into eight opinions.
 func _generate() -> void:
 	var candidates := []
 	candidates.append_array(_sead())
@@ -336,11 +361,32 @@ func _generate() -> void:
 	candidates.append_array(_escort())
 	candidates.append_array(_base_defence())
 	candidates.append_array(_interdiction())
+	for offer in candidates:
+		offer["score"] = float(offer["score"]) * _priority(String(offer["region_id"]))
 	candidates.sort_custom(_weightier)
 	for offer in candidates:
 		if _count_open() >= LIVE_LIMIT:
 			return
 		_offer(offer)
+
+
+## §15's `commander_priority`, on the staff's own axis: 1.0 is the commander having no opinion
+## about this ground, which is the whole board before phase 7 and the whole board in a theatre
+## with no commander seated.
+func _priority(district_id: String) -> float:
+	return _commander.priority_for(district_id) if _commander != null else 1.0
+
+
+## Which of the commander's operations this job would be serving, for the card and the debug
+## overlay to print. An offer the commander has not committed over is not given an operation it
+## does not have: the mission's own briefing already says what the war did.
+func _operation(district_id: String) -> String:
+	if _commander == null:
+		return ""
+	var live: Array = _commander.operations_in(district_id)
+	if live.is_empty():
+		return ""
+	return String(live[0]["label"])
 
 
 ## The brief's opening loop, and the only mission type that gates another one: a site
@@ -731,6 +777,7 @@ func _offer(offer: Dictionary) -> void:
 		"outcome": "",
 		"reason": "",
 		"score": score,
+		"operation": _operation(district_id),
 		"basis": _basis_of(kind, district_id, target_id),
 	}
 	mission["briefing"] = _briefing(kind, district_id, target, offer)
