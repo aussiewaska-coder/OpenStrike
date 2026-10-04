@@ -9,6 +9,16 @@ Building positions and coastline geometry are © OpenStreetMap contributors and
 are available under the Open Database License (ODbL):
 https://www.openstreetmap.org/copyright
 
+Building **heights are partly ours, not OSM's**. Where a way carries a `height`
+or `building:levels` tag that value is used as given. Most ways carry neither,
+and the fallback those builders once wrote — the same handful of metres for
+three quarters of a theatre — was replaced by `tools/infer_building_heights.py`,
+which states each missing height from the footprint's own size, the tagged
+heights nearby, and a deterministic per-building variation. Each chunk records
+which model produced it under `height_model`; some also carry `height_source`
+`dem`, meaning a Copernicus GLO-30 relief sample. These are estimates made for
+an arcade flight game and are not a survey of the real skyline.
+
 The packaged orthorectified ground imagery is exported from the Queensland
 Government `LatestStateProgram_AllUsers` public image service. Service
 attribution: Includes material © State of Queensland (Department of Natural

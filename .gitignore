@@ -5,3 +5,4 @@
 android/location_plugin/.gradle/
 android/location_plugin/build/
 android/location_plugin/plugin/build/
+__pycache__/
